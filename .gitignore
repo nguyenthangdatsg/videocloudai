@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.turbo/
+*.log
+.env
+.env.local
+.env.production
+database/*.db
+database/*.db-shm
+database/*.db-wal
+cache/
+renders/
+assets/
+output/
+.DS_Store
+Thumbs.db
+.claude/settings.local.json

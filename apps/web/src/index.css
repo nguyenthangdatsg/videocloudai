@@ -1,0 +1,169 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Theme tokens ─────────────────────────────────────────── */
+:root {
+  --c-bg:        #0a0a0f;
+  --c-surface:   #111118;
+  --c-elevated:  #1e1e28;
+  --c-hover:     #24242f;
+  --c-border:    #2a2a38;
+  --c-border-hi: #3a3a50;
+  --c-text:      #f2f2f5;
+  --c-muted:     #9898b0;
+  --c-dim:       #606078;
+}
+
+html.light {
+  --c-bg:        #f5f5fa;
+  --c-surface:   #ffffff;
+  --c-elevated:  #eeeef6;
+  --c-hover:     #e6e6f0;
+  --c-border:    #d8d8e8;
+  --c-border-hi: #b8b8d0;
+  --c-text:      #18182e;
+  --c-muted:     #4a4a6e;
+  --c-dim:       #7878a0;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: var(--c-border) transparent;
+  }
+
+  body {
+    background: var(--c-bg);
+    color: var(--c-text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--c-border);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--c-border-hi);
+  }
+}
+
+@layer components {
+  .glass {
+    background: rgba(30, 30, 40, 0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  html.light .glass {
+    background: rgba(240, 240, 248, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  .card {
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
+    border-radius: 0.75rem;
+  }
+
+  .btn-primary {
+    @apply bg-[#7c6af5] hover:bg-[#9180ff] text-white font-medium px-4 py-2 rounded-lg transition-colors duration-150;
+  }
+
+  .btn-secondary {
+    background: var(--c-elevated);
+    color: var(--c-text);
+    border: 1px solid var(--c-border);
+    @apply font-medium px-4 py-2 rounded-lg transition-colors duration-150;
+  }
+
+  .btn-secondary:hover {
+    background: var(--c-hover);
+  }
+
+  .btn-ghost {
+    color: var(--c-muted);
+    @apply font-medium px-3 py-1.5 rounded-lg transition-colors duration-150;
+  }
+
+  .btn-ghost:hover {
+    background: var(--c-elevated);
+    color: var(--c-text);
+  }
+
+  .input {
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
+    color: var(--c-text);
+    @apply rounded-lg px-3 py-2 text-sm outline-none transition-colors;
+    width: 100%;
+  }
+
+  .input:focus {
+    border-color: #7c6af5;
+  }
+
+  .input::placeholder {
+    color: var(--c-dim);
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full;
+  }
+
+  .mood-sad { @apply bg-blue-900/30 text-blue-300 border border-blue-800/30; }
+  .mood-hopeful { @apply bg-amber-900/30 text-amber-300 border border-amber-800/30; }
+  .mood-dramatic { @apply bg-red-900/30 text-red-300 border border-red-800/30; }
+  .mood-energetic { @apply bg-orange-900/30 text-orange-300 border border-orange-800/30; }
+  .mood-calm { @apply bg-teal-900/30 text-teal-300 border border-teal-800/30; }
+  .mood-mysterious { @apply bg-purple-900/30 text-purple-300 border border-purple-800/30; }
+  .mood-uplifting { @apply bg-green-900/30 text-green-300 border border-green-800/30; }
+  .mood-dark { @apply bg-gray-900/30 text-gray-300 border border-gray-800/30; }
+  .mood-melancholic { @apply bg-indigo-900/30 text-indigo-300 border border-indigo-800/30; }
+  .mood-euphoric { @apply bg-pink-900/30 text-pink-300 border border-pink-800/30; }
+  .mood-tense { @apply bg-rose-900/30 text-rose-300 border border-rose-800/30; }
+  .mood-romantic { @apply bg-fuchsia-900/30 text-fuchsia-300 border border-fuchsia-800/30; }
+
+  html.light .mood-sad { @apply bg-blue-100 text-blue-700 border-blue-200; }
+  html.light .mood-hopeful { @apply bg-amber-100 text-amber-700 border-amber-200; }
+  html.light .mood-dramatic { @apply bg-red-100 text-red-700 border-red-200; }
+  html.light .mood-energetic { @apply bg-orange-100 text-orange-700 border-orange-200; }
+  html.light .mood-calm { @apply bg-teal-100 text-teal-700 border-teal-200; }
+  html.light .mood-mysterious { @apply bg-purple-100 text-purple-700 border-purple-200; }
+  html.light .mood-uplifting { @apply bg-green-100 text-green-700 border-green-200; }
+  html.light .mood-dark { @apply bg-gray-100 text-gray-700 border-gray-200; }
+  html.light .mood-melancholic { @apply bg-indigo-100 text-indigo-700 border-indigo-200; }
+  html.light .mood-euphoric { @apply bg-pink-100 text-pink-700 border-pink-200; }
+  html.light .mood-tense { @apply bg-rose-100 text-rose-700 border-rose-200; }
+  html.light .mood-romantic { @apply bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200; }
+
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+  .status-dot.queued { @apply bg-gray-400; }
+  .status-dot.running { @apply bg-blue-400 animate-pulse; }
+  .status-dot.completed { @apply bg-green-400; }
+  .status-dot.failed { @apply bg-red-400; }
+
+  /* Lightbox / modal fade-in */
+  .animate-in.fade-in {
+    animation: fadeIn 200ms ease-out;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

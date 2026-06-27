@@ -1,0 +1,21 @@
+D:\AI\videocloudai\apps\server\dist\db\index.js:91
+    const stmt = getDb().prepare(sql);
+                         ^
+
+Error: no such column: updated_at
+    at dbRun (D:\AI\videocloudai\apps\server\dist\db\index.js:91:26)
+    at JobQueue.executeJob (D:\AI\videocloudai\apps\server\dist\queue\queue.js:85:24)
+    at queue.add.priority (D:\AI\videocloudai\apps\server\dist\queue\queue.js:71:35)
+    at file:///D:/AI/videocloudai/node_modules/p-queue/dist/index.js:223:37
+    at #tryToStartAnother (file:///D:/AI/videocloudai/node_modules/p-queue/dist/index.js:120:17)
+    at file:///D:/AI/videocloudai/node_modules/p-queue/dist/index.js:247:36
+    at new Promise (<anonymous>)
+    at PQueue.add (file:///D:/AI/videocloudai/node_modules/p-queue/dist/index.js:217:16)
+    at JobQueue.scheduleJob (D:\AI\videocloudai\apps\server\dist\queue\queue.js:71:20)
+    at JobQueue.enqueue (D:\AI\videocloudai\apps\server\dist\queue\queue.js:60:14) {
+  code: 'ERR_SQLITE_ERROR',
+  errcode: 1,
+  errstr: 'SQL logic error'
+}
+
+Node.js v25.8.1
