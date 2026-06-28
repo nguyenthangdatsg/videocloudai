@@ -1075,12 +1075,16 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
   const shotCardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const cleanupRef = useRef<(() => void) | null>(null);
 
-  // Check if extension is available
+  // Check if extension is available (ping/pong like Storyboard)
   useEffect(() => {
-    const check = () => setFlowAvailable(!!(window as any).__h2dev_flow_available);
-    check();
-    window.addEventListener('h2dev_flow_ready', check);
-    return () => window.removeEventListener('h2dev_flow_ready', check);
+    const onPong = () => setFlowAvailable(true);
+    window.addEventListener('h2dev_flow_pong', onPong);
+    window.dispatchEvent(new CustomEvent('h2dev_flow_ping'));
+    const timer = setTimeout(() => window.dispatchEvent(new CustomEvent('h2dev_flow_ping')), 1500);
+    return () => {
+      window.removeEventListener('h2dev_flow_pong', onPong);
+      clearTimeout(timer);
+    };
   }, []);
 
   // Generate all prompts
