@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as net from 'net';
+import * as os from 'os';
 import { execSync } from 'child_process';
 import * as dotenv from 'dotenv';
 
@@ -32,19 +33,32 @@ function isPortInUse(port: number): Promise<boolean> {
 
 function killProcessOnPort(port: number): void {
   try {
-    const result = execSync(
-      `netstat -ano | findstr ":${port}" | findstr "LISTENING"`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-    const lines = result.trim().split('\n');
-    const pids = new Set<string>();
-    for (const line of lines) {
-      const pid = line.trim().split(/\s+/).pop();
-      if (pid && pid !== '0') pids.add(pid);
-    }
-    for (const pid of pids) {
-      console.log(`Killing stale process on port ${port} (PID ${pid})...`);
-      execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' });
+    if (os.platform() === 'win32') {
+      const result = execSync(
+        `netstat -ano | findstr ":${port}" | findstr "LISTENING"`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+      );
+      const lines = result.trim().split('\n');
+      const pids = new Set<string>();
+      for (const line of lines) {
+        const pid = line.trim().split(/\s+/).pop();
+        if (pid && pid !== '0') pids.add(pid);
+      }
+      for (const pid of pids) {
+        console.log(`Killing stale process on port ${port} (PID ${pid})...`);
+        execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' });
+      }
+    } else {
+      // Linux / macOS
+      const result = execSync(
+        `lsof -ti :${port}`,
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+      );
+      const pids = result.trim().split('\n').filter(Boolean);
+      for (const pid of pids) {
+        console.log(`Killing stale process on port ${port} (PID ${pid})...`);
+        execSync(`kill -9 ${pid}`, { stdio: 'pipe' });
+      }
     }
   } catch {
     // No process found or kill failed — will surface as EADDRINUSE later
@@ -84,7 +98,10 @@ async function main() {
     if (err.code === 'EADDRINUSE') {
       console.error(`\n❌ Port ${PORT} is already in use.`);
       console.error(`   A stale server process may still be running.`);
-      console.error(`   Kill it with: taskkill /F /PID $(netstat -ano | grep ":${PORT}" | head -1 | awk '{print $NF}')\n`);
+      const hint = os.platform() === 'win32'
+        ? `taskkill /F /PID $(netstat -ano | findstr ":${PORT}" | findstr "LISTENING")`
+        : `kill -9 $(lsof -ti :${PORT})`;
+      console.error(`   Kill it with: ${hint}\n`);
     } else {
       console.error('Server error:', err);
     }
