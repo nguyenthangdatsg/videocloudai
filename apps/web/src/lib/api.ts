@@ -713,6 +713,7 @@ export const dramaApi = {
   extractLocations: (projectId: string, episodeId: string) => api.post<DramaLocation[]>(`/drama/projects/${projectId}/episodes/${episodeId}/extract-locations`).then(r => r.data),
   generateStoryboard: (projectId: string, episodeId: string) => api.post<DramaScene[]>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-storyboard`).then(r => r.data),
   generateShotPrompt: (projectId: string, shotId: string) => api.post<DramaShot>(`/drama/projects/${projectId}/shots/${shotId}/generate-prompt`).then(r => r.data),
+  generateAllPrompts: (projectId: string, episodeId: string) => api.post<{ generated: number; shots: Array<{ id: string; prompt: string }> }>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-all-prompts`).then(r => r.data),
   reviewEpisode: (projectId: string, episodeId: string) => api.post<{ score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string }> }>(`/drama/projects/${projectId}/episodes/${episodeId}/review`).then(r => r.data),
 
   // Stats

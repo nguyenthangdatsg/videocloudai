@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "start": "node apps/server/dist/index.js",
     "clean": "turbo run clean",
     "db:init": "ts-node scripts/init-db.ts",
     "setup": "node scripts/setup.js"

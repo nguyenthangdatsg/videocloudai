@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -454,7 +454,7 @@ export function DramaProjectPage() {
               />
             )}
             {activeTab === 'video' && selectedEpisode && (
-              <VideoAudioTab scenes={scenes ?? []} episode={selectedEpisode} />
+              <VideoAudioTab projectId={id!} episodeId={selectedEpisodeId!} scenes={scenes ?? []} episode={selectedEpisode} />
             )}
             {activeTab === 'export' && selectedEpisode && (
               <ExportTab project={project} episode={selectedEpisode} scenes={scenes ?? []} />
@@ -1056,20 +1056,184 @@ function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt }: {
 
 // ── Video & Audio Tab ──
 
-function VideoAudioTab({ scenes, episode }: { scenes: DramaScene[]; episode: DramaEpisode }) {
+function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: string; episodeId: string; scenes: DramaScene[]; episode: DramaEpisode }) {
   const { t } = useTranslation();
-  const totalShots = scenes.reduce((sum, s) => sum + s.shots.length, 0);
-  const completedShots = scenes.reduce((sum, s) => sum + s.shots.filter(sh => sh.generationStatus === 'completed').length, 0);
-  const totalDuration = scenes.reduce((sum, s) => sum + s.shots.reduce((ss, sh) => ss + sh.duration, 0), 0);
+  const queryClient = useQueryClient();
+  const allShots = scenes.flatMap(s => s.shots);
+  const totalShots = allShots.length;
+  const shotsWithPrompt = allShots.filter(sh => sh.prompt).length;
+  const shotsWithImage = allShots.filter(sh => sh.keyframeUrl).length;
+  const completedShots = allShots.filter(sh => sh.generationStatus === 'completed').length;
+  const totalDuration = allShots.reduce((sum, sh) => sum + sh.duration, 0);
+
+  // Flow extension state
+  const [flowAvailable, setFlowAvailable] = useState(false);
+  const [flowProvider, setFlowProvider] = useState<'google-flow' | 'grok' | 'chatgpt'>('google-flow');
+  const [generating, setGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState<string[]>([]);
+  const [shotStatuses, setShotStatuses] = useState<Map<string, 'pending' | 'generating' | 'done' | 'error'>>(new Map());
+  const shotCardRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  // Check if extension is available
+  useEffect(() => {
+    const check = () => setFlowAvailable(!!(window as any).__h2dev_flow_available);
+    check();
+    window.addEventListener('h2dev_flow_ready', check);
+    return () => window.removeEventListener('h2dev_flow_ready', check);
+  }, []);
+
+  // Generate all prompts
+  const generateAllPromptsMutation = useMutation({
+    mutationFn: () => dramaApi.generateAllPrompts(projectId, episodeId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] }),
+  });
+
+  // Build prompts list from shots that have prompts but no images
+  const getShotsForGeneration = useCallback((onlyFailed = false) => {
+    const result: Array<{ shotId: string; index: number; prompt: string }> = [];
+    allShots.forEach((shot, i) => {
+      if (!shot.prompt) return;
+      if (onlyFailed) {
+        const status = shotStatuses.get(shot.id);
+        if (shot.keyframeUrl && status !== 'error') return;
+        if (status === 'done') return;
+      } else {
+        if (shot.keyframeUrl) return; // skip shots that already have images
+      }
+      result.push({ shotId: shot.id, index: i, prompt: shot.prompt });
+    });
+    return result;
+  }, [allShots, shotStatuses]);
+
+  const handleStartGeneration = (onlyFailed = false) => {
+    const shotsToGen = getShotsForGeneration(onlyFailed);
+    if (!shotsToGen.length) return;
+
+    setGenerating(true);
+    setGenProgress([onlyFailed ? `Resuming ${shotsToGen.length} shots...` : `Starting generation of ${shotsToGen.length} shots...`]);
+
+    // Init statuses
+    setShotStatuses(prev => {
+      const next = new Map(prev);
+      shotsToGen.forEach(s => next.set(s.shotId, 'pending'));
+      return next;
+    });
+
+    // Build index map: extension index → allShots index
+    const indexMap = shotsToGen.map(s => s.index);
+
+    // Scroll to first pending
+    requestAnimationFrame(() => {
+      shotCardRefs.current[indexMap[0]]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+
+    const prompts = shotsToGen.map(s => ({ timestamp: s.shotId, prompt: s.prompt }));
+
+    const onProgress = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d.detail) setGenProgress(prev => [...prev, d.detail]);
+      if (d.status === 'generating' && typeof d.index === 'number') {
+        const realIdx = indexMap[d.index];
+        const shot = shotsToGen[d.index];
+        if (shot) setShotStatuses(prev => new Map(prev).set(shot.shotId, 'generating'));
+        if (realIdx != null) {
+          shotCardRefs.current[realIdx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+    };
+
+    const onImage = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (typeof d.index !== 'number') return;
+      const shot = shotsToGen[d.index];
+      if (!shot) return;
+      if (d.status === 'done') {
+        setShotStatuses(prev => new Map(prev).set(shot.shotId, 'done'));
+        // Save keyframeUrl to backend
+        dramaApi.updateShot(shot.shotId, { keyframeUrl: d.url, generationStatus: 'completed' } as Partial<DramaShot>).catch(() => {});
+      } else if (d.status === 'error') {
+        setShotStatuses(prev => new Map(prev).set(shot.shotId, 'error'));
+        dramaApi.updateShot(shot.shotId, { generationStatus: 'failed' } as Partial<DramaShot>).catch(() => {});
+      }
+    };
+
+    const cleanup = () => {
+      window.removeEventListener('h2dev_flow_progress', onProgress);
+      window.removeEventListener('h2dev_flow_image', onImage);
+      window.removeEventListener('h2dev_flow_done', onDone);
+      window.removeEventListener('h2dev_flow_error', onError);
+      cleanupRef.current = null;
+    };
+
+    const finalize = () => {
+      cleanup();
+      setGenerating(false);
+      queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+    };
+
+    const onDone = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      setGenProgress(prev => [...prev, `Done: ${d.done}/${d.total} images generated`]);
+      // Mark remaining pending/generating as error
+      setShotStatuses(prev => {
+        const next = new Map(prev);
+        shotsToGen.forEach(s => { if (next.get(s.shotId) === 'pending' || next.get(s.shotId) === 'generating') next.set(s.shotId, 'error'); });
+        return next;
+      });
+      finalize();
+    };
+
+    const onError = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      setGenProgress(prev => [...prev, `Error: ${d.error}`]);
+      setShotStatuses(prev => {
+        const next = new Map(prev);
+        shotsToGen.forEach(s => { if (next.get(s.shotId) === 'pending' || next.get(s.shotId) === 'generating') next.set(s.shotId, 'error'); });
+        return next;
+      });
+      finalize();
+    };
+
+    window.addEventListener('h2dev_flow_progress', onProgress);
+    window.addEventListener('h2dev_flow_image', onImage);
+    window.addEventListener('h2dev_flow_done', onDone);
+    window.addEventListener('h2dev_flow_error', onError);
+    cleanupRef.current = cleanup;
+
+    window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
+      detail: { prompts, delayMin: 5, delayMax: 15, mediaType: 'image', provider: flowProvider },
+    }));
+  };
+
+  const handleStop = () => {
+    window.dispatchEvent(new CustomEvent('h2dev_flow_stop'));
+    setShotStatuses(prev => {
+      const next = new Map(prev);
+      for (const [id, status] of next) {
+        if (status === 'pending' || status === 'generating') next.set(id, 'error');
+      }
+      return next;
+    });
+    setGenerating(false);
+    cleanupRef.current?.();
+    queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+  };
+
+  const failedCount = Array.from(shotStatuses.values()).filter(s => s === 'error').length +
+    allShots.filter(sh => sh.prompt && !sh.keyframeUrl && !shotStatuses.has(sh.id)).length;
+
+  const pendingGenCount = getShotsForGeneration(false).length;
 
   return (
     <div className="space-y-6 max-w-4xl">
+      {/* Stats */}
       <div className="grid grid-cols-4 gap-3">
         {[
           { label: t('drama.sceneCount'), value: scenes.length, icon: Film },
           { label: t('drama.shotCount'), value: `${completedShots}/${totalShots}`, icon: Camera },
-          { label: t('drama.totalDuration'), value: `${totalDuration.toFixed(1)}s`, icon: Play },
-          { label: t('drama.reviewScore'), value: episode.reviewScore != null ? `${episode.reviewScore}/100` : '--', icon: Star },
+          { label: t('drama.shotsWithPrompts', { count: shotsWithPrompt }), value: `${shotsWithPrompt}/${totalShots}`, icon: Wand2 },
+          { label: t('drama.shotsWithImages', { count: shotsWithImage }), value: `${shotsWithImage}/${totalShots}`, icon: CheckCircle2 },
         ].map(({ label, value, icon: Icon }) => (
           <div key={label} className="card rounded-2xl p-3">
             <div className="flex items-center gap-2 text-c-muted mb-1">
@@ -1081,46 +1245,133 @@ function VideoAudioTab({ scenes, episode }: { scenes: DramaScene[]; episode: Dra
         ))}
       </div>
 
-      <div>
-        <h3 className="text-sm font-medium text-c-text mb-3">{t('drama.storyboard')}</h3>
-        {scenes.length > 0 ? (
-          <div className="space-y-2">
-            {scenes.map(scene => (
-              <div key={scene.id} className="card rounded-2xl p-3">
-                <div className="text-xs font-medium text-c-text mb-2">{scene.heading}</div>
-                <div className="flex gap-1.5 overflow-x-auto pb-1">
-                  {scene.shots.map(shot => {
-                    const widthPercent = Math.max(shot.duration / totalDuration * 100, 5);
-                    return (
-                      <div key={shot.id}
-                        className={clsx('shrink-0 rounded-xl border p-2 text-center',
-                          shot.generationStatus === 'completed' ? 'border-emerald-500/30 bg-emerald-500/5' :
-                          shot.generationStatus === 'generating' ? 'border-blue-500/30 bg-blue-500/5' :
-                          shot.generationStatus === 'failed' ? 'border-red-500/30 bg-red-500/5' :
-                          'border-c-border bg-c-elevated'
-                        )}
-                        style={{ minWidth: '64px', width: `${widthPercent}%` }}
-                      >
-                        {shot.keyframeUrl ? (
-                          <img src={shot.keyframeUrl} alt="" className="w-full h-10 object-cover rounded-lg mb-1" />
-                        ) : (
-                          <div className="w-full h-10 bg-c-bg rounded-lg flex items-center justify-center mb-1">
-                            <Clapperboard className="w-3.5 h-3.5 text-c-dim" />
-                          </div>
-                        )}
-                        <div className="text-xs text-c-dim">{shot.duration}s</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+      {/* Actions */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Generate all prompts */}
+        {shotsWithPrompt < totalShots && totalShots > 0 && (
+          <button
+            onClick={() => generateAllPromptsMutation.mutate()}
+            disabled={generateAllPromptsMutation.isPending}
+            className="btn-primary flex items-center gap-2 rounded-full text-xs"
+          >
+            {generateAllPromptsMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+            {generateAllPromptsMutation.isPending ? t('drama.generatingAllPrompts') : `${t('drama.generateAllPrompts')} (${totalShots - shotsWithPrompt})`}
+          </button>
+        )}
+
+        {/* Generate images via extension */}
+        {flowAvailable && shotsWithPrompt > 0 && (
+          <div className="flex items-center gap-2">
+            {(['google-flow', 'grok', 'chatgpt'] as const).map(fp => (
+              <button
+                key={fp}
+                onClick={() => setFlowProvider(fp)}
+                disabled={generating}
+                className={clsx(
+                  'px-2 py-1 rounded text-xs font-medium transition-colors',
+                  flowProvider === fp ? 'bg-violet-600 text-white' : 'bg-c-elevated text-c-muted hover:text-c-text',
+                )}
+              >
+                {fp === 'google-flow' ? 'Flow' : fp === 'grok' ? 'Grok' : 'ChatGPT'}
+              </button>
             ))}
+            <button
+              onClick={generating ? handleStop : () => handleStartGeneration(false)}
+              disabled={!generating && pendingGenCount === 0}
+              className={clsx(
+                'flex items-center gap-1.5 text-xs py-1.5 px-4 rounded-full font-medium',
+                generating ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-cyan-600 hover:bg-cyan-700 text-white disabled:opacity-50',
+              )}
+            >
+              {generating
+                ? <><Play className="w-3 h-3" /> {t('drama.stopGeneration')}</>
+                : <><Camera className="w-3.5 h-3.5" /> {t('drama.generateShotImages')} ({pendingGenCount})</>}
+            </button>
+            {!generating && failedCount > 0 && (
+              <button
+                onClick={() => handleStartGeneration(true)}
+                className="flex items-center gap-1.5 text-xs py-1.5 px-4 rounded-full font-medium bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                <Play className="w-3 h-3" /> {t('drama.resumeFailed', { count: failedCount })}
+              </button>
+            )}
           </div>
-        ) : (
-          <p className="text-sm text-c-dim">{t('drama.noScenes')}</p>
+        )}
+
+        {!flowAvailable && shotsWithPrompt > 0 && (
+          <div className="text-xs text-c-dim flex items-center gap-2">
+            <Info className="w-3.5 h-3.5" />
+            {t('drama.installExtensionHint')}
+          </div>
         )}
       </div>
 
+      {/* Generation progress log */}
+      {genProgress.length > 0 && (
+        <div className="border border-c-border rounded-xl p-3 bg-c-surface max-h-32 overflow-y-auto text-xs text-c-muted space-y-0.5">
+          {genProgress.map((msg, i) => <div key={i}>{msg}</div>)}
+        </div>
+      )}
+
+      {/* Shot grid */}
+      {scenes.length > 0 ? (
+        <div className="space-y-4">
+          {scenes.map(scene => (
+            <div key={scene.id}>
+              <h3 className="text-xs font-medium text-c-muted mb-2">{scene.heading}</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {scene.shots.map(shot => {
+                  const globalIdx = allShots.indexOf(shot);
+                  const liveStatus = shotStatuses.get(shot.id);
+                  const displayStatus = liveStatus || (shot.keyframeUrl ? 'done' : shot.prompt ? 'pending' : undefined);
+                  return (
+                    <div
+                      key={shot.id}
+                      ref={el => { shotCardRefs.current[globalIdx] = el; }}
+                      className={clsx(
+                        'rounded-xl border overflow-hidden',
+                        displayStatus === 'done' ? 'border-emerald-500/30' :
+                        displayStatus === 'generating' ? 'border-cyan-500/30 animate-pulse' :
+                        displayStatus === 'error' ? 'border-red-500/30' :
+                        'border-c-border',
+                      )}
+                    >
+                      {/* Image area */}
+                      <div className="aspect-video bg-c-elevated flex items-center justify-center relative">
+                        {(shot.keyframeUrl || (liveStatus === 'done')) ? (
+                          <img src={shot.keyframeUrl} alt="" className="w-full h-full object-cover" />
+                        ) : displayStatus === 'generating' ? (
+                          <Loader2 className="w-5 h-5 text-cyan-400 animate-spin" />
+                        ) : (
+                          <Clapperboard className="w-5 h-5 text-c-dim" />
+                        )}
+                        {displayStatus === 'error' && (
+                          <div className="absolute inset-0 bg-red-900/20 flex items-center justify-center">
+                            <AlertTriangle className="w-5 h-5 text-red-400" />
+                          </div>
+                        )}
+                      </div>
+                      {/* Info */}
+                      <div className="px-2 py-1.5">
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <span className="font-medium text-c-text">{t('drama.shot', { n: shot.shotNumber })}</span>
+                          <span className="text-c-dim">{shot.duration}s</span>
+                          {shot.prompt && <span title="Has prompt"><Wand2 className="w-2.5 h-2.5 text-violet-400" /></span>}
+                        </div>
+                        <p className="text-[10px] text-c-dim truncate mt-0.5">{shot.description}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-c-dim">{t('drama.noScenes')}</p>
+      )}
+
+      {/* Audio section */}
       <div>
         <h3 className="text-sm font-medium text-c-text mb-3 flex items-center gap-2"><Music className="w-4 h-4" />{t('drama.audio')}</h3>
         <div className="card rounded-2xl p-6 text-center">
@@ -1129,6 +1380,7 @@ function VideoAudioTab({ scenes, episode }: { scenes: DramaScene[]; episode: Dra
         </div>
       </div>
 
+      {/* Subtitles section */}
       <div>
         <h3 className="text-sm font-medium text-c-text mb-3 flex items-center gap-2"><Type className="w-4 h-4" />{t('drama.subtitles')}</h3>
         <div className="card rounded-2xl p-6 text-center">

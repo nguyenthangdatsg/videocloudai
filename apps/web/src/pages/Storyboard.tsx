@@ -837,6 +837,7 @@ export function Storyboard() {
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [uploadingZip, setUploadingZip] = useState(false);
   const zipInputRef = useRef<HTMLInputElement>(null);
+  const imageCardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [imageTab, setImageTab] = useState<'generate' | 'upload' | 'flow'>('generate');
   const [flowAvailable, setFlowAvailable] = useState(false);
   const [flowProvider, setFlowProvider] = useState<'google-flow' | 'grok' | 'chatgpt'>('google-flow');
@@ -1375,6 +1376,13 @@ export function Storyboard() {
     if (!bgTask.running && bgTask.images.some((i) => i.status === 'done')) {
       setStep('images');
     }
+    // Auto-scroll to the currently generating image
+    if (bgTask.running) {
+      const genIdx = bgTask.images.findIndex((i) => i.status === 'generating');
+      if (genIdx >= 0) {
+        imageCardRefs.current[genIdx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
   }, [bgTask]);
 
   // ── Auto-save project state after step transitions ──
@@ -1660,6 +1668,14 @@ export function Storyboard() {
 
   // ── Step 4b-resume: Resume failed/pending images via Extension ──
   const failedImageCount = generatedImages.filter((i) => i.status === 'error' || i.status === 'pending').length;
+  const scrollToFirstPending = () => {
+    const idx = generatedImages.findIndex((i) => i.status === 'error' || i.status === 'pending');
+    if (idx >= 0) {
+      requestAnimationFrame(() => {
+        imageCardRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+  };
   const handleFlowResume = () => {
     if (!prompts.length || !projectId) return;
     setError(null);
@@ -1671,6 +1687,7 @@ export function Storyboard() {
       .map((p) => ({ timestamp: p.timestamp, prompt: p.prompt }));
     if (!failedPrompts.length) return;
     imageGenStore.startFlowGeneration(projectId, failedPrompts, 'image', generatedImages, flowProvider);
+    scrollToFirstPending();
   };
 
   // ── Step 4c: Regenerate single image via Google Flow ──
@@ -3106,7 +3123,7 @@ export function Storyboard() {
                     const isEditing = editingImageIdx === i;
                     const prompt = prompts[i];
                     return (
-                    <div key={i} className={clsx(
+                    <div key={i} ref={(el) => { imageCardRefs.current[i] = el; }} className={clsx(
                       'rounded-xl border overflow-hidden group/card',
                       img.status === 'done' ? 'border-green-800/30' : img.status === 'generating' ? 'border-cyan-800/30' : img.status === 'error' ? 'border-red-800/30' : 'border-c-border',
                     )}>

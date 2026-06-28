@@ -321,6 +321,22 @@ export function createDramaRouter(dramaService: DramaService): Router {
     }
   });
 
+  // Batch generate prompts for all shots missing prompts
+  router.post('/projects/:projectId/episodes/:episodeId/generate-all-prompts', async (req, res) => {
+    try {
+      const scenes = dramaService.listScenes(req.params.episodeId);
+      const shotsWithoutPrompt = scenes.flatMap(s => s.shots).filter(sh => !sh.prompt);
+      const results: Array<{ id: string; prompt: string }> = [];
+      for (const shot of shotsWithoutPrompt) {
+        const updated = await dramaService.generateShotPrompt(req.params.projectId, shot.id);
+        results.push({ id: updated.id, prompt: updated.prompt });
+      }
+      res.json({ generated: results.length, shots: results });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.post('/projects/:projectId/episodes/:episodeId/review', async (req, res) => {
     try {
       const result = await dramaService.reviewEpisode(req.params.projectId, req.params.episodeId);
