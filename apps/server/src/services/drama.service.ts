@@ -948,7 +948,7 @@ Scene mood: ${scene?.mood || 'neutral'}`,
     })!;
   }
 
-  async reviewEpisode(projectId: string, episodeId: string): Promise<{ score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string }> }> {
+  async reviewEpisode(projectId: string, episodeId: string): Promise<{ score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string; fix?: string }> }> {
     const project = this.getProject(projectId);
     if (!project) throw new Error('Project not found');
     const episode = this.getEpisode(episodeId);
@@ -968,7 +968,8 @@ Output ONLY valid JSON:
     {
       "area": "story|script|pacing|characters|visual",
       "severity": "critical|warning|suggestion",
-      "detail": "specific issue description"
+      "detail": "specific issue description",
+      "fix": "actionable recommendation to fix this issue"
     }
   ]
 }
@@ -993,7 +994,7 @@ Target duration: ${project.durationTarget}s`,
       maxTokens: 1500,
     });
 
-    let review: { score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string }> };
+    let review: { score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string; fix?: string }> };
     try {
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       review = jsonMatch ? JSON.parse(jsonMatch[0]) : { score: 0, feedback: 'Review failed', issues: [] };

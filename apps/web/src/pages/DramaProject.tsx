@@ -355,7 +355,10 @@ export function DramaProjectPage() {
                   {issue.severity === 'critical' ? <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" /> :
                    issue.severity === 'warning' ? <Info className="w-3.5 h-3.5 text-yellow-400 shrink-0 mt-0.5" /> :
                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-0.5" />}
-                  <span className="text-c-muted"><span className="text-c-text font-medium">{issue.area}:</span> {issue.detail}</span>
+                  <div>
+                    <span className="text-c-muted"><span className="text-c-text font-medium">{issue.area}:</span> {issue.detail}</span>
+                    {issue.fix && <div className="text-emerald-400 mt-0.5">↳ {issue.fix}</div>}
+                  </div>
                 </div>
               ))}
             </div>
