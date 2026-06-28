@@ -104,6 +104,10 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
                     ? { ...item, filename: image.filename, url: image.url, status: 'done' as const }
                     : item,
                 );
+                // Incrementally save to DB so images survive page reload
+                storyboardApi.updateProject(projectId, {
+                  generatedImages: updatedImages,
+                } as never).catch(() => {});
               }
 
               if (step === 'generating' && detail) {
@@ -240,6 +244,10 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
                     ? { ...item, filename: video.filename, url: video.url, status: 'done' as const, mediaType: 'video' as GenMediaType }
                     : item,
                 );
+                // Incrementally save to DB so videos survive page reload
+                storyboardApi.updateProject(projectId, {
+                  generatedImages: updatedImages,
+                } as never).catch(() => {});
               }
 
               if (step === 'generating' && detail) {
@@ -417,6 +425,12 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
           }
         }
         next.set(projectId, { ...t, images: updatedImages });
+
+        // Incrementally save to DB so images survive page reload
+        storyboardApi.updateProject(projectId, {
+          generatedImages: updatedImages,
+        } as never).catch(() => {});
+
         return { tasks: next };
       });
     };
