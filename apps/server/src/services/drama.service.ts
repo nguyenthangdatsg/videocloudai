@@ -969,10 +969,12 @@ Output ONLY valid JSON:
       "area": "story|script|pacing|characters|visual",
       "severity": "critical|warning|suggestion",
       "detail": "specific issue description",
-      "fix": "actionable recommendation to fix this issue"
+      "fix": "concrete, actionable step to resolve this (REQUIRED for every issue)"
     }
   ]
 }
+
+IMPORTANT: Every issue MUST include a "fix" field with a specific, actionable recommendation.
 
 Evaluate:
 - Hook strength (first 5 seconds)
