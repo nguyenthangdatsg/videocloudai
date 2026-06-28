@@ -29,6 +29,8 @@
     "search": "Tìm kiếm",
     "loading": "Đang tải...",
     "error": "Lỗi",
+    "serverOffline": "Server chưa chạy. Khởi động bằng: npm run dev",
+    "serverOfflineHint": "Chạy 'npm run dev' trong thư mục dự án, hoặc thêm script khởi động tự động.",
     "retry": "Thử lại",
     "success": "Thành công",
     "noData": "Không có dữ liệu",

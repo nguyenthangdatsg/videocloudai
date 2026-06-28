@@ -29,6 +29,8 @@
     "search": "Search",
     "loading": "Loading...",
     "error": "Error",
+    "serverOffline": "Server is not running. Start it with: npm run dev",
+    "serverOfflineHint": "Run 'npm run dev' in the project folder, or add the startup script to auto-start on boot.",
     "retry": "Retry",
     "success": "Success",
     "noData": "No data",

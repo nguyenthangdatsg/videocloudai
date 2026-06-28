@@ -947,7 +947,8 @@ export function StoryboardList() {
           ) : isError ? (
             <div className="text-center py-16 space-y-3">
               <X className="w-12 h-12 mx-auto text-red-400" />
-              <p className="text-sm text-red-300">{t('common.error')}</p>
+              <p className="text-sm font-medium text-red-300">{t('common.serverOffline')}</p>
+              <p className="text-xs text-c-dim">{t('common.serverOfflineHint')}</p>
               <button onClick={() => refetch()} className="btn-secondary text-xs">{t('common.retry')}</button>
             </div>
           ) : !filteredProjects.length ? (
