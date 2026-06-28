@@ -149,15 +149,25 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
       } catch (err) {
         const isAbort = (err as Error).name === 'AbortError';
 
+        const currentTask = get().tasks.get(projectId);
+        const updatedImages = (currentTask?.images ?? []).map((item) =>
+          item.status === 'pending' || item.status === 'generating'
+            ? { ...item, status: 'error' as const }
+            : item,
+        );
+
+        // Save partially-completed images to DB so they survive restarts
+        const doneCount = updatedImages.filter((i) => i.status === 'done').length;
+        if (doneCount > 0) {
+          storyboardApi.updateProject(projectId, {
+            generatedImages: updatedImages,
+          } as never).catch(() => {});
+        }
+
         set((s) => {
           const t = s.tasks.get(projectId);
           if (!t) return s;
           const next = new Map(s.tasks);
-          const updatedImages = t.images.map((item) =>
-            item.status === 'pending' || item.status === 'generating'
-              ? { ...item, status: 'error' as const }
-              : item,
-          );
           const updatedProgress = isAbort
             ? [...t.progress, 'Stopped by user.']
             : [...t.progress, (err as Error).message];
@@ -275,15 +285,25 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
       } catch (err) {
         const isAbort = (err as Error).name === 'AbortError';
 
+        const currentTask = get().tasks.get(projectId);
+        const updatedImages = (currentTask?.images ?? []).map((item) =>
+          item.status === 'pending' || item.status === 'generating'
+            ? { ...item, status: 'error' as const }
+            : item,
+        );
+
+        // Save partially-completed videos to DB so they survive restarts
+        const doneCount = updatedImages.filter((i) => i.status === 'done').length;
+        if (doneCount > 0) {
+          storyboardApi.updateProject(projectId, {
+            generatedImages: updatedImages,
+          } as never).catch(() => {});
+        }
+
         set((s) => {
           const t = s.tasks.get(projectId);
           if (!t) return s;
           const next = new Map(s.tasks);
-          const updatedImages = t.images.map((item) =>
-            item.status === 'pending' || item.status === 'generating'
-              ? { ...item, status: 'error' as const }
-              : item,
-          );
           const updatedProgress = isAbort
             ? [...t.progress, 'Stopped by user.']
             : [...t.progress, (err as Error).message];
@@ -316,11 +336,20 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
 
     // If existingImages provided (resume mode), keep done images and only reset failed/pending for the prompts being retried
     let initialImages: GenImage[];
+    // Maps extension subset index → full images array index (for resume mode)
+    let indexMap: number[] | null = null;
     if (existingImages) {
       const retryTimestamps = new Set(prompts.map(p => p.timestamp));
       initialImages = existingImages.map((img) =>
         retryTimestamps.has(img.timestamp) ? { ...img, status: 'pending' as const, filename: '', url: '' } : img,
       );
+      // Build mapping: extension sends index 0,1,2... for the subset; map to actual positions
+      indexMap = [];
+      for (let i = 0; i < initialImages.length; i++) {
+        if (retryTimestamps.has(initialImages[i].timestamp)) {
+          indexMap.push(i);
+        }
+      }
     } else {
       initialImages = prompts.map((p) => ({
         timestamp: p.timestamp,
@@ -344,6 +373,10 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
       return { tasks: next };
     });
 
+    // Resolve extension subset index to full images array index
+    const resolveIndex = (extIndex: number): number =>
+      indexMap ? (indexMap[extIndex] ?? extIndex) : extIndex;
+
     // Listen for events from bridge.js (Chrome extension)
     const onProgress = (e: Event) => {
       const d = (e as CustomEvent).detail;
@@ -354,8 +387,9 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
         const updatedProgress = d.detail ? [...t.progress, d.detail] : t.progress;
         let updatedImages = [...t.images];
         if (d.status === 'generating' && typeof d.index === 'number') {
+          const realIdx = resolveIndex(d.index);
           updatedImages = updatedImages.map((item, i) =>
-            i === d.index && item.status === 'pending' ? { ...item, status: 'generating' as const } : item,
+            i === realIdx && item.status === 'pending' ? { ...item, status: 'generating' as const } : item,
           );
         }
         next.set(projectId, { ...t, images: updatedImages, progress: updatedProgress });
@@ -370,14 +404,17 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
         if (!t) return s;
         const next = new Map(s.tasks);
         let updatedImages = [...t.images];
-        if (d.status === 'done' && typeof d.index === 'number') {
-          updatedImages = updatedImages.map((item, i) =>
-            i === d.index ? { ...item, filename: d.filename, url: d.url, status: 'done' as const } : item,
-          );
-        } else if (d.status === 'error' && typeof d.index === 'number') {
-          updatedImages = updatedImages.map((item, i) =>
-            i === d.index ? { ...item, status: 'error' as const } : item,
-          );
+        if (typeof d.index === 'number') {
+          const realIdx = resolveIndex(d.index);
+          if (d.status === 'done') {
+            updatedImages = updatedImages.map((item, i) =>
+              i === realIdx ? { ...item, filename: d.filename, url: d.url, status: 'done' as const } : item,
+            );
+          } else if (d.status === 'error') {
+            updatedImages = updatedImages.map((item, i) =>
+              i === realIdx ? { ...item, status: 'error' as const } : item,
+            );
+          }
         }
         next.set(projectId, { ...t, images: updatedImages });
         return { tasks: next };
@@ -435,11 +472,21 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     const onError = (e: Event) => {
       const d = (e as CustomEvent).detail;
       cleanup();
+      const currentTask = get().tasks.get(projectId);
+      const cleanImages = finalizeImages(currentTask?.images ?? []);
+
+      // Save partially-completed images to DB so they survive restarts
+      const doneCount = cleanImages.filter((i) => i.status === 'done').length;
+      if (doneCount > 0) {
+        storyboardApi.updateProject(projectId, {
+          generatedImages: cleanImages,
+        } as never).catch(() => {});
+      }
+
       set((s) => {
         const t = s.tasks.get(projectId);
         if (!t) return s;
         const next = new Map(s.tasks);
-        const cleanImages = finalizeImages(t.images);
         next.set(projectId, {
           ...t,
           images: cleanImages,
