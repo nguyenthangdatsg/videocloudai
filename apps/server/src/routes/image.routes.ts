@@ -671,5 +671,47 @@ export function createImageRouter(): Router {
     res.json({ items: saved, count: saved.length });
   });
 
+  // ── Prompt Cache ─────────────────────────────────────────────────
+  // Hash helper for prompt text
+  const hashPrompt = (prompt: string): string =>
+    crypto.createHash('sha256').update(prompt.trim().toLowerCase()).digest('hex').slice(0, 32);
+
+  // Check cache for existing images matching prompts
+  router.post('/prompt-cache/check', (req: Request, res: Response) => {
+    const { prompts } = req.body as { prompts?: Array<{ timestamp: string; prompt: string }> };
+    if (!prompts?.length) { res.json({ cached: [] }); return; }
+
+    const cached: Array<{ timestamp: string; filename: string; url: string }> = [];
+    for (const p of prompts) {
+      const hash = hashPrompt(p.prompt);
+      const row = dbGet<{ filename: string; url: string }>('SELECT filename, url FROM image_prompt_cache WHERE prompt_hash = ?', [hash]);
+      if (row && fs.existsSync(path.join(outputDir, path.basename(row.filename)))) {
+        cached.push({ timestamp: p.timestamp, filename: row.filename, url: row.url });
+      }
+    }
+    console.log(`[prompt-cache/check] ${cached.length}/${prompts.length} cached`);
+    res.json({ cached });
+  });
+
+  // Save prompt→file mapping after generation
+  router.post('/prompt-cache/save', (req: Request, res: Response) => {
+    const { entries } = req.body as { entries?: Array<{ prompt: string; filename: string; url: string }> };
+    if (!entries?.length) { res.json({ saved: 0 }); return; }
+
+    let saved = 0;
+    const now = new Date().toISOString();
+    for (const entry of entries) {
+      const hash = hashPrompt(entry.prompt);
+      try {
+        dbRun(
+          `INSERT OR REPLACE INTO image_prompt_cache (prompt_hash, prompt_text, filename, url, created_at) VALUES (?, ?, ?, ?, ?)`,
+          [hash, entry.prompt.trim().slice(0, 500), entry.filename, entry.url, now],
+        );
+        saved++;
+      } catch { /* skip duplicates */ }
+    }
+    res.json({ saved });
+  });
+
   return router;
 }

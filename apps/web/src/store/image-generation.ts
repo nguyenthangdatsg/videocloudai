@@ -345,17 +345,18 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     // If existingImages provided (resume mode), keep done images and only reset failed/pending for the prompts being retried
     let initialImages: GenImage[];
     // Maps extension subset index → full images array index (for resume mode)
-    let indexMap: number[] | null = null;
+    // Use mutable ref object so async callbacks see the latest value
+    const indexMapRef: { current: number[] | null } = { current: null };
     if (existingImages) {
       const retryTimestamps = new Set(prompts.map(p => p.timestamp));
       initialImages = existingImages.map((img) =>
         retryTimestamps.has(img.timestamp) ? { ...img, status: 'pending' as const, filename: '', url: '' } : img,
       );
       // Build mapping: extension sends index 0,1,2... for the subset; map to actual positions
-      indexMap = [];
+      indexMapRef.current = [];
       for (let i = 0; i < initialImages.length; i++) {
         if (retryTimestamps.has(initialImages[i].timestamp)) {
-          indexMap.push(i);
+          indexMapRef.current.push(i);
         }
       }
     } else {
@@ -381,9 +382,94 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
       return { tasks: next };
     });
 
+    // Check prompt cache first — use existing images for matching prompts
+    imageApi.checkPromptCache(prompts).then(({ cached }) => {
+      if (cached.length > 0) {
+        set((s) => {
+          const t = s.tasks.get(projectId);
+          if (!t) return s;
+          const next = new Map(s.tasks);
+          let updatedImages = [...t.images];
+          const cachedTimestamps = new Set<string>();
+          for (const c of cached) {
+            cachedTimestamps.add(c.timestamp);
+            updatedImages = updatedImages.map((item) =>
+              item.timestamp === c.timestamp && item.status !== 'done'
+                ? { ...item, filename: c.filename, url: c.url, status: 'done' as const }
+                : item,
+            );
+          }
+          // Update indexMap: remove cached items from the subset sent to extension
+          if (indexMapRef.current) {
+            indexMapRef.current = indexMapRef.current.filter((realIdx) => !cachedTimestamps.has(updatedImages[realIdx]?.timestamp));
+          }
+          next.set(projectId, {
+            ...t,
+            images: updatedImages,
+            progress: [...t.progress, `Found ${cached.length} cached images, skipping regeneration.`],
+          });
+
+          // Save to DB immediately
+          storyboardApi.updateProject(projectId, { generatedImages: updatedImages } as never).catch(() => {});
+
+          return { tasks: next };
+        });
+
+        // Filter out cached prompts from what we send to the extension
+        const cachedTimestamps = new Set(cached.map(c => c.timestamp));
+        const uncachedPrompts = prompts.filter(p => !cachedTimestamps.has(p.timestamp));
+
+        if (uncachedPrompts.length === 0) {
+          // All cached — finish immediately
+          const finalTask = get().tasks.get(projectId);
+          if (finalTask) {
+            set((s) => {
+              const next = new Map(s.tasks);
+              next.set(projectId, { ...finalTask, running: false, abortController: null,
+                progress: [...finalTask.progress, `All ${cached.length} images loaded from cache.`] });
+              return { tasks: next };
+            });
+            useAppStore.getState().pushNotification({
+              id: `flow-cache-${projectId}-${Date.now()}`,
+              type: 'success',
+              title: `All images from cache`,
+              message: `${cached.length} images loaded from prompt cache`,
+            });
+          }
+          return;
+        }
+
+        // Rebuild indexMap for uncached subset
+        const currentTask = get().tasks.get(projectId);
+        if (currentTask) {
+          indexMapRef.current = [];
+          for (let i = 0; i < currentTask.images.length; i++) {
+            if (uncachedPrompts.some(p => p.timestamp === currentTask.images[i].timestamp)) {
+              indexMapRef.current.push(i);
+            }
+          }
+        }
+
+        // Dispatch only uncached prompts to extension
+        window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
+          detail: { prompts: uncachedPrompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
+        }));
+      } else {
+        // No cache hits — send all prompts to extension
+        window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
+          detail: { prompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
+        }));
+      }
+    }).catch(() => {
+      // Cache check failed — send all prompts to extension
+      window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
+        detail: { prompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
+      }));
+    });
+
     // Resolve extension subset index to full images array index
     const resolveIndex = (extIndex: number): number =>
-      indexMap ? (indexMap[extIndex] ?? extIndex) : extIndex;
+      indexMapRef.current ? (indexMapRef.current[extIndex] ?? extIndex) : extIndex;
 
     // Listen for events from bridge.js (Chrome extension)
     const onProgress = (e: Event) => {
@@ -418,6 +504,11 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
             updatedImages = updatedImages.map((item, i) =>
               i === realIdx ? { ...item, filename: d.filename, url: d.url, status: 'done' as const } : item,
             );
+            // Save to prompt cache so future runs reuse this image
+            const matchedPrompt = prompts.find(p => p.timestamp === updatedImages[realIdx]?.timestamp);
+            if (matchedPrompt) {
+              imageApi.savePromptCache([{ prompt: matchedPrompt.prompt, filename: d.filename, url: d.url }]).catch(() => {});
+            }
           } else if (d.status === 'error') {
             updatedImages = updatedImages.map((item, i) =>
               i === realIdx ? { ...item, status: 'error' as const } : item,
@@ -522,11 +613,6 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     window.addEventListener('h2dev_flow_image', onImage);
     window.addEventListener('h2dev_flow_done', onDone);
     window.addEventListener('h2dev_flow_error', onError);
-
-    // Dispatch start event to bridge.js
-    window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
-      detail: { prompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
-    }));
   },
 
   stopGeneration: (projectId) => {

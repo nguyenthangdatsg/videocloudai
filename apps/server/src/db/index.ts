@@ -88,6 +88,14 @@ export function getDb(): Database.Database {
     `ALTER TABLE storyboard_templates ADD COLUMN stage_prompts TEXT NOT NULL DEFAULT '{}'`,
     `ALTER TABLE storyboard_templates ADD COLUMN stage_parts TEXT NOT NULL DEFAULT '{}'`,
     `ALTER TABLE storyboard_templates ADD COLUMN visual_style TEXT NOT NULL DEFAULT ''`,
+    `CREATE TABLE IF NOT EXISTS image_prompt_cache (
+      prompt_hash TEXT PRIMARY KEY,
+      prompt_text TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      url TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_image_prompt_cache_hash ON image_prompt_cache(prompt_hash)`,
     `ALTER TABLE storyboards ADD COLUMN bg_music_filename TEXT`,
     `ALTER TABLE storyboards ADD COLUMN voice_volume REAL NOT NULL DEFAULT 1.0`,
     `ALTER TABLE storyboards ADD COLUMN music_volume REAL NOT NULL DEFAULT 0.3`,

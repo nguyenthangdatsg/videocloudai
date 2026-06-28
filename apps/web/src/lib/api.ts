@@ -437,6 +437,10 @@ export const imageApi = {
   },
   uploadSingle: (dataUrl: string, filename?: string) =>
     api.post<{ filename: string; url: string }>('/image/upload', { dataUrl, filename }).then((r) => r.data),
+  checkPromptCache: (prompts: Array<{ timestamp: string; prompt: string }>) =>
+    api.post<{ cached: Array<{ timestamp: string; filename: string; url: string }> }>('/image/prompt-cache/check', { prompts }).then((r) => r.data),
+  savePromptCache: (entries: Array<{ prompt: string; filename: string; url: string }>) =>
+    api.post<{ saved: number }>('/image/prompt-cache/save', { entries }).then((r) => r.data),
   // Video generation
   videoProviders: () =>
     api.get<{ available: boolean; models: string[] }>('/image/video/providers').then((r) => r.data),
