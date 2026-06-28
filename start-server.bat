@@ -38,10 +38,16 @@ if not exist "node_modules" (
     )
 )
 
-:: Check if port 3001 is already in use
-netstat -ano | findstr ":3001 " | findstr "LISTENING" >nul 2>&1
+:: Check if ports are already in use
+netstat -ano | findstr ":3002 " | findstr "LISTENING" >nul 2>&1
 if not errorlevel 1 (
-    echo [WARN] Port 3001 is already in use. Server may already be running.
+    echo [WARN] Port 3002 (backend) is already in use. Server may already be running.
+    echo Press any key to continue anyway, or close this window to cancel.
+    pause
+)
+netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo [WARN] Port 5174 (frontend) is already in use.
     echo Press any key to continue anyway, or close this window to cancel.
     pause
 )
@@ -49,7 +55,7 @@ if not errorlevel 1 (
 echo.
 echo [START] Running npm run dev...
 echo   Frontend: http://localhost:5174
-echo   Backend:  http://localhost:3001/api
+echo   Backend:  http://localhost:3002/api
 echo ============================================
 echo.
 
