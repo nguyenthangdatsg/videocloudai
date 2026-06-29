@@ -441,6 +441,8 @@ export const imageApi = {
     api.post<{ cached: Array<{ timestamp: string; filename: string; url: string }> }>('/image/prompt-cache/check', { prompts }).then((r) => r.data),
   savePromptCache: (entries: Array<{ prompt: string; filename: string; url: string }>) =>
     api.post<{ saved: number }>('/image/prompt-cache/save', { entries }).then((r) => r.data),
+  clearPromptCache: (prompts?: string[]) =>
+    api.post<{ cleared: number }>('/image/prompt-cache/clear', { prompts }).then((r) => r.data),
   // Video generation
   videoProviders: () =>
     api.get<{ available: boolean; models: string[] }>('/image/video/providers').then((r) => r.data),
@@ -719,6 +721,8 @@ export const dramaApi = {
   generateShotPrompt: (projectId: string, shotId: string) => api.post<DramaShot>(`/drama/projects/${projectId}/shots/${shotId}/generate-prompt`).then(r => r.data),
   generateAllPrompts: (projectId: string, episodeId: string) => api.post<{ generated: number; shots: Array<{ id: string; prompt: string }> }>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-all-prompts`).then(r => r.data),
   reviewEpisode: (projectId: string, episodeId: string) => api.post<{ score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string; fix?: string }> }>(`/drama/projects/${projectId}/episodes/${episodeId}/review`).then(r => r.data),
+  applyReviewFixes: (projectId: string, episodeId: string, issues: Array<{ area: string; severity: string; detail: string; fix?: string }>) => api.post<DramaEpisode>(`/drama/projects/${projectId}/episodes/${episodeId}/apply-fixes`, { issues }).then(r => r.data),
+  clearEpisodeImages: (projectId: string, episodeId: string) => api.delete<{ cleared: number }>(`/drama/projects/${projectId}/episodes/${episodeId}/images`).then(r => r.data),
 
   // Stats
   stats: () => api.get('/drama/stats').then(r => r.data),

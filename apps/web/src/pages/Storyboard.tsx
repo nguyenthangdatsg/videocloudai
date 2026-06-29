@@ -1207,11 +1207,11 @@ export function Storyboard() {
   // Check if Google Flow extension bridge is available
   useEffect(() => {
     const onPong = () => setFlowAvailable(true);
-    window.addEventListener('h2dev_flow_pong', onPong);
-    window.dispatchEvent(new CustomEvent('h2dev_flow_ping'));
-    const timer = setTimeout(() => window.dispatchEvent(new CustomEvent('h2dev_flow_ping')), 1500);
+    window.addEventListener('Han2YT_flow_pong', onPong);
+    window.dispatchEvent(new CustomEvent('Han2YT_flow_ping'));
+    const timer = setTimeout(() => window.dispatchEvent(new CustomEvent('Han2YT_flow_ping')), 1500);
     return () => {
-      window.removeEventListener('h2dev_flow_pong', onPong);
+      window.removeEventListener('Han2YT_flow_pong', onPong);
       clearTimeout(timer);
     };
   }, []);
@@ -1654,9 +1654,38 @@ export function Storyboard() {
   };
 
   // ── Step 4b: Generate via Extension (Google Flow / Grok / ChatGPT) ──
+  // Smart generate: if images already exist, only generate missing/failed ones (resume behavior)
   const handleFlowGenerate = () => {
     if (!prompts.length || !projectId) return;
     setError(null);
+    // If we already have images, skip the done ones
+    if (generatedImages.length > 0 && generatedImages.some((i) => i.status === 'done')) {
+      const pendingPrompts = prompts
+        .filter((_, i) => {
+          const img = generatedImages[i];
+          return !img || img.status !== 'done';
+        })
+        .map((p) => ({ timestamp: p.timestamp, prompt: p.prompt }));
+      if (!pendingPrompts.length) return; // all done
+      imageGenStore.startFlowGeneration(projectId, pendingPrompts, 'image', generatedImages, flowProvider);
+    } else {
+      imageGenStore.startFlowGeneration(
+        projectId,
+        prompts.map((p) => ({ timestamp: p.timestamp, prompt: p.prompt })),
+        'image',
+        undefined,
+        flowProvider,
+      );
+    }
+  };
+
+  // Regenerate ALL images from scratch (clears existing, sends all prompts)
+  const handleFlowRegenerateAll = () => {
+    if (!prompts.length || !projectId) return;
+    setError(null);
+    // Clear prompt cache for these prompts
+    const promptTexts = prompts.map(p => p.prompt).filter(Boolean);
+    if (promptTexts.length) imageApi.clearPromptCache(promptTexts);
     imageGenStore.startFlowGeneration(
       projectId,
       prompts.map((p) => ({ timestamp: p.timestamp, prompt: p.prompt })),
@@ -1731,10 +1760,10 @@ export function Storyboard() {
       }
     };
     const cleanup = () => {
-      window.removeEventListener('h2dev_flow_progress', onProgress);
-      window.removeEventListener('h2dev_flow_image', onImage);
-      window.removeEventListener('h2dev_flow_done', onDone);
-      window.removeEventListener('h2dev_flow_error', onError);
+      window.removeEventListener('Han2YT_flow_progress', onProgress);
+      window.removeEventListener('Han2YT_flow_image', onImage);
+      window.removeEventListener('Han2YT_flow_done', onDone);
+      window.removeEventListener('Han2YT_flow_error', onError);
       setRegenIndex(null);
     };
     const onDone = () => {
@@ -1747,12 +1776,12 @@ export function Storyboard() {
       cleanup();
     };
 
-    window.addEventListener('h2dev_flow_progress', onProgress);
-    window.addEventListener('h2dev_flow_image', onImage);
-    window.addEventListener('h2dev_flow_done', onDone);
-    window.addEventListener('h2dev_flow_error', onError);
+    window.addEventListener('Han2YT_flow_progress', onProgress);
+    window.addEventListener('Han2YT_flow_image', onImage);
+    window.addEventListener('Han2YT_flow_done', onDone);
+    window.addEventListener('Han2YT_flow_error', onError);
 
-    window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
+    window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
       detail: {
         prompts: [{ timestamp: prompts[idx].timestamp, prompt: prompts[idx].prompt }],
         delayMin: 0,
@@ -2005,6 +2034,8 @@ export function Storyboard() {
   const currentIdx = stepOrder.indexOf(step);
 
   const doneImageCount = generatedImages.filter((i) => i.status === 'done').length;
+  const errorImageCount = generatedImages.filter((i) => i.status === 'error').length;
+  const pendingImageCount = generatedImages.filter((i) => i.status === 'pending').length;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -2742,14 +2773,67 @@ export function Storyboard() {
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium text-c-text flex items-center gap-2">
                   {mediaType === 'video' ? <Video className="w-4 h-4 text-violet-400" /> : <Image className="w-4 h-4 text-cyan-400" />}
-                  {mediaType === 'video' ? t('storyboard.stepVideos') : t('storyboard.stepImages')} ({doneImageCount}/{prompts.length})
+                  {mediaType === 'video' ? t('storyboard.stepVideos') : t('storyboard.stepImages')}
+                  <span className="text-xs font-normal text-c-muted">
+                    {generatedImages.length > 0 ? (
+                      <>
+                        <span className="text-emerald-400">{doneImageCount} {t('storyboard.imgDone')}</span>
+                        {errorImageCount > 0 && <> · <span className="text-red-400">{errorImageCount} {t('storyboard.imgFailed')}</span></>}
+                        {pendingImageCount > 0 && <> · <span className="text-yellow-400">{pendingImageCount} {t('storyboard.imgPending')}</span></>}
+                        <span className="text-c-dim"> / {prompts.length} {t('storyboard.total')}</span>
+                      </>
+                    ) : (
+                      <>({prompts.length} {t('storyboard.stepPrompts').toLowerCase()})</>
+                    )}
+                  </span>
                 </h3>
-                {doneImageCount > 0 && !generatingImages && (
-                  <button onClick={handleBuildTimeline} className="btn-primary text-xs flex items-center gap-1">
-                    {t('storyboard.buildTimeline')} <ArrowRight className="w-3 h-3" />
-                  </button>
+                {!generatingImages && generatedImages.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    {/* Resume failed */}
+                    {flowAvailable && failedImageCount > 0 && regenIndex === null && (
+                      <button
+                        onClick={handleFlowResume}
+                        className="text-xs py-1.5 px-3 rounded-lg font-medium flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white transition-colors"
+                      >
+                        <RefreshCw className="w-3 h-3" /> {t('storyboard.resumeFailed', { count: failedImageCount })}
+                      </button>
+                    )}
+                    {/* Clear all */}
+                    {doneImageCount > 0 && (
+                      <button
+                        onClick={() => {
+                          if (!confirm(t('storyboard.clearImagesConfirm'))) return;
+                          const cleared = generatedImages.map(img => ({ ...img, status: 'pending' as const, filename: '', url: '' }));
+                          setGeneratedImages(cleared);
+                          const clearedSegments = segments.map(s => ({ ...s, imageFilename: '', imageUrl: '', videoFilename: '', videoUrl: '' }));
+                          setSegments(clearedSegments);
+                          saveProject({ generatedImages: cleared, segments: clearedSegments });
+                          const promptTexts = prompts.map(p => p.prompt).filter(Boolean);
+                          if (promptTexts.length) imageApi.clearPromptCache(promptTexts);
+                        }}
+                        className="text-xs py-1.5 px-3 rounded-lg font-medium flex items-center gap-1.5 bg-red-600/10 text-red-400 hover:bg-red-600/20 transition-colors"
+                      >
+                        <Trash2 className="w-3 h-3" /> {t('storyboard.clearAllImages')} ({doneImageCount})
+                      </button>
+                    )}
+                    {/* Build timeline */}
+                    {doneImageCount > 0 && (
+                      <button onClick={handleBuildTimeline} className="btn-primary text-xs flex items-center gap-1">
+                        {t('storyboard.buildTimeline')} <ArrowRight className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
+
+              {/* Progress bar */}
+              {generatedImages.length > 0 && (
+                <div className="w-full h-2 rounded-full bg-c-elevated overflow-hidden flex">
+                  {doneImageCount > 0 && <div className="bg-emerald-500 transition-all" style={{ width: `${(doneImageCount / generatedImages.length) * 100}%` }} />}
+                  {errorImageCount > 0 && <div className="bg-red-500 transition-all" style={{ width: `${(errorImageCount / generatedImages.length) * 100}%` }} />}
+                  {pendingImageCount > 0 && <div className="bg-yellow-500/40 transition-all" style={{ width: `${(pendingImageCount / generatedImages.length) * 100}%` }} />}
+                </div>
+              )}
 
               {/* Media Type Toggle: Image / Video */}
               <div className="flex items-center gap-2 flex-wrap">
@@ -2784,7 +2868,7 @@ export function Storyboard() {
                       <Globe className="w-8 h-8 text-violet-400/50" />
                       <span className="text-sm text-c-text font-medium">Extension Not Detected</span>
                       <span className="text-xs text-c-dim text-center max-w-md">
-                        Install the <b>generate_image_flow_videocloudai</b> Chrome extension and reload this page.
+                        Install the <b>Han2YT</b> Chrome extension and reload this page.
                         Open Google Flow, switch to <b>Video mode</b>, then come back here to generate.
                       </span>
                     </div>
@@ -2979,7 +3063,7 @@ export function Storyboard() {
                       <Globe className="w-8 h-8 text-violet-400/50" />
                       <span className="text-sm text-c-text font-medium">Extension Not Detected</span>
                       <span className="text-xs text-c-dim text-center max-w-md">
-                        Install the <b>generate_image_flow_videocloudai</b> Chrome extension and reload this page.
+                        Install the <b>Han2YT</b> Chrome extension and reload this page.
                         The extension will open {flowProvider === 'google-flow' ? 'Google Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT'}, type each prompt, wait for the image, and send it back here automatically.
                       </span>
                     </div>
@@ -2994,26 +3078,56 @@ export function Storyboard() {
                           <p>The extension will open {flowProvider === 'google-flow' ? 'Google Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT'} tab, type each prompt one by one, wait for the generated image, and upload it back here.</p>
                           <p className="text-amber-300/80">Close DevTools (F12) on the target tab and do not dismiss the yellow &quot;debugging&quot; bar while running.</p>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={generatingImages ? handleStopImages : handleFlowGenerate}
-                            disabled={!prompts.length && !generatingImages}
-                            className={clsx(
-                              'text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5',
-                              generatingImages ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50',
-                            )}
-                          >
-                            {generatingImages ? <><Square className="w-3 h-3" /> Stop</> : <><Globe className="w-3.5 h-3.5" /> Generate {prompts.length} images via {flowProvider === 'google-flow' ? 'Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT'}</>}
-                          </button>
-                          {!generatingImages && failedImageCount > 0 && (
+                        <div className="flex items-center gap-3 flex-wrap">
+                          {generatingImages ? (
+                            <button
+                              onClick={handleStopImages}
+                              className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white"
+                            >
+                              <Square className="w-3 h-3" /> Stop
+                            </button>
+                          ) : doneImageCount > 0 && failedImageCount === 0 && pendingImageCount === 0 ? (
+                            /* All done — show Regenerate All */
+                            <button
+                              onClick={handleFlowRegenerateAll}
+                              disabled={!prompts.length}
+                              className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" /> Regenerate all {prompts.length} images
+                            </button>
+                          ) : failedImageCount > 0 || pendingImageCount > 0 ? (
+                            /* Some failed/pending — show Resume (skips done) */
                             <button
                               onClick={handleFlowResume}
-                              className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+                              disabled={!prompts.length}
+                              className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
                             >
-                              <RefreshCw className="w-3.5 h-3.5" /> Resume {failedImageCount} failed
+                              <RefreshCw className="w-3.5 h-3.5" /> Resume {failedImageCount + pendingImageCount} remaining
+                            </button>
+                          ) : (
+                            /* No images yet — show Generate */
+                            <button
+                              onClick={handleFlowGenerate}
+                              disabled={!prompts.length}
+                              className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
+                            >
+                              <Globe className="w-3.5 h-3.5" /> Generate {prompts.length} images via {flowProvider === 'google-flow' ? 'Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT'}
                             </button>
                           )}
-                          <span className="text-[10px] text-c-dim">{prompts.length} prompts queued</span>
+                          {/* Always show Regenerate All as secondary when there are partial results */}
+                          {!generatingImages && doneImageCount > 0 && (failedImageCount > 0 || pendingImageCount > 0) && (
+                            <button
+                              onClick={handleFlowRegenerateAll}
+                              className="text-xs py-2 px-3 rounded-lg font-medium flex items-center gap-1.5 border border-violet-600/50 text-violet-300 hover:bg-violet-600/20 transition-colors"
+                            >
+                              <RefreshCw className="w-3 h-3" /> Regenerate all
+                            </button>
+                          )}
+                          <span className="text-[10px] text-c-dim">
+                            {doneImageCount > 0
+                              ? `${doneImageCount}/${prompts.length} done`
+                              : `${prompts.length} prompts queued`}
+                          </span>
                         </div>
                       </div>
 

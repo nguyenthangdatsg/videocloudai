@@ -30,6 +30,7 @@ import {
   Type,
   Clapperboard,
   Settings,
+  Wrench,
 } from 'lucide-react';
 import { dramaApi } from '../lib/api';
 import type {
@@ -248,6 +249,16 @@ export function DramaProjectPage() {
     onError: onMutationError,
   });
 
+  const applyFixesMutation = useMutation({
+    mutationFn: (issues: Array<{ area: string; severity: string; detail: string; fix?: string }>) =>
+      dramaApi.applyReviewFixes(id!, selectedEpisodeId!, issues),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['drama', 'episodes'] });
+      reviewMutation.reset();
+    },
+    onError: onMutationError,
+  });
+
   if (projectLoading) {
     return <div className="flex-1 flex items-center justify-center bg-c-bg text-c-muted">{t('common.loading')}</div>;
   }
@@ -346,19 +357,38 @@ export function DramaProjectPage() {
             )}>
               {reviewMutation.data.score}/100
             </div>
-            <span className="text-sm text-c-muted">{reviewMutation.data.feedback}</span>
+            <span className="text-sm text-c-muted flex-1">{reviewMutation.data.feedback}</span>
+            {reviewMutation.data.issues.length > 0 && (
+              <button
+                onClick={() => applyFixesMutation.mutate(reviewMutation.data!.issues)}
+                disabled={applyFixesMutation.isPending}
+                className="btn-ghost flex items-center gap-1.5 text-xs rounded-full bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-40"
+              >
+                {applyFixesMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+                {applyFixesMutation.isPending ? t('drama.applyingFixes') : t('drama.applyAllFixes')}
+              </button>
+            )}
           </div>
           {reviewMutation.data.issues.length > 0 && (
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               {reviewMutation.data.issues.map((issue, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs">
                   {issue.severity === 'critical' ? <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" /> :
                    issue.severity === 'warning' ? <Info className="w-3.5 h-3.5 text-yellow-400 shrink-0 mt-0.5" /> :
                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-0.5" />}
-                  <div>
+                  <div className="flex-1">
                     <span className="text-c-muted"><span className="text-c-text font-medium">{issue.area}:</span> {issue.detail}</span>
                     {issue.fix && <div className="text-emerald-400 mt-0.5">↳ {issue.fix}</div>}
                   </div>
+                  {issue.fix && (
+                    <button
+                      onClick={() => applyFixesMutation.mutate([issue])}
+                      disabled={applyFixesMutation.isPending}
+                      className="shrink-0 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-40 transition-colors"
+                    >
+                      {t('drama.applyFix')}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -1081,11 +1111,11 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
   // Check if extension is available (ping/pong like Storyboard)
   useEffect(() => {
     const onPong = () => setFlowAvailable(true);
-    window.addEventListener('h2dev_flow_pong', onPong);
-    window.dispatchEvent(new CustomEvent('h2dev_flow_ping'));
-    const timer = setTimeout(() => window.dispatchEvent(new CustomEvent('h2dev_flow_ping')), 1500);
+    window.addEventListener('Han2YT_flow_pong', onPong);
+    window.dispatchEvent(new CustomEvent('Han2YT_flow_ping'));
+    const timer = setTimeout(() => window.dispatchEvent(new CustomEvent('Han2YT_flow_ping')), 1500);
     return () => {
-      window.removeEventListener('h2dev_flow_pong', onPong);
+      window.removeEventListener('Han2YT_flow_pong', onPong);
       clearTimeout(timer);
     };
   }, []);
@@ -1166,10 +1196,10 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
     };
 
     const cleanup = () => {
-      window.removeEventListener('h2dev_flow_progress', onProgress);
-      window.removeEventListener('h2dev_flow_image', onImage);
-      window.removeEventListener('h2dev_flow_done', onDone);
-      window.removeEventListener('h2dev_flow_error', onError);
+      window.removeEventListener('Han2YT_flow_progress', onProgress);
+      window.removeEventListener('Han2YT_flow_image', onImage);
+      window.removeEventListener('Han2YT_flow_done', onDone);
+      window.removeEventListener('Han2YT_flow_error', onError);
       cleanupRef.current = null;
     };
 
@@ -1202,19 +1232,19 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
       finalize();
     };
 
-    window.addEventListener('h2dev_flow_progress', onProgress);
-    window.addEventListener('h2dev_flow_image', onImage);
-    window.addEventListener('h2dev_flow_done', onDone);
-    window.addEventListener('h2dev_flow_error', onError);
+    window.addEventListener('Han2YT_flow_progress', onProgress);
+    window.addEventListener('Han2YT_flow_image', onImage);
+    window.addEventListener('Han2YT_flow_done', onDone);
+    window.addEventListener('Han2YT_flow_error', onError);
     cleanupRef.current = cleanup;
 
-    window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
+    window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
       detail: { prompts, delayMin: 5, delayMax: 15, mediaType: 'image', provider: flowProvider },
     }));
   };
 
   const handleStop = () => {
-    window.dispatchEvent(new CustomEvent('h2dev_flow_stop'));
+    window.dispatchEvent(new CustomEvent('Han2YT_flow_stop'));
     setShotStatuses(prev => {
       const next = new Map(prev);
       for (const [id, status] of next) {
@@ -1310,6 +1340,23 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
             <Info className="w-3.5 h-3.5" />
             {t('drama.installExtensionHint')}
           </div>
+        )}
+
+        {/* Clear all images */}
+        {shotsWithImage > 0 && !generating && (
+          <button
+            onClick={() => {
+              if (!confirm(t('drama.clearImagesConfirm'))) return;
+              dramaApi.clearEpisodeImages(projectId, episodeId).then(() => {
+                setShotStatuses(new Map());
+                queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+              });
+            }}
+            className="flex items-center gap-1.5 text-xs py-1.5 px-4 rounded-full font-medium bg-red-600/10 text-red-400 hover:bg-red-600/20 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {t('drama.clearAllImages')} ({shotsWithImage})
+          </button>
         )}
       </div>
 

@@ -760,6 +760,18 @@ Output ONLY valid JSON array. Each location has:
     return this.getShot(id);
   }
 
+  clearEpisodeImages(episodeId: string): number {
+    const scenes = this.listScenes(episodeId);
+    const sceneIds = scenes.map(s => s.id);
+    if (sceneIds.length === 0) return 0;
+    const placeholders = sceneIds.map(() => '?').join(',');
+    const { changes } = dbRun(
+      `UPDATE drama_shots SET keyframe_path = NULL, generation_status = 'pending' WHERE scene_id IN (${placeholders}) AND keyframe_path IS NOT NULL`,
+      sceneIds
+    );
+    return changes;
+  }
+
   deleteShot(id: string): boolean {
     const { changes } = dbRun('DELETE FROM drama_shots WHERE id = ?', [id]);
     return changes > 0;
@@ -960,54 +972,109 @@ Scene mood: ${scene?.mood || 'neutral'}`,
       systemPrompt: `You are a senior drama producer reviewing a short-form vertical drama episode.
 Score the episode quality and identify specific issues.
 
-Output ONLY valid JSON:
+Output ONLY valid JSON (keep it compact, max 5 issues):
 {
   "score": 0-100,
-  "feedback": "overall assessment in 2-3 sentences",
+  "feedback": "overall assessment in 1-2 sentences",
   "issues": [
     {
       "area": "story|script|pacing|characters|visual",
       "severity": "critical|warning|suggestion",
-      "detail": "specific issue description",
-      "fix": "concrete, actionable step to resolve this (REQUIRED for every issue)"
+      "detail": "brief issue description",
+      "fix": "concrete fix step"
     }
   ]
 }
 
-IMPORTANT: Every issue MUST include a "fix" field with a specific, actionable recommendation.
+Rules:
+- Every issue MUST include a "fix" field
+- Keep detail and fix fields SHORT (under 50 words each)
+- Maximum 5 issues, prioritize by severity
+- Output MUST be valid, complete JSON — do NOT truncate
 
-Evaluate:
-- Hook strength (first 5 seconds)
-- Dialogue naturalness (no exposition dumps)
-- Pacing (appropriate for ${project.durationTarget}s)
-- Character consistency
-- Emotional arc completion
-- Cliffhanger/ending impact
-- Shot variety and visual interest${langInstruction(project.language)}`,
+Evaluate: hook strength, dialogue naturalness, pacing (${project.durationTarget}s target), character consistency, emotional arc, ending impact, visual variety${langInstruction(project.language)}`,
       userMessage: `Review this ${project.genre} drama episode:
 
 Synopsis: ${episode.synopsis}
-Beats: ${JSON.stringify(episode.beats)}
 Script: ${episode.script}
-Scenes: ${scenes.length} scenes with ${scenes.reduce((sum, s) => sum + s.shots.length, 0)} total shots
-Characters: ${characters.map(c => `${c.name} (${c.role})`).join(', ')}
-Target duration: ${project.durationTarget}s`,
+Scenes: ${scenes.length} scenes, ${scenes.reduce((sum, s) => sum + s.shots.length, 0)} shots
+Characters: ${characters.map(c => `${c.name} (${c.role})`).join(', ')}`,
       temperature: 0.5,
-      maxTokens: 1500,
+      maxTokens: 2000,
     });
 
     let review: { score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string; fix?: string }> };
     try {
       const jsonMatch = response.match(/\{[\s\S]*\}/);
-      review = jsonMatch ? JSON.parse(jsonMatch[0]) : { score: 0, feedback: 'Review failed', issues: [] };
-    } catch {
-      review = { score: 0, feedback: 'Review failed to parse', issues: [] };
+      if (!jsonMatch) throw new Error('No JSON found');
+      let jsonStr = jsonMatch[0];
+      // Attempt to repair truncated JSON by closing open brackets
+      try { JSON.parse(jsonStr); } catch {
+        // Truncated — try to salvage by closing arrays/objects
+        jsonStr = jsonStr.replace(/,\s*$/, ''); // remove trailing comma
+        const opens = (jsonStr.match(/\[/g) || []).length - (jsonStr.match(/\]/g) || []).length;
+        const braces = (jsonStr.match(/\{/g) || []).length - (jsonStr.match(/\}/g) || []).length;
+        jsonStr += ']'.repeat(Math.max(0, opens)) + '}'.repeat(Math.max(0, braces));
+      }
+      review = JSON.parse(jsonStr);
+      if (typeof review.score !== 'number' || !review.feedback) throw new Error('Invalid review format');
+      if (!Array.isArray(review.issues)) review.issues = [];
+    } catch (parseErr) {
+      console.error('[Drama] Review parse error:', (parseErr as Error).message, '\nRaw response:', response.substring(0, 500));
+      review = { score: 0, feedback: `Review failed: ${(parseErr as Error).message}`, issues: [] };
     }
 
     // Save score to episode
     this.updateEpisode(episodeId, { reviewScore: review.score });
 
     return review;
+  }
+
+  async applyReviewFixes(
+    projectId: string,
+    episodeId: string,
+    issues: Array<{ area: string; severity: string; detail: string; fix?: string }>
+  ): Promise<DramaEpisode> {
+    const project = this.getProject(projectId);
+    if (!project) throw new Error('Project not found');
+    const episode = this.getEpisode(episodeId);
+    if (!episode || !episode.script) throw new Error('No script to fix');
+    const characters = this.listCharacters(projectId);
+
+    const charDescriptions = characters.length > 0
+      ? characters.map(c => `${c.name} (${c.role}): ${c.physicalDescription}. Personality: ${c.personality}`).join('\n')
+      : 'Characters are defined in the script.';
+
+    const fixInstructions = issues
+      .map((issue, i) => `${i + 1}. [${issue.severity.toUpperCase()}] ${issue.area}: ${issue.detail}\n   Fix: ${issue.fix || 'Address this issue'}`)
+      .join('\n');
+
+    const response = await llmComplete({
+      systemPrompt: `You are a professional drama screenwriter revising a short-form vertical drama episode.
+Genre: ${project.genre} | Tone: ${project.tone} | Duration: ~${project.durationTarget}s
+
+Known characters:
+${charDescriptions}
+
+You are given the current script and a list of review issues with fix recommendations.
+Apply ALL the fixes while preserving the overall story, characters, and structure.
+Keep the same screenplay format:
+- SCENE headers: "SCENE 1 — INT. LOCATION — TIME"
+- Dialogue with character names in ALL CAPS
+- Action/direction in brackets
+- Camera suggestions in [Camera: ...] tags
+- Music notes in [Music: ...] tags
+${langInstruction(project.language)}
+Output ONLY the revised script text, formatted for readability.`,
+      userMessage: `Current script:\n${episode.script}\n\nIssues to fix:\n${fixInstructions}`,
+      temperature: 0.7,
+      maxTokens: 4000,
+    });
+
+    return this.updateEpisode(episodeId, {
+      script: response,
+      scriptVersion: episode.scriptVersion + 1,
+    })!;
   }
 
   // ── Stats ──

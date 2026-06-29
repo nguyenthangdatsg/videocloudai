@@ -346,6 +346,28 @@ export function createDramaRouter(dramaService: DramaService): Router {
     }
   });
 
+  router.post('/projects/:projectId/episodes/:episodeId/apply-fixes', async (req, res) => {
+    try {
+      const { issues } = req.body;
+      if (!Array.isArray(issues) || issues.length === 0) {
+        return res.status(400).json({ error: 'issues array is required' });
+      }
+      const result = await dramaService.applyReviewFixes(req.params.projectId, req.params.episodeId, issues);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.delete('/projects/:projectId/episodes/:episodeId/images', (req, res) => {
+    try {
+      const cleared = dramaService.clearEpisodeImages(req.params.episodeId);
+      res.json({ cleared });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Stats ──
 
   router.get('/stats', (_req, res) => {

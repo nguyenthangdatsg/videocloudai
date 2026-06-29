@@ -1219,6 +1219,17 @@ Rules:
     // Append output format instruction
     systemPrompt += `\n\nIMPORTANT: Output ONLY the image prompts. Each prompt starts with its timestamp [MM:SS]. One prompt per timestamp. Separate prompts with a blank line. No commentary, no numbering, no markdown.${visualStyle ? ` Every prompt MUST include "${visualStyle}" as the art style.` : ''}${isSimpleStyle ? ' Every prompt MUST include "white background".' : ''} MANDATORY: Every prompt MUST end with ", ${arSuffix}". This suffix is required on every single prompt — do not omit it.`;
 
+    // Extract format template from styleTemplate (e.g. "Simple stick figure doodle of [subject doing action] in ancient style, ...")
+    // so we can build proper fallback prompts and remind the LLM of the format per batch
+    let formatTemplate = '';
+    if (styleTemplate?.trim()) {
+      const fmtMatch = styleTemplate.match(/[Ff]ormat:\s*"([^"]+)"/);
+      if (fmtMatch) {
+        formatTemplate = fmtMatch[1];
+        console.log(`[generate-prompts] extracted format template: "${formatTemplate.substring(0, 80)}..."`);
+      }
+    }
+
     res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `${expandedSegments.length} segments to process (expanded from ${segments.length} transcript blocks)` }) + '\n');
 
     // Process expanded segments in batches of 20
@@ -1256,9 +1267,10 @@ Rules:
       try {
         let raw: string;
         try {
+          const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
           raw = await llmComplete({
             systemPrompt,
-            userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}`,
+            userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder}`,
             temperature: 0.7,
             maxTokens: 8000,
           });
@@ -1267,9 +1279,10 @@ Rules:
           console.warn(`[storyboard] Batch ${batchNum} failed, retrying after 5s...`, (retryErr as Error).message);
           res.write(JSON.stringify({ progress: true, step: 'retrying', detail: `Batch ${batchNum} rate limited, retrying in 5s...` }) + '\n');
           await new Promise((r) => setTimeout(r, 5000));
+          const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
           raw = await llmComplete({
             systemPrompt,
-            userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}`,
+            userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder}`,
             temperature: 0.7,
             maxTokens: 8000,
           });
@@ -1290,26 +1303,74 @@ Rules:
 
     // Programmatically append aspect ratio to every prompt (LLM often ignores instructions)
     const arTag = `, ${arSuffix}`;
+
     for (let j = 0; j < allPrompts.length; j++) {
+      // Enforce aspect ratio
       if (!allPrompts[j].prompt.includes(arSuffix)) {
         allPrompts[j].prompt = allPrompts[j].prompt.replace(/\.?\s*$/, '') + arTag;
       }
     }
 
-    // If any segments didn't get prompts, fill with defaults
-    const promptMap = new Map(allPrompts.map((p) => [p.timestamp, p.prompt]));
+    // Build prompt map with fuzzy timestamp matching:
+    // Convert timestamps to seconds so "01:05" matches "1:05" or "00:01:05"
+    const tsToSec = (ts: string) => {
+      const parts = ts.split(':').map(Number);
+      return parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
+    };
+    const promptBySec = new Map<number, string>();
+    for (const p of allPrompts) {
+      promptBySec.set(tsToSec(p.timestamp), p.prompt);
+    }
+
+    // If any segments didn't get prompts, fill with defaults using format template
     const buildFallback = (text: string) => {
+      // If user provided a format template like "Simple stick figure doodle of [subject] ...",
+      // replace the placeholder with the segment text
+      if (formatTemplate) {
+        const filled = formatTemplate
+          .replace(/\[.*?\]/g, text)  // replace [placeholder] with actual text
+          .replace(/\.?\s*$/, '') + arTag;
+        return filled;
+      }
       if (isSimpleStyle) {
         return `${text}. ${visualStyle} style, plain white background, minimal detail, no shading, black lines only${arTag}`;
       }
       if (visualStyle?.trim()) return `${visualStyle} style scene of ${text}, high quality, detailed${arTag}`;
       return `Cinematic scene depicting: ${text}, high quality, detailed${arTag}`;
     };
-    const finalPrompts = expandedSegments.map((seg) => ({
-      timestamp: seg.timestamp,
-      text: seg.text,
-      prompt: promptMap.get(seg.timestamp) || buildFallback(seg.text),
-    }));
+
+    // Match segments to prompts: exact timestamp first, then fuzzy (±2 seconds)
+    const usedSecs = new Set<number>();
+    const finalPrompts = expandedSegments.map((seg) => {
+      const segSec = tsToSec(seg.timestamp);
+      // Exact match first
+      let prompt = promptBySec.get(segSec);
+      if (prompt && !usedSecs.has(segSec)) {
+        usedSecs.add(segSec);
+      } else if (!prompt) {
+        // Fuzzy match: find closest prompt within ±2 seconds
+        for (let delta = 1; delta <= 2; delta++) {
+          for (const tryDelta of [delta, -delta]) {
+            const trySec = segSec + tryDelta;
+            if (promptBySec.has(trySec) && !usedSecs.has(trySec)) {
+              prompt = promptBySec.get(trySec);
+              usedSecs.add(trySec);
+              break;
+            }
+          }
+          if (prompt) break;
+        }
+      }
+      return {
+        timestamp: seg.timestamp,
+        text: seg.text,
+        prompt: prompt || buildFallback(seg.text),
+      };
+    });
+    const fallbackCount = finalPrompts.filter(p => !promptBySec.has(tsToSec(p.timestamp))).length;
+    if (fallbackCount > 0) {
+      console.log(`[generate-prompts] ${fallbackCount}/${finalPrompts.length} segments used fallback prompts`);
+    }
 
     res.write(JSON.stringify({ done: true, prompts: finalPrompts }) + '\n');
     res.end();

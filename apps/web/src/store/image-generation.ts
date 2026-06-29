@@ -451,18 +451,18 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
         }
 
         // Dispatch only uncached prompts to extension
-        window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
+        window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
           detail: { prompts: uncachedPrompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
         }));
       } else {
         // No cache hits — send all prompts to extension
-        window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
+        window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
           detail: { prompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
         }));
       }
     }).catch(() => {
       // Cache check failed — send all prompts to extension
-      window.dispatchEvent(new CustomEvent('h2dev_flow_start', {
+      window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
         detail: { prompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
       }));
     });
@@ -527,10 +527,10 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     };
 
     const cleanup = () => {
-      window.removeEventListener('h2dev_flow_progress', onProgress);
-      window.removeEventListener('h2dev_flow_image', onImage);
-      window.removeEventListener('h2dev_flow_done', onDone);
-      window.removeEventListener('h2dev_flow_error', onError);
+      window.removeEventListener('Han2YT_flow_progress', onProgress);
+      window.removeEventListener('Han2YT_flow_image', onImage);
+      window.removeEventListener('Han2YT_flow_done', onDone);
+      window.removeEventListener('Han2YT_flow_error', onError);
     };
 
     // Helper: finalize any images still stuck as generating/pending → error
@@ -609,10 +609,10 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
       });
     };
 
-    window.addEventListener('h2dev_flow_progress', onProgress);
-    window.addEventListener('h2dev_flow_image', onImage);
-    window.addEventListener('h2dev_flow_done', onDone);
-    window.addEventListener('h2dev_flow_error', onError);
+    window.addEventListener('Han2YT_flow_progress', onProgress);
+    window.addEventListener('Han2YT_flow_image', onImage);
+    window.addEventListener('Han2YT_flow_done', onDone);
+    window.addEventListener('Han2YT_flow_error', onError);
   },
 
   stopGeneration: (projectId) => {
@@ -621,7 +621,7 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
       task.abortController.abort();
     }
     // Also stop Flow generation if running
-    window.dispatchEvent(new CustomEvent('h2dev_flow_stop'));
+    window.dispatchEvent(new CustomEvent('Han2YT_flow_stop'));
 
     // Immediately mark task as stopped
     if (task) {

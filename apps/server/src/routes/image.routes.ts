@@ -713,5 +713,22 @@ export function createImageRouter(): Router {
     res.json({ saved });
   });
 
+  // Clear prompt cache entries for specific prompts
+  router.post('/prompt-cache/clear', (req: Request, res: Response) => {
+    const { prompts } = req.body as { prompts?: string[] };
+    if (!prompts?.length) {
+      const { changes } = dbRun('DELETE FROM image_prompt_cache');
+      res.json({ cleared: changes });
+      return;
+    }
+    let cleared = 0;
+    for (const prompt of prompts) {
+      const hash = hashPrompt(prompt);
+      const { changes } = dbRun('DELETE FROM image_prompt_cache WHERE prompt_hash = ?', [hash]);
+      cleared += changes;
+    }
+    res.json({ cleared });
+  });
+
   return router;
 }
