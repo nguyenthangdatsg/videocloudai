@@ -10,7 +10,7 @@ import {
   Film, Mic, Image, ArrowRight, ArrowUp, ArrowDown,
   X, Download, CheckCircle, Clock, FileText, Upload, Trash2,
   Wand2, GripVertical, RefreshCw, Pencil, Play, Square, FileUp, Save,
-  ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Tag, Copy, Volume2, Globe, SlidersHorizontal, ZoomIn, Shuffle, Move, Pause, SkipBack, SkipForward, Video, Music,
+  ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Tag, Copy, Volume2, Globe, SlidersHorizontal, ZoomIn, Shuffle, Move, Pause, SkipBack, SkipForward, Video, Music, LayoutGrid, List, AlignJustify,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useImageGenStore } from '../store/image-generation';
@@ -878,6 +878,7 @@ export function Storyboard() {
   // Step 7: Assemble
   const [assembling, setAssembling] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [segmentView, setSegmentView] = useState<'list' | 'card' | 'detail'>('list');
   const [assembleProgress, setAssembleProgress] = useState<string[]>([]);
   const [assembleStep, setAssembleStep] = useState<string>('');
   const [assembleClipProgress, setAssembleClipProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
@@ -4209,49 +4210,165 @@ export function Storyboard() {
                     </div>
                   </div>
 
-                  {/* Segment list with motion per clip */}
-                  <div className="space-y-1.5 max-h-[400px] overflow-auto">
-                    {segments.map((seg, i) => (
-                      <div key={i} className="flex items-center gap-2 border border-c-border rounded-lg bg-c-surface p-1.5">
-                        {(() => {
+                  {/* Segment display with view toggle */}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-c-dim mr-1">{t('storyboard.viewMode')}:</span>
+                      {([
+                        { key: 'list' as const, icon: List, label: t('storyboard.viewList') },
+                        { key: 'card' as const, icon: LayoutGrid, label: t('storyboard.viewCard') },
+                        { key: 'detail' as const, icon: AlignJustify, label: t('storyboard.viewDetail') },
+                      ]).map(({ key, icon: Icon, label }) => (
+                        <button
+                          key={key}
+                          onClick={() => setSegmentView(key)}
+                          title={label}
+                          className={clsx(
+                            'p-1.5 rounded-md transition-colors',
+                            segmentView === key ? 'bg-cyan-600/20 text-cyan-400' : 'text-c-dim hover:text-c-text hover:bg-c-hover',
+                          )}
+                        >
+                          <Icon className="w-3.5 h-3.5" />
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* List view — compact rows */}
+                    {segmentView === 'list' && (
+                      <div className="space-y-1.5 max-h-[400px] overflow-auto">
+                        {segments.map((seg, i) => {
                           const segIsVid = seg.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(seg.videoFilename || seg.imageFilename || '');
                           const vidSrc = seg.videoUrl || (segIsVid ? seg.imageUrl : '');
                           return (
-                          <div className="w-14 h-10 shrink-0 rounded overflow-hidden relative cursor-pointer group" onClick={() => !segIsVid && setLightboxUrl(seg.imageUrl)}>
-                            {segIsVid && vidSrc ? (
-                              <video src={`${vidSrc}#t=0.1`} className="w-full h-full object-cover" muted preload="metadata" />
-                            ) : (
-                              <img src={seg.imageUrl} alt={seg.text || `Segment ${i + 1}`} className="w-full h-full object-cover" />
-                            )}
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors" />
-                            <div className="absolute top-0 left-0 bg-black/60 rounded-br px-1 text-[8px] font-mono text-white">{i + 1}</div>
-                            {segIsVid && <div className="absolute bottom-0 right-0 bg-violet-600/80 rounded-tl px-1 text-[7px] text-white">VID</div>}
-                          </div>
+                            <div key={i} className="flex items-center gap-2 border border-c-border rounded-lg bg-c-surface p-1.5">
+                              <div className="w-14 h-10 shrink-0 rounded overflow-hidden relative cursor-pointer group" onClick={() => !segIsVid && setLightboxUrl(seg.imageUrl)}>
+                                {segIsVid && vidSrc ? (
+                                  <video src={`${vidSrc}#t=0.1`} className="w-full h-full object-cover" muted preload="metadata" />
+                                ) : (
+                                  <img src={seg.imageUrl} alt={seg.text || `Segment ${i + 1}`} className="w-full h-full object-cover" />
+                                )}
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors" />
+                                <div className="absolute top-0 left-0 bg-black/60 rounded-br px-1 text-[8px] font-mono text-white">{i + 1}</div>
+                                {segIsVid && <div className="absolute bottom-0 right-0 bg-violet-600/80 rounded-tl px-1 text-[7px] text-white">VID</div>}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[10px] text-c-text truncate">{seg.text || '—'}</div>
+                                <div className="text-[9px] text-c-dim">{seg.startTime.toFixed(1)}s → {seg.endTime.toFixed(1)}s</div>
+                              </div>
+                              {segIsVid ? (
+                                <span className="text-[10px] text-violet-400 flex items-center gap-1"><Video className="w-3 h-3" /></span>
+                              ) : (
+                                <select value={seg.motion || 'static'} onChange={(e) => updateSegmentMotion(i, e.target.value as MotionEffect)} className="input text-[10px] py-0.5 w-24">
+                                  <option value="static">{t('storyboard.motionStatic')}</option>
+                                  <option value="zoom-in">{t('storyboard.motionZoomIn')}</option>
+                                  <option value="zoom-out">{t('storyboard.motionZoomOut')}</option>
+                                  <option value="pan-left">{t('storyboard.motionPanLeft')}</option>
+                                  <option value="pan-right">{t('storyboard.motionPanRight')}</option>
+                                  <option value="pan-up">{t('storyboard.motionPanUp')}</option>
+                                  <option value="pan-down">{t('storyboard.motionPanDown')}</option>
+                                </select>
+                              )}
+                            </div>
                           );
-                        })()}
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[10px] text-c-text truncate">{seg.text || '—'}</div>
-                          <div className="text-[9px] text-c-dim">{seg.startTime.toFixed(1)}s → {seg.endTime.toFixed(1)}s</div>
-                        </div>
-                        {(seg.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(seg.videoFilename || seg.imageFilename || '')) ? (
-                          <span className="text-[10px] text-violet-400 flex items-center gap-1"><Video className="w-3 h-3" /></span>
-                        ) : (
-                          <select
-                            value={seg.motion || 'static'}
-                            onChange={(e) => updateSegmentMotion(i, e.target.value as MotionEffect)}
-                            className="input text-[10px] py-0.5 w-24"
-                          >
-                            <option value="static">{t('storyboard.motionStatic')}</option>
-                            <option value="zoom-in">{t('storyboard.motionZoomIn')}</option>
-                            <option value="zoom-out">{t('storyboard.motionZoomOut')}</option>
-                            <option value="pan-left">{t('storyboard.motionPanLeft')}</option>
-                            <option value="pan-right">{t('storyboard.motionPanRight')}</option>
-                            <option value="pan-up">{t('storyboard.motionPanUp')}</option>
-                            <option value="pan-down">{t('storyboard.motionPanDown')}</option>
-                          </select>
-                        )}
+                        })}
                       </div>
-                    ))}
+                    )}
+
+                    {/* Card view — grid of thumbnails */}
+                    {segmentView === 'card' && (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 max-h-[500px] overflow-auto">
+                        {segments.map((seg, i) => {
+                          const segIsVid = seg.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(seg.videoFilename || seg.imageFilename || '');
+                          const vidSrc = seg.videoUrl || (segIsVid ? seg.imageUrl : '');
+                          return (
+                            <div key={i} className="border border-c-border rounded-lg bg-c-surface overflow-hidden group">
+                              <div className="aspect-video relative cursor-pointer" onClick={() => !segIsVid && setLightboxUrl(seg.imageUrl)}>
+                                {segIsVid && vidSrc ? (
+                                  <video src={`${vidSrc}#t=0.1`} className="w-full h-full object-cover" muted preload="metadata" />
+                                ) : (
+                                  <img src={seg.imageUrl} alt={seg.text || `Segment ${i + 1}`} className="w-full h-full object-cover" />
+                                )}
+                                <div className="absolute top-0 left-0 bg-black/60 rounded-br px-1.5 py-0.5 text-[9px] font-mono text-white">{i + 1}</div>
+                                {segIsVid && <div className="absolute top-0 right-0 bg-violet-600/80 rounded-bl px-1.5 py-0.5 text-[8px] text-white">VID</div>}
+                                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1">
+                                  <div className="text-[8px] text-white/80 font-mono">{seg.startTime.toFixed(1)}s → {seg.endTime.toFixed(1)}s</div>
+                                </div>
+                              </div>
+                              <div className="p-1.5 space-y-1">
+                                <div className="text-[9px] text-c-text line-clamp-2 leading-tight">{seg.text || '—'}</div>
+                                {!segIsVid && (
+                                  <select value={seg.motion || 'static'} onChange={(e) => updateSegmentMotion(i, e.target.value as MotionEffect)} className="input text-[9px] py-0 w-full">
+                                    <option value="static">{t('storyboard.motionStatic')}</option>
+                                    <option value="zoom-in">{t('storyboard.motionZoomIn')}</option>
+                                    <option value="zoom-out">{t('storyboard.motionZoomOut')}</option>
+                                    <option value="pan-left">{t('storyboard.motionPanLeft')}</option>
+                                    <option value="pan-right">{t('storyboard.motionPanRight')}</option>
+                                    <option value="pan-up">{t('storyboard.motionPanUp')}</option>
+                                    <option value="pan-down">{t('storyboard.motionPanDown')}</option>
+                                  </select>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Detail view — large preview with full text */}
+                    {segmentView === 'detail' && (
+                      <div className="space-y-3 max-h-[500px] overflow-auto">
+                        {segments.map((seg, i) => {
+                          const segIsVid = seg.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(seg.videoFilename || seg.imageFilename || '');
+                          const vidSrc = seg.videoUrl || (segIsVid ? seg.imageUrl : '');
+                          return (
+                            <div key={i} className="flex gap-3 border border-c-border rounded-xl bg-c-surface p-3">
+                              <div className="w-40 shrink-0 rounded-lg overflow-hidden relative cursor-pointer group" onClick={() => !segIsVid && setLightboxUrl(seg.imageUrl)}>
+                                <div className="aspect-video">
+                                  {segIsVid && vidSrc ? (
+                                    <video src={`${vidSrc}#t=0.1`} className="w-full h-full object-cover" muted preload="metadata" />
+                                  ) : (
+                                    <img src={seg.imageUrl} alt={seg.text || `Segment ${i + 1}`} className="w-full h-full object-cover" />
+                                  )}
+                                </div>
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+                                <div className="absolute top-1 left-1 bg-black/60 rounded px-1.5 py-0.5 text-[9px] font-mono text-white">{i + 1}</div>
+                                {segIsVid && <div className="absolute top-1 right-1 bg-violet-600/80 rounded px-1.5 py-0.5 text-[8px] text-white">VID</div>}
+                              </div>
+                              <div className="flex-1 min-w-0 space-y-1.5">
+                                <div className="flex items-center gap-2 text-[10px] text-c-dim font-mono">
+                                  <Clock className="w-3 h-3" />
+                                  <span>{seg.startTime.toFixed(1)}s → {seg.endTime.toFixed(1)}s</span>
+                                  <span className="text-c-border">|</span>
+                                  <span>{(seg.endTime - seg.startTime).toFixed(1)}s</span>
+                                </div>
+                                <div className="text-xs text-c-text leading-relaxed">{seg.text || '—'}</div>
+                                <div className="flex items-center gap-2">
+                                  {segIsVid ? (
+                                    <span className="text-[10px] text-violet-400 flex items-center gap-1"><Video className="w-3 h-3" /> {t('storyboard.videoClip')}</span>
+                                  ) : (
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-c-dim">{t('storyboard.motionEffects')}:</span>
+                                      <select value={seg.motion || 'static'} onChange={(e) => updateSegmentMotion(i, e.target.value as MotionEffect)} className="input text-[10px] py-0.5 w-28">
+                                        <option value="static">{t('storyboard.motionStatic')}</option>
+                                        <option value="zoom-in">{t('storyboard.motionZoomIn')}</option>
+                                        <option value="zoom-out">{t('storyboard.motionZoomOut')}</option>
+                                        <option value="pan-left">{t('storyboard.motionPanLeft')}</option>
+                                        <option value="pan-right">{t('storyboard.motionPanRight')}</option>
+                                        <option value="pan-up">{t('storyboard.motionPanUp')}</option>
+                                        <option value="pan-down">{t('storyboard.motionPanDown')}</option>
+                                      </select>
+                                    </div>
+                                  )}
+                                  {seg.imageFilename && (
+                                    <span className="text-[9px] text-c-dim ml-auto truncate max-w-[120px]">{seg.imageFilename}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </>
               )}
