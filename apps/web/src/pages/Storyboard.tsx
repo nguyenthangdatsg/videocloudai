@@ -155,6 +155,7 @@ function PromptPartBlock({
   onDelete?: () => void;
   onRename?: (label: string) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen ?? true);
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState(part.label);
@@ -201,7 +202,7 @@ function PromptPartBlock({
           <button
             onClick={onDelete}
             className="p-1 -m-1 shrink-0 hover:text-red-400 transition-colors"
-            aria-label="Delete prompt part"
+            aria-label={t('storyboard.deletePromptPart')}
           >
             <X className={clsx('w-3.5 h-3.5', c.icon)} />
           </button>
@@ -838,7 +839,7 @@ export function Storyboard() {
   const [uploadingZip, setUploadingZip] = useState(false);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const imageCardRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [imageTab, setImageTab] = useState<'generate' | 'upload' | 'flow'>('generate');
+  const [imageTab, setImageTab] = useState<'generate' | 'upload' | 'flow'>('flow');
   const [flowAvailable, setFlowAvailable] = useState(false);
   const [flowProvider, setFlowProvider] = useState<'google-flow' | 'grok' | 'chatgpt'>('google-flow');
   const [mediaType, setMediaType] = useState<GenMediaType>('image');
@@ -2077,7 +2078,7 @@ export function Storyboard() {
       )}
 
       {/* Step indicator */}
-      <nav className="border-b border-c-border bg-c-surface px-4 py-2.5 overflow-x-auto" aria-label="Workflow steps">
+      <nav className="border-b border-c-border bg-c-surface px-4 py-2.5 overflow-x-auto">
         <div className="max-w-7xl mx-auto flex items-center gap-1">
           {allSteps.map((s, i) => {
             const isAccessible = i <= currentIdx || s.done;
@@ -2866,23 +2867,20 @@ export function Storyboard() {
                   {!flowAvailable ? (
                     <div className="border-2 border-dashed border-violet-700/30 rounded-xl p-8 flex flex-col items-center justify-center gap-3">
                       <Globe className="w-8 h-8 text-violet-400/50" />
-                      <span className="text-sm text-c-text font-medium">Extension Not Detected</span>
-                      <span className="text-xs text-c-dim text-center max-w-md">
-                        Install the <b>Han2YT</b> Chrome extension and reload this page.
-                        Open Google Flow, switch to <b>Video mode</b>, then come back here to generate.
-                      </span>
+                      <span className="text-sm text-c-text font-medium">{t('storyboard.extensionNotDetected')}</span>
+                      <span className="text-xs text-c-dim text-center max-w-md" dangerouslySetInnerHTML={{ __html: t('storyboard.installExtensionHint2') }} />
                     </div>
                   ) : (
                     <div className="border border-violet-800/30 rounded-xl p-4 bg-violet-900/10 space-y-3">
                       <div className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
                         <span className="text-xs font-medium text-violet-300">
-                          <Film className="w-4 h-4 inline mr-1" /> Extension Connected — Video Mode
+                          <Film className="w-4 h-4 inline mr-1" /> {t('storyboard.extensionConnectedVideo')}
                         </span>
                       </div>
                       <div className="text-[11px] text-c-dim space-y-1">
-                        <p>The extension will type each prompt into Google Flow, wait for the generated <b>video</b>, and upload it back here.</p>
-                        <p className="text-amber-300/80">Make sure Google Flow is set to <b>Video mode</b>. Close DevTools (F12) on the target tab.</p>
+                        <p dangerouslySetInnerHTML={{ __html: t('storyboard.extensionHintVideo') }} />
+                        <p className="text-amber-300/80" dangerouslySetInnerHTML={{ __html: t('storyboard.extensionVideoModeWarn') }} />
                       </div>
                       <div className="flex items-center gap-3">
                         <button
@@ -2895,7 +2893,7 @@ export function Storyboard() {
                         >
                           {generatingImages
                             ? <><Square className="w-3 h-3" /> {t('image.stop')}</>
-                            : <><Video className="w-3.5 h-3.5" /> Generate {prompts.length} videos via Flow</>
+                            : <><Video className="w-3.5 h-3.5" /> {t('storyboard.generateVideosVia', { count: prompts.length })}</>
                           }
                         </button>
                         {!generatingImages && failedImageCount > 0 && (
@@ -2903,10 +2901,10 @@ export function Storyboard() {
                             onClick={handleFlowResume}
                             className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
                           >
-                            <RefreshCw className="w-3.5 h-3.5" /> Resume {failedImageCount} failed
+                            <RefreshCw className="w-3.5 h-3.5" /> {t('storyboard.resumeFailed', { count: failedImageCount })}
                           </button>
                         )}
-                        <span className="text-[10px] text-c-dim">{prompts.length} prompts queued</span>
+                        <span className="text-[10px] text-c-dim">{t('storyboard.promptsQueued', { count: prompts.length })}</span>
                       </div>
                     </div>
                   )}
@@ -3061,22 +3059,19 @@ export function Storyboard() {
                   {!flowAvailable ? (
                     <div className="border-2 border-dashed border-violet-700/30 rounded-xl p-8 flex flex-col items-center justify-center gap-3">
                       <Globe className="w-8 h-8 text-violet-400/50" />
-                      <span className="text-sm text-c-text font-medium">Extension Not Detected</span>
-                      <span className="text-xs text-c-dim text-center max-w-md">
-                        Install the <b>Han2YT</b> Chrome extension and reload this page.
-                        The extension will open {flowProvider === 'google-flow' ? 'Google Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT'}, type each prompt, wait for the image, and send it back here automatically.
-                      </span>
+                      <span className="text-sm text-c-text font-medium">{t('storyboard.extensionNotDetected')}</span>
+                      <span className="text-xs text-c-dim text-center max-w-md" dangerouslySetInnerHTML={{ __html: t('storyboard.installExtensionHint3', { provider: flowProvider === 'google-flow' ? 'Google Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT' }) }} />
                     </div>
                   ) : (
                     <>
                       <div className="border border-violet-800/30 rounded-xl p-4 bg-violet-900/10 space-y-3">
                         <div className="flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                          <span className="text-xs font-medium text-violet-300">Extension Connected — {flowProvider === 'google-flow' ? 'Google Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT'}</span>
+                          <span className="text-xs font-medium text-violet-300">{t('storyboard.extensionConnected', { provider: flowProvider === 'google-flow' ? 'Google Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT' })}</span>
                         </div>
                         <div className="text-[11px] text-c-dim space-y-1">
-                          <p>The extension will open {flowProvider === 'google-flow' ? 'Google Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT'} tab, type each prompt one by one, wait for the generated image, and upload it back here.</p>
-                          <p className="text-amber-300/80">Close DevTools (F12) on the target tab and do not dismiss the yellow &quot;debugging&quot; bar while running.</p>
+                          <p>{t('storyboard.extensionHintImage', { provider: flowProvider === 'google-flow' ? 'Google Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT' })}</p>
+                          <p className="text-amber-300/80">{t('storyboard.extensionDevToolsWarn')}</p>
                         </div>
                         <div className="flex items-center gap-3 flex-wrap">
                           {generatingImages ? (
@@ -3084,7 +3079,7 @@ export function Storyboard() {
                               onClick={handleStopImages}
                               className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white"
                             >
-                              <Square className="w-3 h-3" /> Stop
+                              <Square className="w-3 h-3" /> {t('storyboard.stop')}
                             </button>
                           ) : doneImageCount > 0 && failedImageCount === 0 && pendingImageCount === 0 ? (
                             /* All done — show Regenerate All */
@@ -3093,7 +3088,7 @@ export function Storyboard() {
                               disabled={!prompts.length}
                               className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
                             >
-                              <RefreshCw className="w-3.5 h-3.5" /> Regenerate all {prompts.length} images
+                              <RefreshCw className="w-3.5 h-3.5" /> {t('storyboard.regenerateAllImages', { count: prompts.length })}
                             </button>
                           ) : failedImageCount > 0 || pendingImageCount > 0 ? (
                             /* Some failed/pending — show Resume (skips done) */
@@ -3102,7 +3097,7 @@ export function Storyboard() {
                               disabled={!prompts.length}
                               className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
                             >
-                              <RefreshCw className="w-3.5 h-3.5" /> Resume {failedImageCount + pendingImageCount} remaining
+                              <RefreshCw className="w-3.5 h-3.5" /> {t('storyboard.resumeRemaining', { count: failedImageCount + pendingImageCount })}
                             </button>
                           ) : (
                             /* No images yet — show Generate */
@@ -3111,7 +3106,7 @@ export function Storyboard() {
                               disabled={!prompts.length}
                               className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
                             >
-                              <Globe className="w-3.5 h-3.5" /> Generate {prompts.length} images via {flowProvider === 'google-flow' ? 'Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT'}
+                              <Globe className="w-3.5 h-3.5" /> {t('storyboard.generateImagesVia', { count: prompts.length, provider: flowProvider === 'google-flow' ? 'Flow' : flowProvider === 'grok' ? 'Grok' : 'ChatGPT' })}
                             </button>
                           )}
                           {/* Always show Regenerate All as secondary when there are partial results */}
@@ -3120,13 +3115,13 @@ export function Storyboard() {
                               onClick={handleFlowRegenerateAll}
                               className="text-xs py-2 px-3 rounded-lg font-medium flex items-center gap-1.5 border border-violet-600/50 text-violet-300 hover:bg-violet-600/20 transition-colors"
                             >
-                              <RefreshCw className="w-3 h-3" /> Regenerate all
+                              <RefreshCw className="w-3 h-3" /> {t('storyboard.regenerateAll')}
                             </button>
                           )}
                           <span className="text-[10px] text-c-dim">
                             {doneImageCount > 0
-                              ? `${doneImageCount}/${prompts.length} done`
-                              : `${prompts.length} prompts queued`}
+                              ? t('storyboard.promptsDone', { done: doneImageCount, total: prompts.length })
+                              : t('storyboard.promptsQueued', { count: prompts.length })}
                           </span>
                         </div>
                       </div>
@@ -3202,14 +3197,14 @@ export function Storyboard() {
                     }}
                     className="text-xs py-1.5 px-4 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium flex items-center gap-1.5"
                   >
-                    <Square className="w-3 h-3" /> Stop
+                    <Square className="w-3 h-3" /> {t('storyboard.stop')}
                   </button>
                 </div>
               )}
 
               {generatedImages.length > 0 && flowAvailable && !generatingImages && regenIndex === null && failedImageCount > 0 && (
                 <div className="flex items-center gap-2 text-[10px] text-c-dim">
-                  <span>Retry with:</span>
+                  <span>{t('storyboard.retryWith')}</span>
                   {(['google-flow', 'grok', 'chatgpt'] as const).map(fp => (
                     <button
                       key={fp}
@@ -3226,7 +3221,7 @@ export function Storyboard() {
                     onClick={handleFlowResume}
                     className="ml-auto px-3 py-0.5 rounded text-[10px] font-medium bg-amber-600 hover:bg-amber-700 text-white flex items-center gap-1"
                   >
-                    <RefreshCw className="w-2.5 h-2.5" /> Resume {failedImageCount} failed
+                    <RefreshCw className="w-2.5 h-2.5" /> {t('storyboard.resumeFailed', { count: failedImageCount })}
                   </button>
                 </div>
               )}
@@ -3262,21 +3257,21 @@ export function Storyboard() {
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleRegenSingle(i, 'google-flow'); }}
                                     className="p-1 rounded-md bg-black/60 text-blue-300 hover:text-white hover:bg-blue-600/80"
-                                    title="Regenerate via Google Flow"
+                                    title={t('storyboard.regenViaFlow')}
                                   >
                                     <RefreshCw className="w-3 h-3" />
                                   </button>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleRegenSingle(i, 'grok'); }}
                                     className="p-1 rounded-md bg-black/60 text-orange-300 hover:text-white hover:bg-orange-600/80"
-                                    title="Regenerate via Grok"
+                                    title={t('storyboard.regenViaGrok')}
                                   >
                                     <RefreshCw className="w-3 h-3" />
                                   </button>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleRegenSingle(i, 'chatgpt'); }}
                                     className="p-1 rounded-md bg-black/60 text-green-300 hover:text-white hover:bg-green-600/80"
-                                    title="Regenerate via ChatGPT"
+                                    title={t('storyboard.regenViaChatgpt')}
                                   >
                                     <RefreshCw className="w-3 h-3" />
                                   </button>
@@ -3285,7 +3280,7 @@ export function Storyboard() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleDropImage(i); }}
                                 className="p-1 rounded-md bg-black/60 text-white/80 hover:text-white hover:bg-red-600/80"
-                                title="Remove image"
+                                title={t('storyboard.removeImage')}
                               >
                                 <Trash2 className="w-3 h-3" />
                               </button>
@@ -3305,21 +3300,21 @@ export function Storyboard() {
                                   <button
                                     onClick={() => handleRegenSingle(i, 'google-flow')}
                                     className="text-[9px] px-1.5 py-0.5 rounded bg-blue-600/80 hover:bg-blue-600 text-white flex items-center gap-0.5 transition-colors"
-                                    title="Retry with Google Flow"
+                                    title={t('storyboard.retryWithFlow')}
                                   >
                                     <RefreshCw className="w-2.5 h-2.5" /> Google
                                   </button>
                                   <button
                                     onClick={() => handleRegenSingle(i, 'grok')}
                                     className="text-[9px] px-1.5 py-0.5 rounded bg-orange-600/80 hover:bg-orange-600 text-white flex items-center gap-0.5 transition-colors"
-                                    title="Retry with Grok"
+                                    title={t('storyboard.retryWithGrok')}
                                   >
                                     <RefreshCw className="w-2.5 h-2.5" /> Grok
                                   </button>
                                   <button
                                     onClick={() => handleRegenSingle(i, 'chatgpt')}
                                     className="text-[9px] px-1.5 py-0.5 rounded bg-green-600/80 hover:bg-green-600 text-white flex items-center gap-0.5 transition-colors"
-                                    title="Retry with ChatGPT"
+                                    title={t('storyboard.retryWithChatgpt')}
                                   >
                                     <RefreshCw className="w-2.5 h-2.5" /> GPT
                                   </button>
@@ -3329,7 +3324,7 @@ export function Storyboard() {
                                 onClick={() => handleDropImage(i)}
                                 className="text-[9px] px-2 py-0.5 rounded bg-red-800/60 hover:bg-red-700 text-white flex items-center gap-1 transition-colors"
                               >
-                                <Trash2 className="w-2.5 h-2.5" /> Drop
+                                <Trash2 className="w-2.5 h-2.5" /> {t('storyboard.dropImage')}
                               </button>
                             </>
                           ) : (
@@ -3340,21 +3335,21 @@ export function Storyboard() {
                                   <button
                                     onClick={() => handleRegenSingle(i, 'google-flow')}
                                     className="text-[9px] px-1.5 py-0.5 rounded bg-blue-600/60 hover:bg-blue-600 text-white flex items-center gap-0.5 transition-colors"
-                                    title="Generate with Google Flow"
+                                    title={t('storyboard.generateWithFlow')}
                                   >
                                     <RefreshCw className="w-2.5 h-2.5" /> Google
                                   </button>
                                   <button
                                     onClick={() => handleRegenSingle(i, 'grok')}
                                     className="text-[9px] px-1.5 py-0.5 rounded bg-orange-600/60 hover:bg-orange-600 text-white flex items-center gap-0.5 transition-colors"
-                                    title="Generate with Grok"
+                                    title={t('storyboard.generateWithGrok')}
                                   >
                                     <RefreshCw className="w-2.5 h-2.5" /> Grok
                                   </button>
                                   <button
                                     onClick={() => handleRegenSingle(i, 'chatgpt')}
                                     className="text-[9px] px-1.5 py-0.5 rounded bg-green-600/60 hover:bg-green-600 text-white flex items-center gap-0.5 transition-colors"
-                                    title="Generate with ChatGPT"
+                                    title={t('storyboard.generateWithChatgpt')}
                                   >
                                     <RefreshCw className="w-2.5 h-2.5" /> GPT
                                   </button>
@@ -3382,7 +3377,7 @@ export function Storyboard() {
                             <button
                               onClick={() => setEditingImageIdx(null)}
                               className="p-0.5 rounded text-c-dim hover:text-red-400 transition-colors"
-                              title="Cancel"
+                              title={t('storyboard.cancelEdit')}
                             >
                               <X className="w-3 h-3" />
                             </button>
@@ -3688,7 +3683,7 @@ export function Storyboard() {
                       <button
                         onClick={() => skipSegment(-1)}
                         className="w-7 h-7 rounded-md flex items-center justify-center text-c-muted hover:text-c-text hover:bg-c-hover transition-colors"
-                        aria-label="Previous segment"
+                        aria-label={t('storyboard.previousSegment')}
                       >
                         <SkipBack className="w-3.5 h-3.5" />
                       </button>
@@ -3718,7 +3713,7 @@ export function Storyboard() {
                       <button
                         onClick={() => skipSegment(1)}
                         className="w-7 h-7 rounded-md flex items-center justify-center text-c-muted hover:text-c-text hover:bg-c-hover transition-colors"
-                        aria-label="Next segment"
+                        aria-label={t('storyboard.nextSegment')}
                       >
                         <SkipForward className="w-3.5 h-3.5" />
                       </button>
@@ -4416,12 +4411,12 @@ export function Storyboard() {
           onKeyDown={(e) => { if (e.key === 'Escape') setLightboxUrl(null); }}
           role="dialog"
           aria-modal="true"
-          aria-label="Image preview"
+          aria-label={t('storyboard.imagePreview')}
         >
           <button
             onClick={(e) => { e.stopPropagation(); setLightboxUrl(null); }}
             className="absolute top-4 right-4 p-2 text-white/70 hover:text-white transition-colors"
-            aria-label="Close preview"
+            aria-label={t('storyboard.closePreview')}
             autoFocus
           >
             <X className="w-6 h-6" />

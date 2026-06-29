@@ -1158,8 +1158,8 @@ export function StoryboardList() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); setRenamingNiche(nicheKey); setNicheNewName(group.niche); }}
                                 className="p-1.5 rounded-md text-c-dim hover:text-c-text hover:bg-c-bg transition-colors"
-                                aria-label="Rename niche"
-                                title="Rename"
+                                aria-label={t('common.rename')}
+                                title={t('common.rename')}
                               >
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
@@ -1412,14 +1412,14 @@ export function StoryboardList() {
                 <button
                   onClick={() => { setPlayingVideo(null); navigate(`/storyboard/${playingVideo.projectId}`); }}
                   className="p-1.5 rounded-lg hover:bg-c-surface text-c-muted hover:text-c-text transition-colors"
-                  aria-label="Edit project"
+                  aria-label={t('common.editProject')}
                 >
                   <Pencil className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => setPlayingVideo(null)}
                   className="p-1.5 rounded-lg hover:bg-c-surface text-c-muted hover:text-c-text transition-colors"
-                  aria-label="Close"
+                  aria-label={t('common.close')}
                 >
                   <X className="w-4 h-4" />
                 </button>

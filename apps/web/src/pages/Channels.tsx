@@ -110,7 +110,7 @@ function ChannelForm({ initial, onSave, onCancel, saving }: ChannelFormProps) {
                 className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-[#7c6af5] resize-none h-20"
                 value={form.defaultCaption}
                 onChange={(e) => setForm({ ...form, defaultCaption: e.target.value })}
-                placeholder="Your default caption text..."
+                placeholder={t('channels.defaultCaptionPlaceholder')}
               />
             </div>
             <div>

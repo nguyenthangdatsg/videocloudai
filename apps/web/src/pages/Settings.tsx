@@ -189,7 +189,7 @@ export function Settings() {
                 type="text"
                 value={form.app_name ?? ''}
                 onChange={(e) => set('app_name', e.target.value)}
-                placeholder="VideoCloudAI"
+                placeholder={t('settings.appNamePlaceholder')}
                 className="input w-full"
               />
               <div className="text-xs text-c-dim mt-0.5">{t('settings.appNameHint')}</div>
@@ -210,7 +210,7 @@ export function Settings() {
                 <span className="text-xs text-c-muted">{t('settings.logoPreview')}</span>
                 <img
                   src={form.app_logo_url}
-                  alt="Logo preview"
+                  alt={t('settings.logoPreviewAlt')}
                   className="w-8 h-8 rounded-lg object-cover border border-c-border"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
@@ -275,7 +275,7 @@ export function Settings() {
                           <input
                             type={showKeys['gemini_api_key'] ? 'text' : 'password'}
                             className="input pr-10 font-mono text-sm"
-                            placeholder="AIza..."
+                            placeholder={t('settings.apiKeyPlaceholder')}
                             value={form['gemini_api_key'] ?? ''}
                             onChange={(e) => set('gemini_api_key', e.target.value)}
                           />
@@ -615,7 +615,7 @@ export function Settings() {
                   <textarea
                     className="input min-h-[100px] font-mono text-[11px] leading-snug"
                     rows={5}
-                    placeholder="Ban la nguoi viet caption..."
+                    placeholder={t('settings.captionPromptPlaceholderVi')}
                     value={form['groq_description_prompt_vi'] ?? ''}
                     onChange={(e) => set('groq_description_prompt_vi', e.target.value)}
                   />

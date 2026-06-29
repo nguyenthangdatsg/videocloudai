@@ -1226,7 +1226,9 @@ Rules:
       const fmtMatch = styleTemplate.match(/[Ff]ormat:\s*"([^"]+)"/);
       if (fmtMatch) {
         formatTemplate = fmtMatch[1];
-        console.log(`[generate-prompts] extracted format template: "${formatTemplate.substring(0, 80)}..."`);
+        console.log(`[generate-prompts] extracted format template: "${formatTemplate}"`);
+        // Inject the full format as a hard constraint in the system prompt
+        systemPrompt += `\n\nCRITICAL FORMAT RULE: Every prompt you generate MUST follow this EXACT template — copy it verbatim and only replace the bracketed placeholder with the scene description:\n"${formatTemplate}"\nDo NOT shorten, rephrase, or omit ANY part of this template. The entire suffix after the subject description must appear in every prompt exactly as shown.`;
       }
     }
 
@@ -1267,7 +1269,7 @@ Rules:
       try {
         let raw: string;
         try {
-          const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
+          const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow this EXACT format (do not omit any part): "${formatTemplate}"` : '';
           raw = await llmComplete({
             systemPrompt,
             userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder}`,
@@ -1279,7 +1281,7 @@ Rules:
           console.warn(`[storyboard] Batch ${batchNum} failed, retrying after 5s...`, (retryErr as Error).message);
           res.write(JSON.stringify({ progress: true, step: 'retrying', detail: `Batch ${batchNum} rate limited, retrying in 5s...` }) + '\n');
           await new Promise((r) => setTimeout(r, 5000));
-          const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
+          const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow this EXACT format (do not omit any part): "${formatTemplate}"` : '';
           raw = await llmComplete({
             systemPrompt,
             userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder}`,

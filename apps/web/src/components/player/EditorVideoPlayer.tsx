@@ -115,12 +115,12 @@ export function EditorVideoPlayer({
     const onError = () => {
       const code = v.error?.code;
       const map: Record<number, string> = {
-        1: 'Playback aborted',
-        2: 'Network error while loading video',
-        3: 'Decode error — codec not supported',
-        4: 'Source format not supported',
+        1: t('editor.player.playbackAborted'),
+        2: t('editor.player.networkError'),
+        3: t('editor.player.decodeError'),
+        4: t('editor.player.sourceNotSupported'),
       };
-      setError(code ? map[code] ?? `Error ${code}` : 'Video error');
+      setError(code ? map[code] ?? `Error ${code}` : t('editor.player.videoError'));
     };
 
     v.addEventListener('play', onPlay);

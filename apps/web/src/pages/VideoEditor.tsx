@@ -3593,6 +3593,7 @@ function SortableVerticalRow({
   children: React.ReactNode;
   onCut: () => void;
 }) {
+  const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
     <div
@@ -3605,7 +3606,7 @@ function SortableVerticalRow({
         {...attributes}
         {...listeners}
         className="flex items-center justify-center w-5 shrink-0 text-c-dim/30 hover:text-c-dim cursor-grab active:cursor-grabbing touch-none"
-        title="Drag to reorder"
+        title={t('editor.dragToReorder')}
       >
         <GripVertical className="w-3.5 h-3.5" />
       </button>
@@ -3613,7 +3614,7 @@ function SortableVerticalRow({
       {/* Cut button */}
       <button
         onClick={onCut}
-        title="Cut / split scene at playhead"
+        title={t('editor.cutSplitAtPlayhead')}
         className="flex items-center justify-center w-6 shrink-0 text-c-dim/30 hover:text-orange-400 transition-colors"
       >
         <Scissors className="w-3 h-3" />
@@ -3650,6 +3651,7 @@ function SortableHorizontalCard({
   onDelete: () => void;
   saving: boolean;
 }) {
+  const { t } = useTranslation();
   const requestSeek = useEditorAIStore((s) => s.requestSeek);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
 
@@ -3708,7 +3710,7 @@ function SortableHorizontalCard({
           {...listeners}
           className="text-c-dim/30 hover:text-c-dim cursor-grab active:cursor-grabbing touch-none shrink-0"
           onClick={(e) => e.stopPropagation()}
-          title="Drag to reorder"
+          title={t('editor.dragToReorder')}
         >
           <GripVertical className="w-3 h-3" />
         </button>
@@ -3727,14 +3729,14 @@ function SortableHorizontalCard({
         <span className="text-[9px] text-c-dim ml-auto">{displayDuration}s</span>
         <button
           onClick={(e) => { e.stopPropagation(); onCut(); }}
-          title="Cut / split at playhead"
+          title={t('editor.cutSplitPlayhead')}
           className="opacity-0 group-hover:opacity-100 text-c-dim/50 hover:text-orange-400 transition-all"
         >
           <Scissors className="w-3 h-3" />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          title="Delete scene"
+          title={t('editor.scene.delete')}
           className="opacity-0 group-hover:opacity-100 text-c-dim/50 hover:text-red-400 transition-all"
         >
           <Trash2 className="w-3 h-3" />
@@ -3757,7 +3759,7 @@ function SortableHorizontalCard({
         className="absolute right-0 top-0 w-3 h-full cursor-ew-resize rounded-r-xl bg-[#7c6af5]/0 hover:bg-[#7c6af5]/25 active:bg-[#7c6af5]/40 transition-colors"
         onPointerDown={handleRightResize}
         onClick={(e) => e.stopPropagation()}
-        title="Drag to trim duration"
+        title={t('editor.dragToTrimDuration')}
       />
     </div>
   );
