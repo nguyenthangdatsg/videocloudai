@@ -1597,6 +1597,9 @@ Example response:
 
       const videoDir = path.resolve(cacheDir, 'videos');
 
+      // FFmpeg produces verbose stderr — increase maxBuffer to avoid crashes
+      const ffOpts = { timeout: 300_000, maxBuffer: 50 * 1024 * 1024 };
+
       // Helper: build static filter for FFmpeg (no motion)
       function buildStaticFilter(outW: number, outH: number, fps: number): string {
         return [
@@ -1645,7 +1648,7 @@ Example response:
             '-an',
             '-y',
             segOut,
-          ], { timeout: 120_000 });
+          ], ffOpts);
           continue;
         }
 
@@ -1690,7 +1693,7 @@ Example response:
             '-an',
             '-y',
             segOut,
-          ], { timeout: 120_000 });
+          ], ffOpts);
         }
       }
 
@@ -1716,7 +1719,7 @@ Example response:
         '-c', 'copy',
         '-y',
         videoOnly,
-      ], { timeout: 120_000 });
+      ], ffOpts);
 
       // Step 4: Mux audio (with optional background music mixing)
       const vVol = typeof voiceVolume === 'number' ? Math.max(0, Math.min(2, voiceVolume)) : 1.0;
@@ -1761,7 +1764,7 @@ Example response:
           '-movflags', '+faststart',
           '-y',
           outputFile,
-        ], { timeout: 300_000 });
+        ], ffOpts);
       } else {
         res.write(JSON.stringify({ progress: true, step: 'muxing', detail: 'Adding audio track...' }) + '\n');
 
@@ -1779,7 +1782,7 @@ Example response:
           '-y',
           outputFile,
         );
-        await execFileAsync(ffmpeg, ffArgs, { timeout: 120_000 });
+        await execFileAsync(ffmpeg, ffArgs, ffOpts);
       }
 
       // Clean up temp
