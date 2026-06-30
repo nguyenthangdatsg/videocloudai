@@ -52,7 +52,7 @@ echo ============================================
 echo.
 
 :: Start the dev server
-npm run dev
+call npm run dev
 
 :: If we get here, the server stopped
 echo.
@@ -111,7 +111,7 @@ exit /b 1
 :RunNpmInstall
 echo.
 echo [WARN] node_modules missing. Running npm install...
-npm install
+call npm install
 if errorlevel 1 goto NpmInstallFailed
 goto CheckPorts
 
