@@ -45,8 +45,19 @@ netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
 if not errorlevel 1 goto Port5174InUse
 
 :StartServer
+:: Check if the path contains spaces
+echo "%~dp0" | findstr " " >nul 2>&1
+if not errorlevel 1 (
+    echo.
+    echo ============================================================
+    echo [WARN] Directory path contains spaces. 
+    echo        Bypassing Turborepo for compatibility.
+    echo ============================================================
+    goto RunDirect
+)
+
 echo.
-echo [START] Running npm run dev...
+echo [START] Running npm run dev via Turborepo...
 echo   Frontend: http://localhost:5174
 echo   Backend:  http://localhost:3002/api
 echo ============================================
@@ -54,6 +65,11 @@ echo.
 
 :: Start the dev server
 call npm run dev
+if errorlevel 1 (
+    echo.
+    echo [WARN] Turborepo execution failed. Retrying in Direct Mode...
+    goto RunDirect
+)
 
 :: If we get here, the server stopped
 echo.
@@ -63,6 +79,60 @@ echo ============================================
 echo Press any key to exit...
 pause
 exit /b 0
+
+
+:RunDirect
+echo.
+echo ============================================================
+echo [COMPILING] Building packages sequentially for compatibility...
+echo ============================================================
+echo.
+
+echo [1/3] Building @videocloudai/shared...
+cd /d "%~dp0packages\shared" && call npm run build
+if errorlevel 1 goto BuildFailed
+
+echo [2/3] Building @videocloudai/core...
+cd /d "%~dp0packages\core" && call npm run build
+if errorlevel 1 goto BuildFailed
+
+echo [3/3] Building @videocloudai/ffmpeg...
+cd /d "%~dp0packages\ffmpeg" && call npm run build
+if errorlevel 1 goto BuildFailed
+
+echo.
+echo ============================================================
+echo [START] Launching dev servers directly (bypassing turbo)...
+echo ============================================================
+echo.
+
+:: Go back to project root
+cd /d "%~dp0"
+
+:: Start backend in a new window
+start "VideoCloudAI Backend" cmd /c "cd /d "%~dp0apps\server" && call npm run dev"
+
+:: Start frontend in a new window
+start "VideoCloudAI Frontend" cmd /c "cd /d "%~dp0apps\web" && call npm run dev"
+
+echo.
+echo ============================================================
+echo   Dev servers launched in separate windows!
+echo   Close those windows to stop the servers.
+echo ============================================================
+echo.
+pause
+exit /b 0
+
+:BuildFailed
+echo.
+echo ============================================================
+echo [ERROR] Sequential package compilation failed!
+echo Please check your TypeScript installation.
+echo ============================================================
+echo.
+pause
+exit /b 1
 
 
 :NoProjectDir
