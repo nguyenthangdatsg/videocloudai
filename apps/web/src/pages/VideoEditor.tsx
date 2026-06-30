@@ -985,7 +985,7 @@ export function VideoEditor() {
                 }}
                 className={clsx(
                   'text-sm font-semibold leading-tight bg-c-elevated text-c-text rounded px-2 py-0.5 outline-none border w-full',
-                  titleError ? 'border-red-500' : 'border-[#7c6af5]'
+                  titleError ? 'border-red-500' : 'border-accent-primary'
                 )}
               />
               {titleError && (
@@ -1159,7 +1159,7 @@ export function VideoEditor() {
               </div>
             ) : isGenerating ? (
               <div className="flex flex-col items-center justify-center h-full">
-                <Spinner size="lg" className="text-[#7c6af5] mb-2" />
+                <Spinner size="lg" className="text-accent-primary mb-2" />
                 <div className="text-sm text-c-text capitalize">
                   {project.status.replace(/-/g, ' ')}…
                 </div>
@@ -1853,7 +1853,7 @@ export function VideoEditor() {
                   </a>
                   <button
                     onClick={() => setDistributeOpen(true)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium border border-[#7c6af5]/50 text-[#9180ff] hover:bg-[#7c6af5]/10 transition-colors"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium border border-accent-primary/50 text-accent-hover hover:bg-accent-primary/10 transition-colors"
                   >
                     <Send className="w-3 h-3" />
                     {t('distribution.distributeBtn_short')}
@@ -2273,7 +2273,7 @@ export function VideoEditor() {
                     className={clsx(
                       'p-1 rounded transition-colors',
                       timelineLayout === 'vertical'
-                        ? 'bg-[#7c6af5] text-white'
+                        ? 'bg-accent-primary text-white'
                         : 'text-c-dim hover:text-c-text'
                     )}
                   >
@@ -2285,7 +2285,7 @@ export function VideoEditor() {
                     className={clsx(
                       'p-1 rounded transition-colors',
                       timelineLayout === 'horizontal'
-                        ? 'bg-[#7c6af5] text-white'
+                        ? 'bg-accent-primary text-white'
                         : 'text-c-dim hover:text-c-text'
                     )}
                   >
@@ -2417,7 +2417,7 @@ export function VideoEditor() {
               className={clsx(
                 'flex-1 flex items-center justify-center gap-1 py-2.5 text-[11px] font-medium border-b-2 -mb-px transition-colors',
                 activeTab === 'properties'
-                  ? 'border-[#7c6af5] text-[#9180ff]'
+                  ? 'border-accent-primary text-accent-hover'
                   : 'border-transparent text-c-muted hover:text-c-text'
               )}
             >
@@ -2429,7 +2429,7 @@ export function VideoEditor() {
               className={clsx(
                 'flex-1 flex items-center justify-center gap-1 py-2.5 text-[11px] font-medium border-b-2 -mb-px transition-colors',
                 activeTab === 'transform'
-                  ? 'border-[#7c6af5] text-[#9180ff]'
+                  ? 'border-accent-primary text-accent-hover'
                   : 'border-transparent text-c-muted hover:text-c-text'
               )}
             >
@@ -2441,7 +2441,7 @@ export function VideoEditor() {
               className={clsx(
                 'flex-1 flex items-center justify-center gap-1 py-2.5 text-[11px] font-medium border-b-2 -mb-px transition-colors',
                 activeTab === 'tools'
-                  ? 'border-[#7c6af5] text-[#9180ff]'
+                  ? 'border-accent-primary text-accent-hover'
                   : 'border-transparent text-c-muted hover:text-c-text'
               )}
             >
@@ -2453,14 +2453,14 @@ export function VideoEditor() {
               className={clsx(
                 'flex-1 flex items-center justify-center gap-1 py-2.5 text-[11px] font-medium border-b-2 -mb-px transition-colors relative',
                 activeTab === 'ai'
-                  ? 'border-[#7c6af5] text-[#9180ff]'
+                  ? 'border-accent-primary text-accent-hover'
                   : 'border-transparent text-c-muted hover:text-c-text'
               )}
             >
               <Brain className="w-3 h-3" />
               {t('editor.tabAi')}
               {pendingRecCount > 0 && activeTab !== 'ai' && (
-                <span className="absolute top-1.5 right-2 w-4 h-4 bg-[#7c6af5] text-white text-[10px] rounded-full flex items-center justify-center font-bold">
+                <span className="absolute top-1.5 right-2 w-4 h-4 bg-accent-primary text-white text-[10px] rounded-full flex items-center justify-center font-bold">
                   {pendingRecCount > 9 ? '9+' : pendingRecCount}
                 </span>
               )}
@@ -2658,7 +2658,7 @@ function PropertiesPanel({
               disabled={isBusy}
               className={clsx(
                 'w-8 h-4 rounded-full transition-colors relative shrink-0',
-                project.musicEnabled ? 'bg-[#7c6af5]' : 'bg-c-border'
+                project.musicEnabled ? 'bg-accent-primary' : 'bg-c-border'
               )}
             >
               <span className={clsx(
@@ -2681,18 +2681,18 @@ function PropertiesPanel({
                 const pinnedDur = pinnedTrack?.duration ?? 0;
                 const videoDur = project.metadata.totalDuration ?? project.duration ?? 0;
                 return (
-                  <div className="px-2 py-1.5 bg-[#7c6af520] border border-[#7c6af5] rounded space-y-1">
+                  <div className="px-2 py-1.5 bg-accent-muted border border-accent-primary rounded space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <button
                         onClick={() => togglePreview(pinnedFilename)}
-                        className="shrink-0 text-[#9180ff] hover:text-white transition-colors"
+                        className="shrink-0 text-accent-hover hover:text-white transition-colors"
                         title={t('editor.previewMusic')}
                       >
                         {previewTrack === pinnedFilename
                           ? <Pause className="w-3.5 h-3.5" />
                           : <Play className="w-3.5 h-3.5" />}
                       </button>
-                      <span className="truncate text-[#9180ff] flex-1 text-left">
+                      <span className="truncate text-accent-hover flex-1 text-left">
                         {pinnedFilename}
                       </span>
                       <button
@@ -2710,7 +2710,7 @@ function PropertiesPanel({
                         <span>{pinnedDur}s</span>
                         <span className="text-c-border">→</span>
                         <span>{videoDur}s</span>
-                        <span className="ml-auto text-[#9180ff]/70">
+                        <span className="ml-auto text-accent-hover/70">
                           {pinnedDur >= videoDur ? t('editor.musicTrimmed') : `${Math.ceil(videoDur / pinnedDur)}× ${t('editor.musicLooped')}`}
                         </span>
                       </div>
@@ -2733,7 +2733,7 @@ function PropertiesPanel({
                           className={clsx(
                             'flex items-center gap-1.5 text-xs px-2 py-1 rounded border transition-colors',
                             isActive
-                              ? 'bg-[#7c6af520] border-[#7c6af5] text-[#9180ff]'
+                              ? 'bg-accent-muted border-accent-primary text-accent-hover'
                               : 'border-c-border text-c-muted hover:border-c-border-hi'
                           )}
                         >
@@ -2741,7 +2741,7 @@ function PropertiesPanel({
                             onClick={(e) => { e.stopPropagation(); togglePreview(track.filename); }}
                             className={clsx(
                               'shrink-0 transition-colors',
-                              isPlaying ? 'text-[#9180ff]' : 'text-c-dim hover:text-c-text'
+                              isPlaying ? 'text-accent-hover' : 'text-c-dim hover:text-c-text'
                             )}
                             title={isPlaying ? t('editor.stopPreview') : t('editor.previewMusic')}
                           >
@@ -2779,7 +2779,7 @@ function PropertiesPanel({
 
               {/* Upload local music file */}
               <div>
-                <label className="flex items-center gap-2 px-2 py-1.5 border border-dashed border-c-border rounded cursor-pointer hover:border-[#7c6af5] transition-colors">
+                <label className="flex items-center gap-2 px-2 py-1.5 border border-dashed border-c-border rounded cursor-pointer hover:border-accent-primary transition-colors">
                   <Volume2 className="w-3.5 h-3.5 text-c-dim shrink-0" />
                   <span className="text-c-muted text-xs">{t('editor.uploadMusic')}</span>
                   <input
@@ -2859,7 +2859,7 @@ function PropertiesPanel({
                             }}
                             className={clsx(
                               'shrink-0 transition-colors',
-                              isPlaying ? 'text-[#9180ff]' : 'text-c-dim hover:text-c-text'
+                              isPlaying ? 'text-accent-hover' : 'text-c-dim hover:text-c-text'
                             )}
                             title={isPlaying ? t('editor.stopPreview') : t('editor.previewMusic')}
                           >
@@ -2872,7 +2872,7 @@ function PropertiesPanel({
                           <button
                             onClick={() => handleDownload(track)}
                             disabled={!!downloadingId || isBusy}
-                            className="shrink-0 text-xs px-2 py-0.5 bg-[#7c6af5] hover:bg-[#9180ff] text-white rounded transition-colors"
+                            className="shrink-0 text-xs px-2 py-0.5 bg-accent-primary hover:bg-accent-hover text-white rounded transition-colors"
                           >
                             {downloadingId === track.id ? <Spinner size="sm" /> : <Download className="w-3 h-3" />}
                           </button>
@@ -2928,8 +2928,8 @@ function PropertiesPanel({
                   className={clsx(
                     'px-2 py-0.5 rounded-md text-[11px] border transition-colors',
                     splitDuration === s && !splitCustom
-                      ? 'bg-[#7c6af5] border-[#7c6af5] text-white'
-                      : 'border-c-border text-c-muted hover:border-[#7c6af5] hover:text-c-text'
+                      ? 'bg-accent-primary border-accent-primary text-white'
+                      : 'border-c-border text-c-muted hover:border-accent-primary hover:text-c-text'
                   )}
                 >
                   {s}s
@@ -2941,7 +2941,7 @@ function PropertiesPanel({
                 placeholder="custom"
                 value={splitCustom}
                 onChange={(e) => { setSplitCustom(e.target.value); setSplitSegments(null); }}
-                className="w-16 px-1.5 py-0.5 rounded-md text-[11px] border border-c-border bg-c-bg text-c-text focus:border-[#7c6af5] focus:outline-none"
+                className="w-16 px-1.5 py-0.5 rounded-md text-[11px] border border-c-border bg-c-bg text-c-text focus:border-accent-primary focus:outline-none"
               />
             </div>
 
@@ -2949,7 +2949,7 @@ function PropertiesPanel({
             {totalDur > 0 && effectiveSplitDuration >= 1 && (
               <p className="text-[11px] text-c-dim">
                 {totalDur.toFixed(1)}s ÷ {effectiveSplitDuration}s ≈{' '}
-                <span className="text-[#9180ff] font-medium">{estimatedClips} {t('editor.clips')}</span>
+                <span className="text-accent-hover font-medium">{estimatedClips} {t('editor.clips')}</span>
               </p>
             )}
 
@@ -2957,7 +2957,7 @@ function PropertiesPanel({
             <button
               onClick={handleSplit}
               disabled={isSplitting || effectiveSplitDuration < 1 || isBusy}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-[#7c6af5] hover:bg-[#9180ff] disabled:opacity-50 text-white text-xs transition-colors"
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-accent-primary hover:bg-accent-hover disabled:opacity-50 text-white text-xs transition-colors"
             >
               {isSplitting ? <Spinner className="w-3 h-3" /> : <Scissors className="w-3 h-3" />}
               {isSplitting ? t('editor.splitting') : t('editor.splitNow')}
@@ -2984,7 +2984,7 @@ function PropertiesPanel({
                       <a
                         href={videosApi.splitDownloadUrl(project.id, seg.filename)}
                         download={seg.filename}
-                        className="shrink-0 flex items-center gap-0.5 px-1.5 py-1 rounded bg-[#7c6af5]/20 hover:bg-[#7c6af5]/40 text-[#9180ff] text-[10px] transition-colors"
+                        className="shrink-0 flex items-center gap-0.5 px-1.5 py-1 rounded bg-accent-primary/20 hover:bg-accent-primary/40 text-accent-hover text-[10px] transition-colors"
                       >
                         <Download className="w-2.5 h-2.5" />
                         {t('common.download')}
@@ -3100,11 +3100,11 @@ function SceneTimelineRow({
       className={clsx(
         'group flex items-stretch gap-3 bg-c-surface border rounded-xl p-3 transition-colors',
         !isEditing && 'cursor-pointer',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7c6af5]/60',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/60',
         isActive
-          ? 'border-[#7c6af5] bg-[#7c6af515] ring-1 ring-[#7c6af580]'
+          ? 'border-accent-primary bg-accent-muted ring-1 ring-accent-glow'
           : appliedEdit
-          ? 'border-[#7c6af540] bg-[#7c6af508] hover:border-[#7c6af580]'
+          ? 'border-accent-glow bg-accent-muted hover:border-accent-glow'
           : 'border-c-border hover:border-c-border-hi'
       )}
     >
@@ -3125,14 +3125,14 @@ function SceneTimelineRow({
               value={draft.line}
               onChange={(e) => setDraft({ ...draft, line: e.target.value })}
               placeholder={t('editor.scene.linePlaceholder')}
-              className="w-full px-2.5 py-1.5 text-sm bg-c-bg border border-c-border rounded-lg text-c-text placeholder-c-dim focus:border-[#7c6af5] focus:outline-none"
+              className="w-full px-2.5 py-1.5 text-sm bg-c-bg border border-c-border rounded-lg text-c-text placeholder-c-dim focus:border-accent-primary focus:outline-none"
             />
             <input
               type="text"
               value={draft.visual}
               onChange={(e) => setDraft({ ...draft, visual: e.target.value })}
               placeholder={t('editor.scene.visualPlaceholder')}
-              className="w-full px-2.5 py-1.5 text-xs bg-c-bg border border-c-border rounded-lg text-c-text placeholder-c-dim focus:border-[#7c6af5] focus:outline-none"
+              className="w-full px-2.5 py-1.5 text-xs bg-c-bg border border-c-border rounded-lg text-c-text placeholder-c-dim focus:border-accent-primary focus:outline-none"
             />
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-1.5 text-xs">
@@ -3140,7 +3140,7 @@ function SceneTimelineRow({
                 <select
                   value={draft.mood}
                   onChange={(e) => setDraft({ ...draft, mood: e.target.value as SceneMood })}
-                  className="px-2 py-1 bg-c-bg border border-c-border rounded text-c-text focus:border-[#7c6af5] focus:outline-none"
+                  className="px-2 py-1 bg-c-bg border border-c-border rounded text-c-text focus:border-accent-primary focus:outline-none"
                 >
                   {SCENE_MOODS.map((m) => (
                     <option key={m} value={m}>{m}</option>
@@ -3154,7 +3154,7 @@ function SceneTimelineRow({
                   onChange={(e) =>
                     setDraft({ ...draft, style: e.target.value ? (e.target.value as SceneStyle) : undefined })
                   }
-                  className="px-2 py-1 bg-c-bg border border-c-border rounded text-c-text focus:border-[#7c6af5] focus:outline-none"
+                  className="px-2 py-1 bg-c-bg border border-c-border rounded text-c-text focus:border-accent-primary focus:outline-none"
                 >
                   <option value="">{t('editor.scene.styleNone')}</option>
                   {SCENE_STYLES.map((s) => (
@@ -3172,7 +3172,7 @@ function SceneTimelineRow({
                   onChange={(e) =>
                     setDraft({ ...draft, duration: Math.max(0.5, Number(e.target.value) || 0.5) })
                   }
-                  className="w-16 px-2 py-1 bg-c-bg border border-c-border rounded text-c-text focus:border-[#7c6af5] focus:outline-none"
+                  className="w-16 px-2 py-1 bg-c-bg border border-c-border rounded text-c-text focus:border-accent-primary focus:outline-none"
                 />
                 <span className="text-c-dim">s</span>
               </label>
@@ -3194,7 +3194,7 @@ function SceneTimelineRow({
             </div>
 
             <div className="mt-2 flex items-center gap-2 p-2 bg-c-bg rounded-lg">
-              <Wand2 className="w-3 h-3 text-[#7c6af5] shrink-0" />
+              <Wand2 className="w-3 h-3 text-accent-primary shrink-0" />
               <span className="text-xs text-c-muted italic truncate">{scene.visual}</span>
             </div>
           </>
@@ -3206,7 +3206,7 @@ function SceneTimelineRow({
             {appliedEdit.effects.map((fx) => (
               <span
                 key={fx}
-                className="text-xs px-1.5 py-0.5 rounded bg-[#7c6af520] border border-[#7c6af540] text-[#9180ff]"
+                className="text-xs px-1.5 py-0.5 rounded bg-accent-muted border border-accent-glow text-accent-hover"
               >
                 {EFFECT_LABELS[fx] ?? fx}
               </span>
@@ -3247,7 +3247,7 @@ function SceneTimelineRow({
                 onClick={saveEdit}
                 disabled={saving}
                 title={t('editor.scene.save')}
-                className="p-1.5 rounded bg-[#7c6af5] hover:bg-[#9180ff] text-white disabled:opacity-50 transition-colors"
+                className="p-1.5 rounded bg-accent-primary hover:bg-accent-hover text-white disabled:opacity-50 transition-colors"
               >
                 <Check className="w-3.5 h-3.5" />
               </button>
@@ -3291,7 +3291,7 @@ function SceneTimelineRow({
             <div className="text-xs text-c-dim">{scene.duration}s</div>
             <div className="w-full bg-c-elevated rounded-full h-1">
               <div
-                className="h-full rounded-full bg-[#7c6af5]"
+                className="h-full rounded-full bg-accent-primary"
                 style={{
                   width: `${Math.min(100, (scene.duration / 8) * 100)}%`,
                   opacity: appliedEdit ? 1 : 0.6,
@@ -3480,7 +3480,7 @@ function ToolsPanel({
                 max={300}
                 value={clipSegDuration}
                 onChange={(e) => { setClipSegDuration(Number(e.target.value)); setClipSegments(null); }}
-                className="w-full px-2 py-1 rounded-lg text-xs border border-c-border bg-c-bg text-c-text focus:border-[#7c6af5] focus:outline-none"
+                className="w-full px-2 py-1 rounded-lg text-xs border border-c-border bg-c-bg text-c-text focus:border-accent-primary focus:outline-none"
               />
             </div>
             <button
@@ -3536,12 +3536,12 @@ function ToolsPanel({
       {project.outputPath && project.status === 'completed' && (
         <div className="px-4 py-3 border-b border-c-border">
           <span className="text-xs font-semibold text-c-text uppercase tracking-wider flex items-center gap-1.5 mb-3">
-            <Download className="w-3.5 h-3.5 text-[#9180ff]" />
+            <Download className="w-3.5 h-3.5 text-accent-hover" />
             {t('common.download')}
           </span>
           <a
             href={`/api/export/${project.id}/download?v=${encodeURIComponent(project.updatedAt)}`}
-            className="w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded bg-[#7c6af5] hover:bg-[#9180ff] text-white transition-colors font-medium"
+            className="w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded bg-accent-primary hover:bg-accent-hover text-white transition-colors font-medium"
           >
             <Download className="w-3.5 h-3.5" />
             {t('common.download')}
@@ -3560,7 +3560,7 @@ function ToolsPanel({
             <span className="text-xs text-c-dim tabular-nums">{liveJob?.progress ?? 0}%</span>
           </div>
           <div className="w-full bg-c-border rounded-full h-1 mb-2">
-            <div className="h-1 bg-[#7c6af5] rounded-full transition-all duration-500" style={{ width: `${liveJob?.progress ?? 0}%` }} />
+            <div className="h-1 bg-accent-primary rounded-full transition-all duration-500" style={{ width: `${liveJob?.progress ?? 0}%` }} />
           </div>
           <div ref={assemblyLogRef} className="font-mono text-[11px] leading-5 bg-black/40 rounded p-2 max-h-48 overflow-y-auto">
             {assemblyLogs.map((entry, i) => (
@@ -3570,8 +3570,8 @@ function ToolsPanel({
               </div>
             ))}
             {liveJob?.progressMessage && (
-              <div className="text-[#9180ff]">
-                <span className="text-[#9180ff]/50 mr-2 select-none">[{String(liveJob.progress ?? 0).padStart(3, ' ')}%]</span>
+              <div className="text-accent-hover">
+                <span className="text-accent-hover/50 mr-2 select-none">[{String(liveJob.progress ?? 0).padStart(3, ' ')}%]</span>
                 ▶ {liveJob.progressMessage}
               </div>
             )}
@@ -3694,9 +3694,9 @@ function SortableHorizontalCard({
       className={clsx(
         'group shrink-0 flex flex-col gap-1 border rounded-xl p-2 select-none transition-colors min-h-24',
         isActive
-          ? 'border-[#7c6af5] bg-[#7c6af515] ring-1 ring-[#7c6af580]'
+          ? 'border-accent-primary bg-accent-muted ring-1 ring-accent-glow'
           : appliedEdit
-          ? 'border-[#7c6af540] bg-[#7c6af508] hover:border-[#7c6af580]'
+          ? 'border-accent-glow bg-accent-muted hover:border-accent-glow'
           : 'border-c-border bg-c-surface hover:border-c-border-hi'
       )}
       onClick={() => requestSeek(startTime)}
@@ -3745,7 +3745,7 @@ function SortableHorizontalCard({
       {appliedEdit && appliedEdit.effects.length > 0 && (
         <div className="flex flex-wrap gap-0.5">
           {appliedEdit.effects.slice(0, 2).map((fx) => (
-            <span key={fx} className="text-[9px] px-1 py-px rounded bg-[#7c6af520] border border-[#7c6af540] text-[#9180ff]">
+            <span key={fx} className="text-[9px] px-1 py-px rounded bg-accent-muted border border-accent-glow text-accent-hover">
               {(EFFECT_LABELS as Record<string, string>)[fx] ?? fx}
             </span>
           ))}
@@ -3754,7 +3754,7 @@ function SortableHorizontalCard({
 
       {/* Right trim handle */}
       <div
-        className="absolute right-0 top-0 w-3 h-full cursor-ew-resize rounded-r-xl bg-[#7c6af5]/0 hover:bg-[#7c6af5]/25 active:bg-[#7c6af5]/40 transition-colors"
+        className="absolute right-0 top-0 w-3 h-full cursor-ew-resize rounded-r-xl bg-accent-primary/0 hover:bg-accent-primary/25 active:bg-accent-primary/40 transition-colors"
         onPointerDown={handleRightResize}
         onClick={(e) => e.stopPropagation()}
         title="Drag to trim duration"

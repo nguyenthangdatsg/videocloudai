@@ -55,7 +55,7 @@ function Section({ title, icon: Icon, children }: { title: string; icon: typeof 
   return (
     <div>
       <div className="flex items-center gap-1.5 mb-2">
-        <Icon className="w-3 h-3 text-[#9180ff]" />
+        <Icon className="w-3 h-3 text-accent-hover" />
         <h4 className="text-xs font-medium text-c-muted uppercase tracking-wider">{title}</h4>
       </div>
       {children}
@@ -123,7 +123,7 @@ export function TransformPanel() {
                 className={clsx(
                   'flex flex-col items-center justify-center gap-0.5 px-2 py-2 rounded-lg border text-xs transition-colors',
                   isActive
-                    ? 'bg-[#7c6af520] border-[#7c6af5] text-[#9180ff]'
+                    ? 'bg-accent-muted border-accent-primary text-accent-hover'
                     : 'border-c-border text-c-muted hover:border-c-border-hi hover:text-c-text'
                 )}
               >
@@ -156,7 +156,7 @@ export function TransformPanel() {
                       crop: { ...transform.crop!, [key]: v },
                     });
                   }}
-                  className="flex-1 accent-[#7c6af5]"
+                  className="flex-1 accent-c-accent"
                 />
                 <span className="w-8 text-right font-mono text-c-muted">
                   {transform.crop![key].toFixed(2)}
@@ -175,7 +175,7 @@ export function TransformPanel() {
             className={clsx(
               'flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-xs transition-colors',
               transform.flipH
-                ? 'bg-[#7c6af520] border-[#7c6af5] text-[#9180ff]'
+                ? 'bg-accent-muted border-accent-primary text-accent-hover'
                 : 'border-c-border text-c-muted hover:border-c-border-hi hover:text-c-text'
             )}
           >
@@ -187,7 +187,7 @@ export function TransformPanel() {
             className={clsx(
               'flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-xs transition-colors',
               transform.flipV
-                ? 'bg-[#7c6af520] border-[#7c6af5] text-[#9180ff]'
+                ? 'bg-accent-muted border-accent-primary text-accent-hover'
                 : 'border-c-border text-c-muted hover:border-c-border-hi hover:text-c-text'
             )}
           >
@@ -212,7 +212,7 @@ export function TransformPanel() {
         {!transform.logoUrl ? (
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="w-full flex flex-col items-center justify-center gap-2 px-3 py-5 rounded-lg border-2 border-dashed border-c-border text-c-dim hover:border-[#7c6af5] hover:text-[#9180ff] transition-colors"
+            className="w-full flex flex-col items-center justify-center gap-2 px-3 py-5 rounded-lg border-2 border-dashed border-c-border text-c-dim hover:border-accent-primary hover:text-accent-hover transition-colors"
           >
             <ImagePlus className="w-5 h-5" />
             <span className="text-xs">{t('editor.transform.uploadLogo')}</span>
@@ -255,7 +255,7 @@ export function TransformPanel() {
                     className={clsx(
                       'aspect-square flex items-center justify-center rounded border text-base transition-colors',
                       isActive
-                        ? 'bg-[#7c6af520] border-[#7c6af5] text-[#9180ff]'
+                        ? 'bg-accent-muted border-accent-primary text-accent-hover'
                         : 'border-c-border text-c-dim hover:border-c-border-hi hover:text-c-text'
                     )}
                   >
@@ -275,7 +275,7 @@ export function TransformPanel() {
                 step={1}
                 value={transform.logoSize}
                 onChange={(e) => updateTransform({ logoSize: parseInt(e.target.value, 10) })}
-                className="flex-1 accent-[#7c6af5]"
+                className="flex-1 accent-c-accent"
               />
               <span className="w-10 text-right font-mono text-c-muted">{transform.logoSize}%</span>
             </label>
@@ -288,7 +288,7 @@ export function TransformPanel() {
                 step={0.05}
                 value={transform.logoOpacity}
                 onChange={(e) => updateTransform({ logoOpacity: parseFloat(e.target.value) })}
-                className="flex-1 accent-[#7c6af5]"
+                className="flex-1 accent-c-accent"
               />
               <span className="w-10 text-right font-mono text-c-muted">
                 {Math.round(transform.logoOpacity * 100)}%

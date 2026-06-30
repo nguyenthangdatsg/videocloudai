@@ -47,6 +47,14 @@
     "and": "và",
     "settings": "Cài đặt"
   },
+  "theme": {
+    "select": "Chọn giao diện",
+    "midnight": "Nửa đêm",
+    "ocean": "Đại dương",
+    "emerald": "Ngọc lục",
+    "sunset": "Hoàng hôn",
+    "daylight": "Ban ngày"
+  },
   "status": {
     "queued": "Đang chờ",
     "running": "Đang chạy",
@@ -732,6 +740,7 @@
     "subtitle": "Cấu hình nhà cung cấp, thuyết minh và hệ thống",
     "saved": "Đã lưu cài đặt",
     "saveSettings": "Lưu cài đặt",
+    "theme": "Giao diện màu",
     "saving": "Đang lưu...",
     "tabGeneral": "Chung",
     "tabLLM": "LLM",

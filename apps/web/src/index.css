@@ -3,28 +3,107 @@
 @tailwind utilities;
 
 /* ─── Theme tokens ─────────────────────────────────────────── */
-:root {
-  --c-bg:        #0a0a0f;
-  --c-surface:   #111118;
-  --c-elevated:  #1e1e28;
-  --c-hover:     #24242f;
-  --c-border:    #2a2a38;
-  --c-border-hi: #3a3a50;
-  --c-text:      #f2f2f5;
-  --c-muted:     #9898b0;
-  --c-dim:       #606078;
+
+/* Midnight — deep cool purple (default) */
+:root, html[data-theme="midnight"] {
+  --c-bg:        #0c0c14;
+  --c-surface:   #14141e;
+  --c-elevated:  #1c1c2a;
+  --c-hover:     #262636;
+  --c-border:    #32324a;
+  --c-border-hi: #464668;
+  --c-text:      #f0f0f8;
+  --c-muted:     #a8a8c4;
+  --c-dim:       #7a7a9e;
+  --c-accent:    #8578f6;
+  --c-accent-hover: #9b8fff;
+  --c-accent-muted: rgba(133, 120, 246, 0.125);
+  --c-accent-glow:  rgba(133, 120, 246, 0.25);
 }
 
-html.light {
-  --c-bg:        #f5f5fa;
+/* Ocean — deep navy blue */
+html[data-theme="ocean"] {
+  --c-bg:        #0a1019;
+  --c-surface:   #0f1722;
+  --c-elevated:  #162030;
+  --c-hover:     #1e2a3c;
+  --c-border:    #263448;
+  --c-border-hi: #385068;
+  --c-text:      #e8f0f8;
+  --c-muted:     #8cb0d0;
+  --c-dim:       #6088b0;
+  --c-accent:    #4d9cf5;
+  --c-accent-hover: #6fb3ff;
+  --c-accent-muted: rgba(77, 156, 245, 0.125);
+  --c-accent-glow:  rgba(77, 156, 245, 0.25);
+}
+
+/* Emerald — dark forest green */
+html[data-theme="emerald"] {
+  --c-bg:        #0a120e;
+  --c-surface:   #101c16;
+  --c-elevated:  #182820;
+  --c-hover:     #20342a;
+  --c-border:    #2a4238;
+  --c-border-hi: #3c5e50;
+  --c-text:      #e8f5ee;
+  --c-muted:     #8cc4a4;
+  --c-dim:       #5a9a78;
+  --c-accent:    #34d399;
+  --c-accent-hover: #5eead4;
+  --c-accent-muted: rgba(52, 211, 153, 0.125);
+  --c-accent-glow:  rgba(52, 211, 153, 0.25);
+}
+
+/* Sunset — warm amber */
+html[data-theme="sunset"] {
+  --c-bg:        #12100c;
+  --c-surface:   #1c1814;
+  --c-elevated:  #28221c;
+  --c-hover:     #342c24;
+  --c-border:    #44382c;
+  --c-border-hi: #5e4e3e;
+  --c-text:      #f5f0e8;
+  --c-muted:     #c4a888;
+  --c-dim:       #9a7e60;
+  --c-accent:    #f59e42;
+  --c-accent-hover: #fbbf68;
+  --c-accent-muted: rgba(245, 158, 66, 0.125);
+  --c-accent-glow:  rgba(245, 158, 66, 0.25);
+}
+
+/* Daylight — clean light */
+html[data-theme="daylight"] {
+  --c-bg:        #f3f4f8;
   --c-surface:   #ffffff;
-  --c-elevated:  #eeeef6;
-  --c-hover:     #e6e6f0;
-  --c-border:    #d8d8e8;
-  --c-border-hi: #b8b8d0;
-  --c-text:      #18182e;
-  --c-muted:     #4a4a6e;
-  --c-dim:       #7878a0;
+  --c-elevated:  #eaebf2;
+  --c-hover:     #e0e1ec;
+  --c-border:    #cccde0;
+  --c-border-hi: #a8a9c2;
+  --c-text:      #141428;
+  --c-muted:     #3e3e62;
+  --c-dim:       #64648c;
+  --c-accent:    #7c5cf0;
+  --c-accent-hover: #9478ff;
+  --c-accent-muted: rgba(124, 92, 240, 0.1);
+  --c-accent-glow:  rgba(124, 92, 240, 0.2);
+}
+
+/* Keep backward compat for html.light */
+html.light {
+  --c-bg:        #f3f4f8;
+  --c-surface:   #ffffff;
+  --c-elevated:  #eaebf2;
+  --c-hover:     #e0e1ec;
+  --c-border:    #cccde0;
+  --c-border-hi: #a8a9c2;
+  --c-text:      #141428;
+  --c-muted:     #3e3e62;
+  --c-dim:       #64648c;
+  --c-accent:    #7c5cf0;
+  --c-accent-hover: #9478ff;
+  --c-accent-muted: rgba(124, 92, 240, 0.1);
+  --c-accent-glow:  rgba(124, 92, 240, 0.2);
 }
 
 @layer base {
@@ -62,14 +141,14 @@ html.light {
 
 @layer components {
   .glass {
-    background: rgba(30, 30, 40, 0.6);
+    background: rgba(28, 28, 42, 0.7);
     backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
 
-  html.light .glass {
-    background: rgba(240, 240, 248, 0.7);
-    border-color: rgba(0, 0, 0, 0.08);
+  html[data-theme="daylight"] .glass, html.light .glass {
+    background: rgba(240, 240, 248, 0.75);
+    border-color: rgba(0, 0, 0, 0.1);
   }
 
   .card {
@@ -79,7 +158,12 @@ html.light {
   }
 
   .btn-primary {
-    @apply bg-[#7c6af5] hover:bg-[#9180ff] text-white font-medium px-4 py-2 rounded-lg transition-colors duration-150;
+    @apply font-medium px-4 py-2 rounded-lg transition-colors duration-150 text-white;
+    background: var(--c-accent);
+  }
+
+  .btn-primary:hover {
+    background: var(--c-accent-hover);
   }
 
   .btn-secondary {
@@ -112,7 +196,7 @@ html.light {
   }
 
   .input:focus {
-    border-color: #7c6af5;
+    border-color: var(--c-accent);
   }
 
   .input::placeholder {
@@ -136,18 +220,18 @@ html.light {
   .mood-tense { @apply bg-rose-900/30 text-rose-300 border border-rose-800/30; }
   .mood-romantic { @apply bg-fuchsia-900/30 text-fuchsia-300 border border-fuchsia-800/30; }
 
-  html.light .mood-sad { @apply bg-blue-100 text-blue-700 border-blue-200; }
-  html.light .mood-hopeful { @apply bg-amber-100 text-amber-700 border-amber-200; }
-  html.light .mood-dramatic { @apply bg-red-100 text-red-700 border-red-200; }
-  html.light .mood-energetic { @apply bg-orange-100 text-orange-700 border-orange-200; }
-  html.light .mood-calm { @apply bg-teal-100 text-teal-700 border-teal-200; }
-  html.light .mood-mysterious { @apply bg-purple-100 text-purple-700 border-purple-200; }
-  html.light .mood-uplifting { @apply bg-green-100 text-green-700 border-green-200; }
-  html.light .mood-dark { @apply bg-gray-100 text-gray-700 border-gray-200; }
-  html.light .mood-melancholic { @apply bg-indigo-100 text-indigo-700 border-indigo-200; }
-  html.light .mood-euphoric { @apply bg-pink-100 text-pink-700 border-pink-200; }
-  html.light .mood-tense { @apply bg-rose-100 text-rose-700 border-rose-200; }
-  html.light .mood-romantic { @apply bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200; }
+  html[data-theme="daylight"] .mood-sad, html.light .mood-sad { @apply bg-blue-100 text-blue-700 border-blue-200; }
+  html[data-theme="daylight"] .mood-hopeful, html.light .mood-hopeful { @apply bg-amber-100 text-amber-700 border-amber-200; }
+  html[data-theme="daylight"] .mood-dramatic, html.light .mood-dramatic { @apply bg-red-100 text-red-700 border-red-200; }
+  html[data-theme="daylight"] .mood-energetic, html.light .mood-energetic { @apply bg-orange-100 text-orange-700 border-orange-200; }
+  html[data-theme="daylight"] .mood-calm, html.light .mood-calm { @apply bg-teal-100 text-teal-700 border-teal-200; }
+  html[data-theme="daylight"] .mood-mysterious, html.light .mood-mysterious { @apply bg-purple-100 text-purple-700 border-purple-200; }
+  html[data-theme="daylight"] .mood-uplifting, html.light .mood-uplifting { @apply bg-green-100 text-green-700 border-green-200; }
+  html[data-theme="daylight"] .mood-dark, html.light .mood-dark { @apply bg-gray-100 text-gray-700 border-gray-200; }
+  html[data-theme="daylight"] .mood-melancholic, html.light .mood-melancholic { @apply bg-indigo-100 text-indigo-700 border-indigo-200; }
+  html[data-theme="daylight"] .mood-euphoric, html.light .mood-euphoric { @apply bg-pink-100 text-pink-700 border-pink-200; }
+  html[data-theme="daylight"] .mood-tense, html.light .mood-tense { @apply bg-rose-100 text-rose-700 border-rose-200; }
+  html[data-theme="daylight"] .mood-romantic, html.light .mood-romantic { @apply bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200; }
 
   .status-dot {
     @apply w-2 h-2 rounded-full;

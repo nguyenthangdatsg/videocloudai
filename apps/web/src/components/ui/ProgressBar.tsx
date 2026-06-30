@@ -20,7 +20,7 @@ export function ProgressBar({ value, max = 100, className, showLabel, color = 'p
         <div
           className={clsx(
             'h-full rounded-full transition-all duration-300',
-            color === 'primary' && 'bg-[#7c6af5]',
+            color === 'primary' && 'bg-accent-primary',
             color === 'success' && 'bg-green-500',
             color === 'warning' && 'bg-amber-500',
             color === 'error' && 'bg-red-500'

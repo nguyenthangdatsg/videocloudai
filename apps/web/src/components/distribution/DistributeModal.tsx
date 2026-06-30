@@ -155,7 +155,7 @@ export function DistributeModal({ videoId, videoTitle, onClose }: Props) {
               className={clsx(
                 'flex-1 py-2.5 text-xs font-medium transition-colors',
                 view === tab
-                  ? 'text-[#9180ff] border-b-2 border-[#7c6af5]'
+                  ? 'text-accent-hover border-b-2 border-accent-primary'
                   : 'text-c-muted hover:text-c-text'
               )}
             >
@@ -199,14 +199,14 @@ export function DistributeModal({ videoId, videoTitle, onClose }: Props) {
                                 alreadyDone
                                   ? 'border-green-500/30 bg-green-500/5 opacity-70 cursor-default'
                                   : isSelected
-                                  ? 'border-[#7c6af5]/60 bg-[#7c6af5]/10'
+                                  ? 'border-accent-primary/60 bg-accent-primary/10'
                                   : 'border-c-border bg-c-surface hover:bg-c-elevated'
                               )}
                             >
                               <div className={clsx(
                                 'w-4 h-4 rounded border flex items-center justify-center shrink-0',
                                 alreadyDone ? 'border-green-500 bg-green-500'
-                                  : isSelected ? 'border-[#7c6af5] bg-[#7c6af5]'
+                                  : isSelected ? 'border-accent-primary bg-accent-primary'
                                   : 'border-c-border'
                               )}>
                                 {(alreadyDone || isSelected) && <Check className="w-2.5 h-2.5 text-white" />}
@@ -228,7 +228,7 @@ export function DistributeModal({ videoId, videoTitle, onClose }: Props) {
                   <div>
                     <label className="block text-xs text-c-muted mb-1">{t('distribution.noteLabel')}</label>
                     <input
-                      className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+                      className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-accent-primary"
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       placeholder={t('distribution.notePlaceholder')}
@@ -276,7 +276,7 @@ export function DistributeModal({ videoId, videoTitle, onClose }: Props) {
             <button
               onClick={handlePrepare}
               disabled={selected.size === 0 || preparing}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-sm bg-[#7c6af5] hover:bg-[#6b5ce7] text-white rounded-lg transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 px-4 py-1.5 text-sm bg-accent-primary hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50"
             >
               {preparing
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -337,7 +337,7 @@ function DistributionRow({
           {dist.note && <p className="text-xs text-c-muted mt-0.5">{dist.note}</p>}
           {dist.platformUrl && (
             <a href={dist.platformUrl} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-[#9180ff] hover:underline mt-0.5">
+              className="inline-flex items-center gap-1 text-xs text-accent-hover hover:underline mt-0.5">
               <ExternalLink className="w-3 h-3" />{t('distribution.viewPost')}
             </a>
           )}
@@ -372,7 +372,7 @@ function DistributionRow({
           <label className="text-xs text-c-muted">{t('distribution.performanceNote')}</label>
           <textarea
             autoFocus
-            className="w-full bg-c-elevated border border-c-border rounded-lg px-2.5 py-1.5 text-xs text-c-text focus:outline-none focus:border-[#7c6af5] resize-none h-16"
+            className="w-full bg-c-elevated border border-c-border rounded-lg px-2.5 py-1.5 text-xs text-c-text focus:outline-none focus:border-accent-primary resize-none h-16"
             value={noteInput}
             onChange={(e) => setNoteInput(e.target.value)}
             placeholder="views: 1200, likes: 80"
@@ -380,7 +380,7 @@ function DistributionRow({
           <div className="flex gap-2">
             <button
               onClick={() => { onSavePerformanceNote(noteInput); setShowNoteInput(false); }}
-              className="px-3 py-1 text-xs bg-[#7c6af5]/20 text-[#9180ff] border border-[#7c6af5]/30 rounded-lg hover:bg-[#7c6af5]/30 transition-colors"
+              className="px-3 py-1 text-xs bg-accent-primary/20 text-accent-hover border border-accent-primary/30 rounded-lg hover:bg-accent-primary/30 transition-colors"
             >
               {t('distribution.saveNote')}
             </button>
@@ -417,7 +417,7 @@ function DistributionRow({
       {showUrlInput && (
         <div className="flex gap-2">
           <input autoFocus
-            className="flex-1 bg-c-elevated border border-c-border rounded-lg px-2.5 py-1.5 text-xs text-c-text focus:outline-none focus:border-[#7c6af5]"
+            className="flex-1 bg-c-elevated border border-c-border rounded-lg px-2.5 py-1.5 text-xs text-c-text focus:outline-none focus:border-accent-primary"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
             placeholder={t('distribution.postUrlPlaceholder')}

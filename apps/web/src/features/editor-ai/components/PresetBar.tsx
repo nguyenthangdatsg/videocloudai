@@ -87,7 +87,7 @@ export function PresetBar({ scenes, compact = false }: Props) {
           {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           <span className="uppercase tracking-wider text-c-muted">{t('editor.ai.presets')}</span>
           {active && (
-            <span className="ml-auto text-[10.5px] text-[#9180ff] truncate max-w-[60%]">
+            <span className="ml-auto text-[10.5px] text-accent-hover truncate max-w-[60%]">
               {active.emoji} {active.label}
             </span>
           )}
@@ -102,9 +102,9 @@ export function PresetBar({ scenes, compact = false }: Props) {
         )}
 
         {!collapsed && active && (
-          <div className="px-3 py-1.5 bg-[#7c6af510] border-t border-[#7c6af520]">
+          <div className="px-3 py-1.5 bg-accent-muted border-t border-accent-muted">
             <div className="flex items-start gap-1">
-              <span className="text-[10.5px] text-[#9180ff] leading-tight flex-1">
+              <span className="text-[10.5px] text-accent-hover leading-tight flex-1">
                 {active.effects.length} {t('editor.ai.effectsLabel')} · {active.subtitleStyle} · {active.durationMultiplier < 1
                   ? t('editor.ai.fasterLabel', { percent: Math.round((1 - active.durationMultiplier) * 100) })
                   : active.durationMultiplier > 1
@@ -135,7 +135,7 @@ export function PresetBar({ scenes, compact = false }: Props) {
         >
           {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           {t('editor.ai.presets')}
-          {active && !collapsed && <span className="w-1.5 h-1.5 rounded-full bg-[#7c6af5] ml-1" />}
+          {active && !collapsed && <span className="w-1.5 h-1.5 rounded-full bg-accent-primary ml-1" />}
         </button>
 
         {!collapsed && (
@@ -147,15 +147,15 @@ export function PresetBar({ scenes, compact = false }: Props) {
         )}
 
         {collapsed && active && (
-          <span className="text-xs text-[#9180ff] shrink-0">
+          <span className="text-xs text-accent-hover shrink-0">
             {active.emoji} {active.label}
           </span>
         )}
       </div>
 
       {!collapsed && active && (
-        <div className="flex items-center gap-2 px-4 py-1 bg-[#7c6af510] border-t border-[#7c6af520]">
-          <span className="text-xs text-[#9180ff]">
+        <div className="flex items-center gap-2 px-4 py-1 bg-accent-muted border-t border-accent-muted">
+          <span className="text-xs text-accent-hover">
             {active.emoji} <strong>{active.label}</strong> {t('editor.ai.active')} —{' '}
             {active.effects.length} {t('editor.ai.effectsLabel')} · {active.subtitleStyle}{' '}
             {t('editor.ai.captionsLabel')} ·{' '}

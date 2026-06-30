@@ -107,7 +107,7 @@ export function QueueManager() {
               className={clsx(
                 'px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors',
                 activeTab === value
-                  ? 'border-[#7c6af5] text-[#9180ff]'
+                  ? 'border-accent-primary text-accent-hover'
                   : 'border-transparent text-c-muted hover:text-c-text'
               )}
             >
@@ -126,7 +126,7 @@ export function QueueManager() {
                 if (e.target.checked) setSelected(new Set(selectableJobs.map(j => j.id)));
                 else setSelected(new Set());
               }}
-              className="w-3.5 h-3.5 accent-[#7c6af5] cursor-pointer"
+              className="w-3.5 h-3.5 accent-c-accent cursor-pointer"
             />
             <span className="text-xs text-c-muted">
               {selected.size > 0 ? t('queue.selectedCount', { count: selected.size }) : t('queue.selectAll')}
@@ -170,7 +170,7 @@ export function QueueManager() {
                           else next.delete(job.id);
                           setSelected(next);
                         }}
-                        className="w-3.5 h-3.5 accent-[#7c6af5] cursor-pointer shrink-0 mt-0.5"
+                        className="w-3.5 h-3.5 accent-c-accent cursor-pointer shrink-0 mt-0.5"
                       />
                     )}
                     <div className="mt-0.5 shrink-0">{statusIcon(job.status)}</div>

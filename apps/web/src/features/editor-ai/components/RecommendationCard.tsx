@@ -81,7 +81,7 @@ export function RecommendationCard({ rec, onApply, onIgnore }: Props) {
           onClick={onApply}
           className={clsx(
             'flex-1 py-1 px-2 text-xs font-medium rounded-lg border transition-colors',
-            'bg-[#7c6af520] text-[#9180ff] border-[#7c6af540] hover:bg-[#7c6af530]'
+            'bg-accent-muted text-accent-hover border-accent-glow hover:bg-accent-glow'
           )}
         >
           {rec.actionLabel}

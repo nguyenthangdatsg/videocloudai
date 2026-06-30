@@ -362,7 +362,7 @@ export function EditorVideoPlayer({
             {effects.slice(0, 4).map((fx) => (
               <span
                 key={fx}
-                className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[#7c6af5]/80 text-white backdrop-blur-sm"
+                className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-accent-primary/80 text-white backdrop-blur-sm"
               >
                 {fx}
               </span>
@@ -387,7 +387,7 @@ export function EditorVideoPlayer({
             className="absolute inset-0 flex items-center justify-center group"
             aria-label={t('editor.player.play')}
           >
-            <div className="w-16 h-16 rounded-full bg-black/50 backdrop-blur-sm border border-white/20 flex items-center justify-center group-hover:bg-[#7c6af5]/70 group-hover:scale-110 transition-all">
+            <div className="w-16 h-16 rounded-full bg-black/50 backdrop-blur-sm border border-white/20 flex items-center justify-center group-hover:bg-accent-primary/70 group-hover:scale-110 transition-all">
               <Play className="w-6 h-6 text-white fill-white ml-0.5" />
             </div>
           </button>
@@ -399,7 +399,7 @@ export function EditorVideoPlayer({
             <div className="max-w-md text-center">
               {optimizing ? (
                 <>
-                  <div className="w-10 h-10 mx-auto mb-3 rounded-full border-2 border-[#7c6af5] border-t-transparent animate-spin" />
+                  <div className="w-10 h-10 mx-auto mb-3 rounded-full border-2 border-accent-primary border-t-transparent animate-spin" />
                   <div className="text-sm font-medium text-white mb-1">
                     {t('editor.player.reencodingTitle')}
                   </div>
@@ -422,7 +422,7 @@ export function EditorVideoPlayer({
                   {onRequestOptimize && (
                     <button
                       onClick={() => { setAutoTried(true); onRequestOptimize(); }}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#7c6af5] hover:bg-[#9180ff] text-white text-xs font-medium transition-colors"
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-primary hover:bg-accent-hover text-white text-xs font-medium transition-colors"
                     >
                       <Wand2 className="w-3.5 h-3.5" />
                       {autoTried
@@ -460,7 +460,7 @@ export function EditorVideoPlayer({
           />
           {/* Played */}
           <div
-            className="absolute top-1/2 -translate-y-1/2 left-0 h-1 group-hover:h-1.5 bg-[#7c6af5] rounded-full transition-all"
+            className="absolute top-1/2 -translate-y-1/2 left-0 h-1 group-hover:h-1.5 bg-accent-primary rounded-full transition-all"
             style={{ width: `${progress}%` }}
           />
           {/* Hover indicator */}
@@ -480,7 +480,7 @@ export function EditorVideoPlayer({
           )}
           {/* Playhead */}
           <div
-            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-[#7c6af5] border-2 border-white shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-accent-primary border-2 border-white shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
             style={{ left: `${progress}%` }}
           />
         </div>
@@ -550,7 +550,7 @@ export function EditorVideoPlayer({
             onClick={() => setLoop((l) => !l)}
             className={clsx(
               'p-1.5 rounded transition-colors',
-              loop ? 'text-[#9180ff] bg-[#7c6af520]' : 'text-white/60 hover:text-white hover:bg-white/10'
+              loop ? 'text-accent-hover bg-accent-muted' : 'text-white/60 hover:text-white hover:bg-white/10'
             )}
             title={t('editor.player.loop')}
           >
@@ -611,7 +611,7 @@ export function EditorVideoPlayer({
                 setVolume(v);
                 if (v > 0 && muted) setMuted(false);
               }}
-              className="w-16 h-1 accent-[#7c6af5] opacity-0 group-hover/vol:opacity-100 transition-opacity"
+              className="w-16 h-1 accent-c-accent opacity-0 group-hover/vol:opacity-100 transition-opacity"
             />
           </div>
 

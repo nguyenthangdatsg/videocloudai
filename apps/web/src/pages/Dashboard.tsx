@@ -134,8 +134,8 @@ export function Dashboard() {
               label: t('dashboard.totalVideos'),
               value: videos?.length ?? 0,
               sub: t('dashboard.projects'),
-              color: 'text-[#7c6af5]',
-              bg: 'bg-[#7c6af520]',
+              color: 'text-accent-primary',
+              bg: 'bg-accent-muted',
             },
             {
               icon: Library,
@@ -180,7 +180,7 @@ export function Dashboard() {
         {/* URL Import */}
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-3">
-            <Download className="w-4 h-4 text-[#7c6af5]" />
+            <Download className="w-4 h-4 text-accent-primary" />
             <h2 className="text-sm font-medium text-c-text">{t('dashboard.importVideo')}</h2>
             {ytdlpAvailable === false && (
               <span className="ml-auto flex items-center gap-1 text-xs text-amber-400">
@@ -228,10 +228,10 @@ export function Dashboard() {
               { key: 'caption', label: t('dashboard.importStepCaption'), endPct: 100 },
             ];
             return (
-              <div className="mt-3 p-3 rounded-lg bg-c-bg border border-[#7c6af530]">
+              <div className="mt-3 p-3 rounded-lg bg-c-bg border border-accent-glow">
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-xs text-c-muted truncate">{importMsg || t('dashboard.importing')}</div>
-                  <div className="text-xs font-medium text-[#7c6af5] tabular-nums">{importPct}%</div>
+                  <div className="text-xs font-medium text-accent-primary tabular-nums">{importPct}%</div>
                 </div>
                 <ProgressBar value={importPct} />
                 <ul className="mt-3 space-y-1.5">
@@ -243,12 +243,12 @@ export function Dashboard() {
                         {completed ? (
                           <Check className="w-3.5 h-3.5 text-green-400 shrink-0" />
                         ) : active ? (
-                          <Loader2 className="w-3.5 h-3.5 text-[#7c6af5] animate-spin shrink-0" />
+                          <Loader2 className="w-3.5 h-3.5 text-accent-primary animate-spin shrink-0" />
                         ) : (
                           <div className="w-3.5 h-3.5 rounded-full border border-c-border shrink-0" />
                         )}
                         <span className={clsx(
-                          completed ? 'text-c-text' : active ? 'text-[#7c6af5] font-medium' : 'text-c-dim'
+                          completed ? 'text-c-text' : active ? 'text-accent-primary font-medium' : 'text-c-dim'
                         )}>{s.label}</span>
                       </li>
                     );
@@ -274,7 +274,7 @@ export function Dashboard() {
                       if (e.target.checked) setSelected(new Set(recentVideos.map(v => v.id)));
                       else setSelected(new Set());
                     }}
-                    className="w-3.5 h-3.5 accent-[#7c6af5] cursor-pointer"
+                    className="w-3.5 h-3.5 accent-c-accent cursor-pointer"
                   />
                 )}
                 <h2 className="text-sm font-medium text-c-text">{t('dashboard.recentVideos')}</h2>
@@ -289,7 +289,7 @@ export function Dashboard() {
                   </button>
                 )}
               </div>
-              <Link to="/editor" className="text-xs text-[#7c6af5] hover:text-[#9180ff]">
+              <Link to="/editor" className="text-xs text-accent-primary hover:text-accent-hover">
                 {t('common.viewAll')}
               </Link>
             </div>
@@ -300,7 +300,7 @@ export function Dashboard() {
               <div className="text-center py-12">
                 <Film className="w-8 h-8 text-c-dim mx-auto mb-3" />
                 <div className="text-sm text-c-muted">{t('dashboard.noVideos')}</div>
-                <Link to="/script" className="text-xs text-[#7c6af5] hover:underline mt-1 block">
+                <Link to="/script" className="text-xs text-accent-primary hover:underline mt-1 block">
                   {t('dashboard.createFirst')}
                 </Link>
               </div>
@@ -317,12 +317,12 @@ export function Dashboard() {
                         else next.delete(video.id);
                         setSelected(next);
                       }}
-                      className="w-3.5 h-3.5 accent-[#7c6af5] cursor-pointer shrink-0"
+                      className="w-3.5 h-3.5 accent-c-accent cursor-pointer shrink-0"
                     />
                     <Link to={`/editor?video=${video.id}`} className="flex items-center gap-4 flex-1 min-w-0">
                       <div className="w-14 h-9 bg-c-elevated rounded flex items-center justify-center shrink-0">
                         {video.outputPath
-                          ? <Play className="w-3.5 h-3.5 text-[#7c6af5]" />
+                          ? <Play className="w-3.5 h-3.5 text-accent-primary" />
                           : <Film className="w-3.5 h-3.5 text-c-dim" />}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -372,7 +372,7 @@ export function Dashboard() {
           <div className="card">
             <div className="flex items-center justify-between p-4 border-b border-c-border">
               <h2 className="text-sm font-medium text-c-text">{t('dashboard.activeJobs')}</h2>
-              <Link to="/batch" className="text-xs text-[#7c6af5] hover:text-[#9180ff]">
+              <Link to="/batch" className="text-xs text-accent-primary hover:text-accent-hover">
                 {t('dashboard.queueSummary')}
               </Link>
             </div>
@@ -433,7 +433,7 @@ export function Dashboard() {
                 <Link
                   key={mood}
                   to={`/library?mood=${mood}`}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-c-surface border border-c-border hover:border-[#7c6af5] transition-colors"
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-c-surface border border-c-border hover:border-accent-primary transition-colors"
                 >
                   <Badge mood={mood}>{mood}</Badge>
                   <span className="text-xs text-c-muted">{count as number}</span>

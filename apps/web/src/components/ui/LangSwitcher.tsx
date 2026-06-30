@@ -25,7 +25,7 @@ export function LangSwitcher({ collapsed }: LangSwitcherProps) {
       title={`Switch to ${nextLang.label}`}
       className={clsx(
         'flex items-center gap-2 px-2 py-1.5 rounded-lg border border-c-border',
-        'bg-c-surface hover:bg-c-elevated hover:border-[#7c6af5] transition-colors text-xs font-medium',
+        'bg-c-surface hover:bg-c-elevated hover:border-accent-primary transition-colors text-xs font-medium',
         collapsed ? 'justify-center w-full' : ''
       )}
     >

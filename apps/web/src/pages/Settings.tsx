@@ -8,8 +8,17 @@ import { Spinner } from '../components/ui/Spinner';
 import { useAppStore } from '../store';
 import { Settings as SettingsIcon, Zap, Mic, Server, Eye, EyeOff, CheckCircle, XCircle, Save, Music, Play, Trash2, Sparkles, Film, Palette, Image as ImageIcon } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useTheme, THEMES, type ThemeName } from '../hooks/useTheme';
 
 type SettingsTab = 'general' | 'llm' | 'image' | 'narration' | 'video' | 'music';
+
+const THEME_COLORS: Record<ThemeName, { accent: string; bg: string; surface: string }> = {
+  midnight: { accent: '#8578f6', bg: '#0c0c14', surface: '#14141e' },
+  ocean:    { accent: '#4d9cf5', bg: '#0a1019', surface: '#0f1722' },
+  emerald:  { accent: '#34d399', bg: '#0a120e', surface: '#101c16' },
+  sunset:   { accent: '#f59e42', bg: '#12100c', surface: '#1c1814' },
+  daylight: { accent: '#7c5cf0', bg: '#f3f4f8', surface: '#ffffff' },
+};
 
 const WHISPER_MODELS = [
   { value: 'tiny',  label: 'tiny — Fastest, CPU-optimized (~70MB)' },
@@ -33,6 +42,7 @@ const COMMON_VI_FONTS = [
 export function Settings() {
   const { t } = useTranslation();
   const { pushNotification } = useAppStore();
+  const { theme: currentTheme, setTheme } = useTheme();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [form, setForm] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
@@ -163,7 +173,7 @@ export function Settings() {
               className={clsx(
                 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px whitespace-nowrap transition-colors',
                 activeTab === key
-                  ? 'border-[#7c6af5] text-[#9180ff]'
+                  ? 'border-accent-primary text-accent-hover'
                   : 'border-transparent text-c-dim hover:text-c-text hover:border-c-border'
               )}
             >
@@ -176,10 +186,56 @@ export function Settings() {
 
         {/* ═══ GENERAL TAB ═══ */}
         {activeTab === 'general' && (<>
+        {/* Theme */}
+        <section className="card p-5">
+          <h2 className="text-sm font-medium text-c-text mb-4 flex items-center gap-2">
+            <Palette className="w-4 h-4 text-c-accent" />
+            {t('settings.theme')}
+          </h2>
+          <div className="grid grid-cols-5 gap-3">
+            {THEMES.map((name) => {
+              const colors = THEME_COLORS[name];
+              const active = currentTheme === name;
+              return (
+                <button
+                  key={name}
+                  onClick={() => setTheme(name)}
+                  className={clsx(
+                    'relative flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all duration-150',
+                    active
+                      ? 'border-c-accent shadow-lg ring-1 ring-c-accent/30'
+                      : 'border-c-border hover:border-c-border-hi'
+                  )}
+                >
+                  {/* Mini preview */}
+                  <div
+                    className="w-full aspect-[4/3] rounded-lg overflow-hidden border border-black/10"
+                    style={{ background: colors.bg }}
+                  >
+                    <div className="m-1.5 rounded" style={{ background: colors.surface, height: '40%' }} />
+                    <div className="mx-1.5 flex gap-1">
+                      <div className="rounded" style={{ background: colors.accent, width: '40%', height: 6 }} />
+                      <div className="rounded opacity-30" style={{ background: colors.accent, flex: 1, height: 6 }} />
+                    </div>
+                  </div>
+                  <span className={clsx('text-xs font-medium', active ? 'text-c-accent' : 'text-c-muted')}>
+                    {t(`theme.${name}`)}
+                  </span>
+                  {active && (
+                    <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: colors.accent }}>
+                      <CheckCircle className="w-3.5 h-3.5 text-white" />
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
         {/* Branding */}
         <section className="card p-5">
           <h2 className="text-sm font-medium text-c-text mb-4 flex items-center gap-2">
-            <Palette className="w-4 h-4 text-[#7c6af5]" />
+            <Palette className="w-4 h-4 text-accent-primary" />
             {t('settings.branding')}
           </h2>
           <div className="space-y-4">
@@ -226,7 +282,7 @@ export function Settings() {
         {/* LLM Provider */}
         <section className="card p-5">
           <h2 className="text-sm font-medium text-c-text mb-4 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#7c6af5]" />
+            <Sparkles className="w-4 h-4 text-accent-primary" />
             {t('settings.llmTitle')}
           </h2>
 
@@ -720,7 +776,7 @@ export function Settings() {
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    className="accent-[#7c6af5] w-3.5 h-3.5"
+                    className="accent-c-accent w-3.5 h-3.5"
                     checked={form['intro_enabled'] === '1'}
                     onChange={(e) => set('intro_enabled', e.target.checked ? '1' : '0')}
                   />
@@ -781,12 +837,12 @@ export function Settings() {
                     <input
                       type="color"
                       className="w-8 h-8 rounded cursor-pointer border border-c-border bg-transparent"
-                      value={form['intro_accent_color'] ?? '#7c6af5'}
+                      value={form['intro_accent_color'] ?? '#8578f6'}
                       onChange={(e) => set('intro_accent_color', e.target.value)}
                     />
                     <input
                       className="input text-xs font-mono flex-1"
-                      value={form['intro_accent_color'] ?? '#7c6af5'}
+                      value={form['intro_accent_color'] ?? '#8578f6'}
                       onChange={(e) => set('intro_accent_color', e.target.value)}
                     />
                   </div>
@@ -801,7 +857,7 @@ export function Settings() {
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    className="accent-[#7c6af5] w-3.5 h-3.5"
+                    className="accent-c-accent w-3.5 h-3.5"
                     checked={form['outro_enabled'] === '1'}
                     onChange={(e) => set('outro_enabled', e.target.checked ? '1' : '0')}
                   />
@@ -860,12 +916,12 @@ export function Settings() {
                     <input
                       type="color"
                       className="w-8 h-8 rounded cursor-pointer border border-c-border bg-transparent"
-                      value={form['outro_accent_color'] ?? '#7c6af5'}
+                      value={form['outro_accent_color'] ?? '#8578f6'}
                       onChange={(e) => set('outro_accent_color', e.target.value)}
                     />
                     <input
                       className="input text-xs font-mono flex-1"
-                      value={form['outro_accent_color'] ?? '#7c6af5'}
+                      value={form['outro_accent_color'] ?? '#8578f6'}
                       onChange={(e) => set('outro_accent_color', e.target.value)}
                     />
                   </div>
@@ -990,7 +1046,7 @@ export function Settings() {
           <div className="mt-3 p-3 bg-c-bg rounded-lg">
             <div className="text-xs text-c-muted">
               {t('settings.installEdgeTts')}
-              <code className="text-[#7c6af5] font-mono ml-1">pip install edge-tts</code>
+              <code className="text-accent-primary font-mono ml-1">pip install edge-tts</code>
             </div>
           </div>
 
@@ -1069,7 +1125,7 @@ export function Settings() {
                     className={clsx(
                       'text-xs px-2 py-0.5 rounded border transition-colors',
                       form['subtitle_font_path'] === f
-                        ? 'border-[#7c6af5] text-[#9180ff] bg-[#7c6af510]'
+                        ? 'border-accent-primary text-accent-hover bg-accent-muted'
                         : 'border-c-border text-c-dim hover:border-c-border-hi hover:text-c-muted'
                     )}
                   >
@@ -1088,7 +1144,7 @@ export function Settings() {
                   max={80}
                   value={parseInt(form['subtitle_font_size'] ?? '52')}
                   onChange={(e) => set('subtitle_font_size', e.target.value)}
-                  className="flex-1 accent-[#7c6af5]"
+                  className="flex-1 accent-c-accent"
                 />
                 <span className="text-sm text-c-text font-mono w-8 text-center">
                   {form['subtitle_font_size'] ?? '52'}
@@ -1100,7 +1156,7 @@ export function Settings() {
           <div className="mt-3 p-3 bg-c-bg rounded-lg">
             <div className="text-xs text-c-muted">
               {t('settings.installWhisper')}
-              <code className="text-[#7c6af5] font-mono ml-1">pip install openai-whisper</code>
+              <code className="text-accent-primary font-mono ml-1">pip install openai-whisper</code>
             </div>
           </div>
         </section>
@@ -1149,7 +1205,7 @@ export function Settings() {
                 step={5}
                 value={Math.round(parseFloat(form['music_volume'] ?? '0.20') * 100)}
                 onChange={(e) => set('music_volume', String(parseInt(e.target.value) / 100))}
-                className="w-full accent-[#7c6af5]"
+                className="w-full accent-c-accent"
               />
               <div className="flex justify-between text-xs text-c-dim mt-0.5">
                 <span>0%</span><span>25%</span><span>50%</span>
@@ -1296,7 +1352,7 @@ export function Settings() {
 
           <div className="mt-3 p-3 bg-c-bg rounded-lg text-xs text-c-muted">
             {t('settings.downloadFfmpeg')}{' '}
-            <span className="text-[#7c6af5]">ffmpeg.org</span> {t('settings.addToPath')}
+            <span className="text-accent-primary">ffmpeg.org</span> {t('settings.addToPath')}
           </div>
 
           <div className="mt-3 flex items-center gap-3">

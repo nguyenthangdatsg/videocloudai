@@ -51,7 +51,7 @@ export function BatchGenerator() {
         {/* Create batch */}
         <div className="card p-5">
           <h2 className="text-sm font-medium text-c-text mb-4 flex items-center gap-2">
-            <Plus className="w-4 h-4 text-[#7c6af5]" />
+            <Plus className="w-4 h-4 text-accent-primary" />
             {t('batch.newBatch')}
           </h2>
 
@@ -82,7 +82,7 @@ export function BatchGenerator() {
                 max={20}
                 value={variationCount}
                 onChange={(e) => setVariationCount(parseInt(e.target.value))}
-                className="w-full accent-[#7c6af5]"
+                className="w-full accent-c-accent"
               />
               <div className="flex justify-between text-xs text-c-dim mt-1">
                 <span>2</span>

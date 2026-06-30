@@ -1,27 +1,39 @@
 import { useEffect, useState } from 'react';
 
-export type Theme = 'dark' | 'light';
+export const THEMES = ['midnight', 'ocean', 'emerald', 'sunset', 'daylight'] as const;
+export type ThemeName = typeof THEMES[number];
 
 const STORAGE_KEY = 'vcai-theme';
 
-function getInitialTheme(): Theme {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
-    if (stored === 'light' || stored === 'dark') return stored;
-  } catch {}
-  return 'dark';
+/** Themes that use light surfaces (for conditional styling) */
+export function isLightTheme(t: ThemeName): boolean {
+  return t === 'daylight';
 }
 
-function applyTheme(theme: Theme) {
-  if (theme === 'light') {
-    document.documentElement.classList.add('light');
+function getInitialTheme(): ThemeName {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY) as ThemeName | null;
+    if (stored && THEMES.includes(stored)) return stored;
+    // Migrate old 'light'/'dark' values
+    if (stored === 'light') return 'daylight';
+    if (stored === 'dark') return 'midnight';
+  } catch {}
+  return 'midnight';
+}
+
+function applyTheme(theme: ThemeName) {
+  const el = document.documentElement;
+  el.setAttribute('data-theme', theme);
+  // Keep .light class for backward compat
+  if (isLightTheme(theme)) {
+    el.classList.add('light');
   } else {
-    document.documentElement.classList.remove('light');
+    el.classList.remove('light');
   }
 }
 
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [theme, setTheme] = useState<ThemeName>(getInitialTheme);
 
   useEffect(() => {
     applyTheme(theme);
@@ -31,7 +43,11 @@ export function useTheme() {
   // Apply on first render (before hydration flash)
   useEffect(() => { applyTheme(getInitialTheme()); }, []);
 
-  const toggle = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+  const toggle = () =>
+    setTheme((t) => {
+      const idx = THEMES.indexOf(t);
+      return THEMES[(idx + 1) % THEMES.length];
+    });
 
-  return { theme, toggle };
+  return { theme, setTheme, toggle, themes: THEMES };
 }

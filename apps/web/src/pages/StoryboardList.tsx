@@ -32,7 +32,7 @@ const STEP_DOT_COLORS: Record<string, string> = {
 const STEP_ORDER = ['topics', 'script', 'audio', 'prompts', 'images', 'timeline', 'metadata', 'assemble'];
 
 const NICHE_COLORS = [
-  '#7c6af5', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6',
+  '#8578f6', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6',
   '#06b6d4', '#f97316', '#14b8a6', '#6366f1', '#e11d48',
 ];
 
@@ -386,7 +386,7 @@ export function StoryboardList() {
   const [tplName, setTplName] = useState('');
   const [tplNiche, setTplNiche] = useState('');
   const [tplDesc, setTplDesc] = useState('');
-  const [tplColor, setTplColor] = useState('#7c6af5');
+  const [tplColor, setTplColor] = useState('#8578f6');
   const [tplYoutubeUrl, setTplYoutubeUrl] = useState('');
   const [tplMemo, setTplMemo] = useState('');
   const [tplVisualStyle, setTplVisualStyle] = useState('');
@@ -459,7 +459,7 @@ export function StoryboardList() {
       queryClient.invalidateQueries({ queryKey: ['storyboard', 'templates'] });
       queryClient.invalidateQueries({ queryKey: ['storyboard', 'projects'] });
       setEditingTemplate(null);
-      setTplName(''); setTplNiche(''); setTplDesc(''); setTplColor('#7c6af5'); setTplYoutubeUrl(''); setTplMemo(''); setTplVisualStyle('');
+      setTplName(''); setTplNiche(''); setTplDesc(''); setTplColor('#8578f6'); setTplYoutubeUrl(''); setTplMemo(''); setTplVisualStyle('');
     } finally {
       setSavingTpl(false);
     }
@@ -808,7 +808,7 @@ export function StoryboardList() {
                       {savingTpl ? <Spinner className="w-3 h-3" /> : editingTemplate ? t('storyboardList.saveTemplate') : t('storyboardList.createTemplate')}
                     </button>
                     {editingTemplate && (
-                      <button onClick={() => { setEditingTemplate(null); setTplName(''); setTplNiche(''); setTplDesc(''); setTplColor('#7c6af5'); setTplYoutubeUrl(''); setTplMemo(''); setTplVisualStyle(''); }} className="btn-secondary text-xs px-3 py-1.5">
+                      <button onClick={() => { setEditingTemplate(null); setTplName(''); setTplNiche(''); setTplDesc(''); setTplColor('#8578f6'); setTplYoutubeUrl(''); setTplMemo(''); setTplVisualStyle(''); }} className="btn-secondary text-xs px-3 py-1.5">
                         {t('storyboardList.cancel')}
                       </button>
                     )}
@@ -921,7 +921,7 @@ export function StoryboardList() {
                         'text-xs px-2 py-0.5 rounded-full border transition-colors',
                         isActive ? 'border-white/30 text-white' : 'border-c-border text-c-muted hover:text-c-text hover:border-c-muted',
                       )}
-                      style={isActive ? { backgroundColor: `${tpl?.color || '#7c6af5'}40`, borderColor: `${tpl?.color || '#7c6af5'}80` } : undefined}
+                      style={isActive ? { backgroundColor: `${tpl?.color || '#8578f6'}40`, borderColor: `${tpl?.color || '#8578f6'}80` } : undefined}
                     >
                       <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle" style={{ backgroundColor: tpl?.color || '#6b7280' }} />
                       {n}

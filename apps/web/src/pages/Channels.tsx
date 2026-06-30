@@ -43,7 +43,7 @@ function ChannelForm({ initial, onSave, onCancel, saving }: ChannelFormProps) {
         <div>
           <label className="block text-xs text-c-muted mb-1">{t('channels.name')} *</label>
           <input
-            className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+            className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-accent-primary"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
             placeholder={t('channels.namePlaceholder')}
@@ -52,7 +52,7 @@ function ChannelForm({ initial, onSave, onCancel, saving }: ChannelFormProps) {
         <div>
           <label className="block text-xs text-c-muted mb-1">{t('channels.platform')} *</label>
           <select
-            className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+            className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-accent-primary"
             value={form.platform}
             onChange={(e) => setForm({ ...form, platform: e.target.value as Platform })}
           >
@@ -66,7 +66,7 @@ function ChannelForm({ initial, onSave, onCancel, saving }: ChannelFormProps) {
         <div>
           <label className="block text-xs text-c-muted mb-1">{t('channels.handle')}</label>
           <input
-            className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+            className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-accent-primary"
             value={form.handle}
             onChange={(e) => setForm({ ...form, handle: e.target.value })}
             placeholder="@handle"
@@ -75,7 +75,7 @@ function ChannelForm({ initial, onSave, onCancel, saving }: ChannelFormProps) {
         <div>
           <label className="block text-xs text-c-muted mb-1">{t('channels.url')}</label>
           <input
-            className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+            className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-accent-primary"
             value={form.url}
             onChange={(e) => setForm({ ...form, url: e.target.value })}
             placeholder="https://..."
@@ -85,7 +85,7 @@ function ChannelForm({ initial, onSave, onCancel, saving }: ChannelFormProps) {
       <div>
         <label className="block text-xs text-c-muted mb-1">{t('channels.description')}</label>
         <input
-          className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+          className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-accent-primary"
           value={form.description}
           onChange={(e) => setForm({ ...form, description: e.target.value })}
           placeholder={t('channels.descriptionPlaceholder')}
@@ -107,7 +107,7 @@ function ChannelForm({ initial, onSave, onCancel, saving }: ChannelFormProps) {
             <div>
               <label className="block text-xs text-c-muted mb-1">{t('channels.defaultCaption')}</label>
               <textarea
-                className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-[#7c6af5] resize-none h-20"
+                className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-accent-primary resize-none h-20"
                 value={form.defaultCaption}
                 onChange={(e) => setForm({ ...form, defaultCaption: e.target.value })}
                 placeholder="Your default caption text..."
@@ -116,7 +116,7 @@ function ChannelForm({ initial, onSave, onCancel, saving }: ChannelFormProps) {
             <div>
               <label className="block text-xs text-c-muted mb-1">{t('channels.defaultHashtags')}</label>
               <input
-                className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+                className="w-full bg-c-elevated border border-c-border rounded-lg px-3 py-2 text-sm text-c-text focus:outline-none focus:border-accent-primary"
                 value={form.defaultHashtags}
                 onChange={(e) => setForm({ ...form, defaultHashtags: e.target.value })}
                 placeholder="#hashtag1 #hashtag2"
@@ -132,7 +132,7 @@ function ChannelForm({ initial, onSave, onCancel, saving }: ChannelFormProps) {
         <button
           onClick={() => onSave(form)}
           disabled={!form.name.trim() || saving}
-          className="px-4 py-1.5 text-sm bg-[#7c6af5] hover:bg-[#6b5ce7] text-white rounded-lg transition-colors disabled:opacity-50"
+          className="px-4 py-1.5 text-sm bg-accent-primary hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50"
         >
           {saving ? t('common.loading') : t('common.save')}
         </button>
@@ -178,7 +178,7 @@ function ChannelCard({ ch, editing, onEdit, onCancelEdit, onSaveEdit, savingEdit
             {ch.description && <p className="text-xs text-c-muted mt-0.5 truncate">{ch.description}</p>}
             {ch.url && (
               <a href={ch.url} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-[#9180ff] hover:underline mt-0.5">
+                className="inline-flex items-center gap-1 text-xs text-accent-hover hover:underline mt-0.5">
                 <ExternalLink className="w-3 h-3" />{ch.url}
               </a>
             )}
@@ -248,7 +248,7 @@ export function Channels() {
         </div>
         <div className="flex items-center gap-2">
           <select
-            className="bg-c-elevated border border-c-border rounded-lg px-3 py-1.5 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+            className="bg-c-elevated border border-c-border rounded-lg px-3 py-1.5 text-sm text-c-text focus:outline-none focus:border-accent-primary"
             value={filterPlatform}
             onChange={(e) => setFilterPlatform(e.target.value as Platform | '')}
           >
@@ -259,7 +259,7 @@ export function Channels() {
           </select>
           <button
             onClick={() => setShowCreate(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[#7c6af5] hover:bg-[#6b5ce7] text-white rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-accent-primary hover:bg-accent-hover text-white rounded-lg transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             {t('channels.addChannel')}
@@ -270,7 +270,7 @@ export function Channels() {
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
         {/* Create form */}
         {showCreate && (
-          <div className="bg-c-surface border border-[#7c6af5]/40 rounded-xl p-4">
+          <div className="bg-c-surface border border-accent-glow rounded-xl p-4">
             <h3 className="text-sm font-medium text-c-text mb-3">{t('channels.newChannel')}</h3>
             <ChannelForm
               onSave={(data) => createMutation.mutate(data)}
