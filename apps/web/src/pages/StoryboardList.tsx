@@ -569,7 +569,8 @@ export function StoryboardList() {
       + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   };
 
-  const niches = [...new Set((templates || []).map((t) => t.niche).filter(Boolean))];
+  const presetNiches = ['Ancient History', 'Dark Psychology', 'Horror & Mystery', 'Greek Myths'];
+  const niches = [...new Set([...presetNiches, ...(templates || []).map((t) => t.niche).filter(Boolean)])];
 
   const filteredProjects = (projects || []).filter((p: StoryboardProjectSummary) => {
     // Niche filter
@@ -664,6 +665,7 @@ export function StoryboardList() {
                     placeholder={t('storyboardList.nicheInputPlaceholder')}
                     className="input text-sm flex-1"
                     disabled={generatingTpl}
+                    list="niche-suggestions"
                   />
                   <button
                     onClick={handleGenerateFromNiche}
@@ -777,9 +779,6 @@ export function StoryboardList() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <input value={tplName} onChange={(e) => setTplName(e.target.value)} placeholder={t('storyboardList.tplName')} className="input text-sm" />
                     <input value={tplNiche} onChange={(e) => setTplNiche(e.target.value)} placeholder={t('storyboardList.tplNiche')} className="input text-sm" list="niche-suggestions" />
-                    <datalist id="niche-suggestions">
-                      {niches.map((n) => <option key={n} value={n} />)}
-                    </datalist>
                     <input value={tplDesc} onChange={(e) => setTplDesc(e.target.value)} placeholder={t('storyboardList.tplDescription')} className="input text-sm sm:col-span-2" />
                     <input value={tplYoutubeUrl} onChange={(e) => setTplYoutubeUrl(e.target.value)} placeholder={t('storyboardList.tplYoutubeUrl')} className="input text-sm sm:col-span-2" />
                     <input value={tplMemo} onChange={(e) => setTplMemo(e.target.value)} placeholder={t('storyboardList.tplMemo')} className="input text-sm sm:col-span-2" />
@@ -1567,6 +1566,9 @@ export function StoryboardList() {
           </div>
         </div>
       )}
+      <datalist id="niche-suggestions">
+        {niches.map((n) => <option key={n} value={n} />)}
+      </datalist>
     </div>
   );
 }
