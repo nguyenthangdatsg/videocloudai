@@ -241,6 +241,7 @@ export class NarrationService {
     fs.writeFileSync(listFile, content, 'utf-8');
     try {
       await execFileAsync(ffmpeg, [
+        '-loglevel', 'warning',
         '-f', 'concat', '-safe', '0', '-i', listFile,
         '-c', 'copy', '-y', outputPath,
       ], { timeout: 30000, maxBuffer: 50 * 1024 * 1024 });

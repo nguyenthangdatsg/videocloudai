@@ -1598,7 +1598,9 @@ Example response:
       const videoDir = path.resolve(cacheDir, 'videos');
 
       // FFmpeg produces verbose stderr — increase maxBuffer to avoid crashes
-      const ffOpts = { timeout: 300_000, maxBuffer: 50 * 1024 * 1024 };
+      const ffOpts = { timeout: 300_000, maxBuffer: 100 * 1024 * 1024 };
+      // Reduce FFmpeg verbosity to avoid flooding stderr
+      const ffQuiet = ['-loglevel', 'warning'];
 
       // Helper: build static filter for FFmpeg (no motion)
       function buildStaticFilter(outW: number, outH: number, fps: number): string {
@@ -1637,6 +1639,7 @@ Example response:
           ].join(';');
 
           await execFileAsync(ffmpeg, [
+            ...ffQuiet,
             '-i', vidPath,
             '-filter_complex', filterComplex,
             '-map', '[out]',
@@ -1681,6 +1684,7 @@ Example response:
           // Use FFmpeg for static clips — simple scale+pad, much faster
           const filterComplex = buildStaticFilter(w, h, fps);
           await execFileAsync(ffmpeg, [
+            ...ffQuiet,
             '-loop', '1',
             '-i', imgPath,
             '-filter_complex', filterComplex,
@@ -1713,6 +1717,7 @@ Example response:
       // Step 3: Concat video segments
       const videoOnly = path.join(concatDir, 'video_only.mp4');
       await execFileAsync(ffmpeg, [
+        ...ffQuiet,
         '-f', 'concat',
         '-safe', '0',
         '-i', concatList,
@@ -1751,6 +1756,7 @@ Example response:
         ].join(';');
 
         await execFileAsync(ffmpeg, [
+          ...ffQuiet,
           '-i', videoOnly,
           '-i', audioPath,
           '-i', musicPath,
@@ -1769,7 +1775,7 @@ Example response:
         res.write(JSON.stringify({ progress: true, step: 'muxing', detail: 'Adding audio track...' }) + '\n');
 
         // Voice only (with optional volume adjustment)
-        const ffArgs = ['-i', videoOnly, '-i', audioPath];
+        const ffArgs = [...ffQuiet, '-i', videoOnly, '-i', audioPath];
         if (vVol !== 1.0) {
           ffArgs.push('-filter:a', `volume=${vVol}`);
         }
