@@ -117,7 +117,7 @@ export class SubtitleService {
     console.log('[whisper] running:', 'python', args);
 
     try {
-      const { stdout, stderr } = await execFileAsync('python', args, { timeout: 600000 });
+      const { stdout, stderr } = await execFileAsync('python', args, { timeout: 600000, maxBuffer: 50 * 1024 * 1024 });
       console.log('[whisper] stdout:', stdout);
       if (stderr) console.log('[whisper] stderr:', stderr);
     } catch (err) {

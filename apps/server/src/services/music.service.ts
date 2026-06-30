@@ -267,7 +267,7 @@ export class MusicService {
       const { stdout } = await execFileAsync(ffprobe, [
         '-v', 'error', '-show_entries', 'format=duration',
         '-of', 'default=noprint_wrappers=1:nokey=1', filePath,
-      ], { timeout: 5000 });
+      ], { timeout: 5000, maxBuffer: 10 * 1024 * 1024 });
       return Math.round(parseFloat(stdout.trim()) || 0);
     } catch {
       return 0;

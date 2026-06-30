@@ -146,7 +146,7 @@ async function testFfmpeg(): Promise<boolean> {
 
 async function testEdgeTts(): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync('edge-tts', ['--list-voices'], { timeout: 10000 });
+    const { stdout } = await execFileAsync('edge-tts', ['--list-voices'], { timeout: 10000, maxBuffer: 10 * 1024 * 1024 });
     return stdout.length > 50;
   } catch {
     return false;

@@ -196,7 +196,7 @@ export async function probeFile(filePath: string): Promise<ProbeInfo> {
         '-show_format',
         filePath,
       ],
-      { timeout: 15_000 }
+      { timeout: 15_000, maxBuffer: 10 * 1024 * 1024 }
     );
     const data = JSON.parse(stdout) as {
       streams?: Array<{ codec_type?: string; codec_name?: string; pix_fmt?: string; duration?: string; width?: number; height?: number }>;

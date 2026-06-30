@@ -243,7 +243,7 @@ export class NarrationService {
       await execFileAsync(ffmpeg, [
         '-f', 'concat', '-safe', '0', '-i', listFile,
         '-c', 'copy', '-y', outputPath,
-      ], { timeout: 30000 });
+      ], { timeout: 30000, maxBuffer: 50 * 1024 * 1024 });
     } finally {
       try { fs.unlinkSync(listFile); } catch { /* ignore */ }
     }
@@ -287,9 +287,9 @@ export class NarrationService {
     const tryRun = async (v: string): Promise<void> => {
       const args = ['--voice', v, '--rate', rate, '--pitch', pitch, '--volume', volume, '--file', tmpText, '--write-media', outputPath];
       try {
-        await execFileAsync('edge-tts', args, { timeout });
+        await execFileAsync('edge-tts', args, { timeout, maxBuffer: 50 * 1024 * 1024 });
       } catch {
-        await execFileAsync('python', ['-m', 'edge_tts', ...args], { timeout });
+        await execFileAsync('python', ['-m', 'edge_tts', ...args], { timeout, maxBuffer: 50 * 1024 * 1024 });
       }
     };
 
@@ -328,7 +328,7 @@ export class NarrationService {
     try {
       const { stdout } = await execFileAsync(ffprobe, [
         '-v', 'quiet', '-print_format', 'json', '-show_format', filePath,
-      ]);
+      ], { timeout: 10000, maxBuffer: 10 * 1024 * 1024 });
       const data = JSON.parse(stdout) as { format: { duration: string } };
       return parseFloat(data.format.duration ?? '0');
     } catch {
