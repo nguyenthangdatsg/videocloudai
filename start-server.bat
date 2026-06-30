@@ -31,8 +31,9 @@ echo.
 echo [SETUP] Checking directory structure and system dependencies...
 node scripts/setup.js
 
-:: Verify node_modules exist
+:: Verify node_modules and turbo exist
 if not exist "node_modules" goto RunNpmInstall
+if not exist "node_modules\.bin\turbo.cmd" goto RunNpmInstall
 
 :CheckPorts
 :: Check if ports are already in use

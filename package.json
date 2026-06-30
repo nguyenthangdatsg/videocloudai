@@ -7,10 +7,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo run dev",
-    "build": "turbo run build",
+    "dev": "npx turbo run dev",
+    "build": "npx turbo run build",
     "start": "node apps/server/dist/index.js",
-    "clean": "turbo run clean",
+    "clean": "npx turbo run clean",
     "db:init": "ts-node scripts/init-db.ts",
     "setup": "node scripts/setup.js"
   },
