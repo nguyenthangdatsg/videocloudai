@@ -91,6 +91,10 @@ async function debugTypeAndSubmit(tabId, x, y, prompt) {
     windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
   });
   await sendCmd(tabId, "Input.dispatchKeyEvent", {
+    type: "char", key: "Enter", code: "Enter", text: "\r", unmodifiedText: "\r",
+    windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
+  });
+  await sendCmd(tabId, "Input.dispatchKeyEvent", {
     type: "keyUp", key: "Enter", code: "Enter",
     windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
   });

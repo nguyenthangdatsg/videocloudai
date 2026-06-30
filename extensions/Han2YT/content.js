@@ -350,19 +350,26 @@ async function submitPromptReliably(input, disabledBefore) {
     // 1) Ưu tiên Enter thật (giống đúng lúc bạn tự bấm Enter -> sinh được ảnh)
     input.focus?.();
     pressEnter(input);
-    await sleep(700);
-    if (inputText(input).trim().length < 3) {
-      console.log("[Han2YT] ✓ Gửi bằng ENTER (lần", i + 1, ")");
-      return true;
+    
+    // Đợi tối đa 1.5 giây (15 * 100ms) để ô prompt trống
+    for (let w = 0; w < 15; w++) {
+      await sleep(100);
+      if (inputText(input).trim().length < 3) {
+        console.log("[Han2YT] ✓ Gửi bằng ENTER (lần", i + 1, ")");
+        return true;
+      }
     }
 
     // 2) Enter chưa ăn -> thử click nút mũi tên
     if (arrow) {
       clickFully(arrow);
-      await sleep(700);
-      if (inputText(input).trim().length < 3) {
-        console.log("[Han2YT] ✓ Gửi bằng CLICK nút (lần", i + 1, ")");
-        return true;
+      // Đợi tối đa 1.5 giây (15 * 100ms) để ô prompt trống
+      for (let w = 0; w < 15; w++) {
+        await sleep(100);
+        if (inputText(input).trim().length < 3) {
+          console.log("[Han2YT] ✓ Gửi bằng CLICK nút (lần", i + 1, ")");
+          return true;
+        }
       }
     }
   }
