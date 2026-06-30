@@ -46,8 +46,8 @@ if not errorlevel 1 goto Port5174InUse
 
 :StartServer
 :: Check if the path contains spaces
-echo "%~dp0" | findstr " " >nul 2>&1
-if not errorlevel 1 (
+set "PROJECT_DIR=%~dp0"
+if not "%PROJECT_DIR%"=="%PROJECT_DIR: =%" (
     echo.
     echo ============================================================
     echo [WARN] Directory path contains spaces. 
