@@ -12,8 +12,8 @@ export function isLightTheme(t: ThemeName): boolean {
 
 function getInitialTheme(): ThemeName {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY) as ThemeName | null;
-    if (stored && THEMES.includes(stored)) return stored;
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored && (THEMES as readonly string[]).includes(stored)) return stored as ThemeName;
     // Migrate old 'light'/'dark' values
     if (stored === 'light') return 'daylight';
     if (stored === 'dark') return 'midnight';
