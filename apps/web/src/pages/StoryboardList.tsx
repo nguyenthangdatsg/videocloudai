@@ -645,19 +645,17 @@ export function StoryboardList() {
                 {/* Auto-generate from niche */}
                 <div className="flex gap-2 items-center flex-wrap">
                   <Wand2 className="w-4 h-4 text-amber-400 shrink-0" />
-                  {templates && templates.length > 0 && (
-                    <select
-                      value={referenceTemplateId}
-                      onChange={(e) => setReferenceTemplateId(e.target.value)}
-                      className="input text-sm w-48 shrink-0"
-                      disabled={generatingTpl}
-                    >
-                      <option value="">{t('storyboardList.fromScratch')}</option>
-                      {templates.map((tpl) => (
-                        <option key={tpl.id} value={tpl.id}>{t('storyboardList.basedOn', { name: tpl.niche || tpl.name })}</option>
-                      ))}
-                    </select>
-                  )}
+                  <select
+                    value={referenceTemplateId}
+                    onChange={(e) => setReferenceTemplateId(e.target.value)}
+                    className="input text-sm w-48 shrink-0"
+                    disabled={generatingTpl}
+                  >
+                    <option value="">{t('storyboardList.fromScratch')}</option>
+                    {templates && templates.map((tpl) => (
+                      <option key={tpl.id} value={tpl.id}>{t('storyboardList.basedOn', { name: tpl.niche || tpl.name })}</option>
+                    ))}
+                  </select>
                   <input
                     value={generatingNiche}
                     onChange={(e) => setGeneratingNiche(e.target.value)}
