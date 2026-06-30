@@ -78,7 +78,7 @@ export function Sidebar() {
           {appLogoUrl ? (
             <img src={appLogoUrl} alt={appName} className="w-7 h-7 rounded-lg object-cover shrink-0" />
           ) : (
-            <div className="w-7 h-7 rounded-lg bg-[#7c6af5] flex items-center justify-center shrink-0">
+            <div className="w-7 h-7 rounded-lg bg-accent-primary flex items-center justify-center shrink-0">
               <Zap className="w-4 h-4 text-white" />
             </div>
           )}
@@ -111,7 +111,7 @@ export function Sidebar() {
               className={clsx(
                 'flex items-center gap-3 px-2 py-2 rounded-lg text-sm transition-colors',
                 active
-                  ? 'bg-[#7c6af520] text-[#9180ff] font-medium'
+                  ? 'bg-accent-muted text-c-accent font-medium'
                   : 'text-c-muted hover:text-c-text hover:bg-c-surface'
               )}
             >

@@ -101,7 +101,7 @@ export function SceneLibrary() {
                 onClick={() => { setSelectedMood(''); setSearchParams({}); }}
                 className={clsx(
                   'w-full text-left text-xs px-2 py-1.5 rounded-lg transition-colors',
-                  !selectedMood ? 'bg-[#7c6af520] text-[#9180ff]' : 'text-c-muted hover:text-c-text hover:bg-c-elevated'
+                  !selectedMood ? 'bg-accent-muted text-accent-hover' : 'text-c-muted hover:text-c-text hover:bg-c-elevated'
                 )}
               >
                 {t('library.allMoods')}
@@ -112,7 +112,7 @@ export function SceneLibrary() {
                   onClick={() => { setSelectedMood(mood); setSearchParams({ mood }); }}
                   className={clsx(
                     'w-full text-left text-xs px-2 py-1.5 rounded-lg transition-colors flex items-center gap-2',
-                    selectedMood === mood ? 'bg-[#7c6af520] text-[#9180ff]' : 'text-c-muted hover:text-c-text hover:bg-c-elevated'
+                    selectedMood === mood ? 'bg-accent-muted text-accent-hover' : 'text-c-muted hover:text-c-text hover:bg-c-elevated'
                   )}
                 >
                   <span className={`w-1.5 h-1.5 rounded-full mood-${mood}`} style={{ display: 'inline-block' }} />
@@ -133,7 +133,7 @@ export function SceneLibrary() {
                 onClick={() => setSelectedStyle('')}
                 className={clsx(
                   'w-full text-left text-xs px-2 py-1.5 rounded-lg transition-colors',
-                  !selectedStyle ? 'bg-[#7c6af520] text-[#9180ff]' : 'text-c-muted hover:text-c-text hover:bg-c-elevated'
+                  !selectedStyle ? 'bg-accent-muted text-accent-hover' : 'text-c-muted hover:text-c-text hover:bg-c-elevated'
                 )}
               >
                 {t('library.allStyles')}
@@ -144,7 +144,7 @@ export function SceneLibrary() {
                   onClick={() => setSelectedStyle(style)}
                   className={clsx(
                     'w-full text-left text-xs px-2 py-1.5 rounded-lg transition-colors',
-                    selectedStyle === style ? 'bg-[#7c6af520] text-[#9180ff]' : 'text-c-muted hover:text-c-text hover:bg-c-elevated'
+                    selectedStyle === style ? 'bg-accent-muted text-accent-hover' : 'text-c-muted hover:text-c-text hover:bg-c-elevated'
                   )}
                 >
                   {style.replace(/-/g, ' ')}
@@ -187,8 +187,8 @@ export function SceneLibrary() {
                     key={scene.id}
                     onClick={() => setSelectedSceneId(selectedSceneId === scene.id ? null : scene.id)}
                     className={clsx(
-                      'text-left card p-4 hover:border-[#7c6af5] transition-all',
-                      selectedSceneId === scene.id && 'border-[#7c6af5] bg-[#7c6af508]'
+                      'text-left card p-4 hover:border-accent-primary transition-all',
+                      selectedSceneId === scene.id && 'border-accent-primary bg-accent-muted'
                     )}
                   >
                     {/* Asset preview */}

@@ -83,7 +83,7 @@ export function TopBar({ title, subtitle, actions }: TopBarProps) {
           >
             <Bell className="w-4 h-4" />
             {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-[#7c6af5] text-white text-[9px] font-bold px-0.5">
+              <span className="absolute top-1 right-1 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-accent-primary text-white text-[9px] font-bold px-0.5">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}

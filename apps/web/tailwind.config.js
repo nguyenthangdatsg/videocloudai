@@ -4,7 +4,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Theme-aware CSS variable tokens (auto-switch with .light class on <html>)
+        // Theme-aware CSS variable tokens (auto-switch with data-theme on <html>)
         'c-bg':        'var(--c-bg)',
         'c-surface':   'var(--c-surface)',
         'c-elevated':  'var(--c-elevated)',
@@ -14,11 +14,13 @@ export default {
         'c-text':      'var(--c-text)',
         'c-muted':     'var(--c-muted)',
         'c-dim':       'var(--c-dim)',
+        'c-accent':    'var(--c-accent)',
+        'c-accent-hover': 'var(--c-accent-hover)',
         accent: {
-          primary: '#7c6af5',
-          hover: '#9180ff',
-          muted: '#7c6af520',
-          glow: '#7c6af540',
+          primary: 'var(--c-accent)',
+          hover: 'var(--c-accent-hover)',
+          muted: 'var(--c-accent-muted)',
+          glow: 'var(--c-accent-glow)',
         },
         status: {
           success: '#22c55e',

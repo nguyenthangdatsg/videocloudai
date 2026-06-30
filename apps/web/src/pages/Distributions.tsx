@@ -63,7 +63,7 @@ export function Distributions() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-lg font-semibold text-c-text flex items-center gap-2">
-              <BarChart2 className="w-5 h-5 text-[#7c6af5]" />
+              <BarChart2 className="w-5 h-5 text-accent-primary" />
               {t('distributions.title')}
             </h1>
             <p className="text-xs text-c-muted mt-0.5">{t('distributions.subtitle')}</p>
@@ -73,7 +73,7 @@ export function Distributions() {
         {/* Filter bar */}
         <div className="flex items-center gap-2 mt-3 flex-wrap">
           <select
-            className="bg-c-elevated border border-c-border rounded-lg px-3 py-1.5 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+            className="bg-c-elevated border border-c-border rounded-lg px-3 py-1.5 text-sm text-c-text focus:outline-none focus:border-accent-primary"
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value as DistributionStatus | '')}
           >
@@ -83,7 +83,7 @@ export function Distributions() {
             ))}
           </select>
           <select
-            className="bg-c-elevated border border-c-border rounded-lg px-3 py-1.5 text-sm text-c-text focus:outline-none focus:border-[#7c6af5]"
+            className="bg-c-elevated border border-c-border rounded-lg px-3 py-1.5 text-sm text-c-text focus:outline-none focus:border-accent-primary"
             value={filterPlatform}
             onChange={(e) => setFilterPlatform(e.target.value as Platform | '')}
           >
@@ -168,7 +168,7 @@ export function Distributions() {
                         href={d.platformUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-[#9180ff] hover:underline"
+                        className="inline-flex items-center gap-1 text-xs text-accent-hover hover:underline"
                       >
                         <ExternalLink className="w-3 h-3" />
                         {t('distribution.viewPost')}

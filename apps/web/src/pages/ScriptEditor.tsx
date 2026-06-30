@@ -330,9 +330,9 @@ export function ScriptEditor() {
         <div className="flex flex-col border-r border-c-border overflow-auto">
           <div className="p-6 space-y-4">
             {/* AI Script Generation */}
-            <div className="border border-[#7c6af530] rounded-xl p-4 bg-[#7c6af508]">
+            <div className="border border-accent-glow rounded-xl p-4 bg-accent-muted">
               <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-[#7c6af5]" />
+                <Sparkles className="w-4 h-4 text-accent-primary" />
                 <span className="text-sm font-medium text-c-text">{t('scriptEditor.generateWithAI')}</span>
                 <Badge variant="default" className="text-xs">Groq</Badge>
               </div>
@@ -446,7 +446,7 @@ export function ScriptEditor() {
                         }
                       }}
                       disabled={generatingHooks}
-                      className="text-xs text-[#7c6af5] hover:text-[#9180ff] flex items-center gap-1 disabled:opacity-50"
+                      className="text-xs text-accent-primary hover:text-accent-hover flex items-center gap-1 disabled:opacity-50"
                     >
                       {generatingHooks ? <Spinner size="sm" /> : <Zap className="w-3 h-3" />}
                       {generatingHooks ? t('script.generatingHooks') : t('script.generateHooks')}
@@ -464,9 +464,9 @@ export function ScriptEditor() {
 
               {/* Hooks panel */}
               {hooks.length > 0 && (
-                <div className="mt-3 border border-[#7c6af530] rounded-xl p-3 bg-[#7c6af508] space-y-2">
+                <div className="mt-3 border border-accent-glow rounded-xl p-3 bg-accent-muted space-y-2">
                   <div className="flex items-center gap-2">
-                    <Zap className="w-3.5 h-3.5 text-[#7c6af5]" />
+                    <Zap className="w-3.5 h-3.5 text-accent-primary" />
                     <span className="text-xs font-medium text-c-text">{t('script.hooks')}</span>
                     <button
                       onClick={() => setHooks([])}
@@ -485,7 +485,7 @@ export function ScriptEditor() {
                           setScript(hook + (rest.trim() ? ' ' + rest.trim() : ''));
                           setHooks([]);
                         }}
-                        className="shrink-0 text-xs px-2 py-0.5 bg-[#7c6af5]/15 text-[#9180ff] border border-[#7c6af5]/30 rounded hover:bg-[#7c6af5]/25 transition-colors"
+                        className="shrink-0 text-xs px-2 py-0.5 bg-accent-primary/15 text-accent-hover border border-accent-primary/30 rounded hover:bg-accent-primary/25 transition-colors"
                       >
                         {t('script.useHook')}
                       </button>
@@ -507,7 +507,7 @@ export function ScriptEditor() {
                       className={clsx(
                         'flex-1 min-w-[60px] text-xs py-1.5 rounded-lg border transition-colors',
                         format === value
-                          ? 'bg-[#7c6af520] border-[#7c6af5] text-[#9180ff]'
+                          ? 'bg-accent-muted border-accent-primary text-accent-hover'
                           : 'border-c-border text-c-muted hover:border-c-border-hi'
                       )}
                     >
@@ -527,7 +527,7 @@ export function ScriptEditor() {
                       className={clsx(
                         'flex-1 text-xs py-1.5 rounded-lg border transition-colors',
                         duration === value
-                          ? 'bg-[#7c6af520] border-[#7c6af5] text-[#9180ff]'
+                          ? 'bg-accent-muted border-accent-primary text-accent-hover'
                           : 'border-c-border text-c-muted hover:border-c-border-hi'
                       )}
                     >
@@ -542,7 +542,7 @@ export function ScriptEditor() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  className="w-3.5 h-3.5 accent-[#7c6af5]"
+                  className="w-3.5 h-3.5 accent-c-accent"
                   checked={narrationEnabled}
                   onChange={(e) => setNarrationEnabled(e.target.checked)}
                 />
@@ -551,7 +551,7 @@ export function ScriptEditor() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  className="w-3.5 h-3.5 accent-[#7c6af5]"
+                  className="w-3.5 h-3.5 accent-c-accent"
                   checked={subtitlesEnabled}
                   onChange={(e) => setSubtitlesEnabled(e.target.checked)}
                 />
@@ -560,7 +560,7 @@ export function ScriptEditor() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  className="w-3.5 h-3.5 accent-[#7c6af5]"
+                  className="w-3.5 h-3.5 accent-c-accent"
                   checked={musicEnabled}
                   onChange={(e) => setMusicEnabled(e.target.checked)}
                 />
@@ -720,7 +720,7 @@ export function ScriptEditor() {
                           }
                         }}
                         disabled={musicSearching}
-                        className="flex items-center gap-1 text-xs text-[#7c6af5] hover:text-[#9180ff] disabled:opacity-50"
+                        className="flex items-center gap-1 text-xs text-accent-primary hover:text-accent-hover disabled:opacity-50"
                       >
                         {musicSearching ? <Spinner size="sm" /> : <Search className="w-3 h-3" />}
                         {musicSearching ? t('music.searching') : t('common.search')}
@@ -809,7 +809,7 @@ export function ScriptEditor() {
                   <p className="text-sm text-c-text leading-relaxed mb-3">"{scene.line}"</p>
 
                   <div className="flex items-center gap-2 p-2 bg-c-bg rounded-lg">
-                    <Wand2 className="w-3 h-3 text-[#7c6af5] shrink-0" />
+                    <Wand2 className="w-3 h-3 text-accent-primary shrink-0" />
                     <span className="text-xs text-c-muted italic">{scene.visual}</span>
                   </div>
                 </div>

@@ -152,7 +152,7 @@ export function EffectOverlay({ effects, subtitleStyle, className }: Props) {
               subtitleStyle === 'documentary' &&
                 'text-white font-medium text-sm bg-black/55 px-3 py-1 rounded',
               subtitleStyle === 'keyword-emphasis' &&
-                'text-white font-semibold text-base [&_b]:text-[#9180ff]',
+                'text-white font-semibold text-base [&_b]:text-accent-hover',
               subtitleStyle === 'animated' &&
                 'text-white font-bold text-base animate-pulse'
             )}

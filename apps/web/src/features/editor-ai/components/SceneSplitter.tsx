@@ -106,8 +106,8 @@ export function SceneSplitter({ project }: Props) {
   return (
     <div className="mx-4 my-4 p-5 bg-c-surface border border-c-border rounded-xl">
       <div className="flex items-start gap-3 mb-4">
-        <div className="w-9 h-9 rounded-lg bg-[#7c6af520] flex items-center justify-center shrink-0">
-          <Scissors className="w-4 h-4 text-[#9180ff]" />
+        <div className="w-9 h-9 rounded-lg bg-accent-muted flex items-center justify-center shrink-0">
+          <Scissors className="w-4 h-4 text-accent-hover" />
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-medium text-c-text">{t('editor.splitter.title')}</h3>
@@ -158,7 +158,7 @@ export function SceneSplitter({ project }: Props) {
             value={customSegment}
             onChange={(e) => setCustomSegment(e.target.value)}
             placeholder="4"
-            className="w-16 px-2 py-1 text-xs bg-c-bg border border-c-border rounded text-c-text focus:border-[#7c6af5] focus:outline-none"
+            className="w-16 px-2 py-1 text-xs bg-c-bg border border-c-border rounded text-c-text focus:border-accent-primary focus:outline-none"
           />
           <button
             onClick={() => {
@@ -166,7 +166,7 @@ export function SceneSplitter({ project }: Props) {
               if (!isNaN(v) && v > 0) splitByDuration(v);
             }}
             disabled={!customSegment || mutation.isPending}
-            className="px-2 py-1 rounded text-xs bg-[#7c6af5] hover:bg-[#9180ff] text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="px-2 py-1 rounded text-xs bg-accent-primary hover:bg-accent-hover text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {t('editor.splitter.split')}
           </button>
@@ -183,7 +183,7 @@ export function SceneSplitter({ project }: Props) {
             value={customCount}
             onChange={(e) => setCustomCount(e.target.value)}
             placeholder="6"
-            className="w-16 px-2 py-1 text-xs bg-c-bg border border-c-border rounded text-c-text focus:border-[#7c6af5] focus:outline-none"
+            className="w-16 px-2 py-1 text-xs bg-c-bg border border-c-border rounded text-c-text focus:border-accent-primary focus:outline-none"
           />
           <button
             onClick={() => {

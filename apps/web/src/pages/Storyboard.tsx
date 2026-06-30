@@ -880,9 +880,17 @@ export function Storyboard() {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [segmentView, setSegmentView] = useState<'list' | 'card' | 'detail'>('list');
   const [assembleProgress, setAssembleProgress] = useState<string[]>([]);
+  const audioLogRef = useRef<HTMLDivElement>(null);
+  const promptLogRef = useRef<HTMLDivElement>(null);
+  const assembleLogRef = useRef<HTMLDivElement>(null);
   const [assembleStep, setAssembleStep] = useState<string>('');
   const [assembleClipProgress, setAssembleClipProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [result, setResult] = useState<{ filename: string; url: string; sizeKB: number; duration: number } | null>(null);
+  // Auto-scroll progress logs to latest message
+  useEffect(() => { if (audioLogRef.current) audioLogRef.current.scrollTop = audioLogRef.current.scrollHeight; }, [audioProgress]);
+  useEffect(() => { if (promptLogRef.current) promptLogRef.current.scrollTop = promptLogRef.current.scrollHeight; }, [promptProgress]);
+  useEffect(() => { if (assembleLogRef.current) assembleLogRef.current.scrollTop = assembleLogRef.current.scrollHeight; }, [assembleProgress]);
+
   const allEffects: MotionEffect[] = ['static', 'zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'pan-up', 'pan-down'];
   const [randomEffects, setRandomEffects] = useState<Set<MotionEffect>>(new Set(['zoom-in', 'zoom-out', 'pan-left', 'pan-right']));
   const [hoveredSegment, setHoveredSegment] = useState<number | null>(null);
@@ -2546,7 +2554,7 @@ export function Storyboard() {
                     {generatingAudio ? <Spinner size="sm" /> : <CheckCircle className="w-3.5 h-3.5 text-green-400" />}
                     <span className="text-xs text-cyan-300">{generatingAudio ? t('storyboard.generatingAudio') : t('storyboard.audioDone')}</span>
                   </div>
-                  <div className="font-mono text-[10px] text-c-dim space-y-0.5 max-h-[120px] overflow-auto">
+                  <div ref={audioLogRef} className="font-mono text-[10px] text-c-dim space-y-0.5 max-h-[120px] overflow-auto">
                     {audioProgress.map((line, i) => <div key={i}>{line}</div>)}
                   </div>
                 </div>
@@ -2720,7 +2728,7 @@ export function Storyboard() {
                     <Spinner size="sm" />
                     <span className="text-xs text-cyan-300">{t('storyboard.generatingPrompts')}</span>
                   </div>
-                  <div className="font-mono text-[10px] text-c-dim space-y-0.5">
+                  <div ref={promptLogRef} className="font-mono text-[10px] text-c-dim space-y-0.5 max-h-[120px] overflow-auto">
                     {promptProgress.map((line, i) => <div key={i}>{line}</div>)}
                   </div>
                 </div>
@@ -4396,7 +4404,7 @@ export function Storyboard() {
                       </div>
                     </div>
                   )}
-                  <div className="font-mono text-[10px] text-c-dim space-y-0.5 max-h-[160px] overflow-auto">
+                  <div ref={assembleLogRef} className="font-mono text-[10px] text-c-dim space-y-0.5 max-h-[160px] overflow-auto">
                     {assembleProgress.map((line, i) => (
                       <div key={i} className={i === assembleProgress.length - 1 ? 'text-cyan-300' : ''}>{line}</div>
                     ))}

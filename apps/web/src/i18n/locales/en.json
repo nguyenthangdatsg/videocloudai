@@ -51,6 +51,14 @@
     "rename": "Rename",
     "editProject": "Edit project"
   },
+  "theme": {
+    "select": "Select theme",
+    "midnight": "Midnight",
+    "ocean": "Ocean",
+    "emerald": "Emerald",
+    "sunset": "Sunset",
+    "daylight": "Daylight"
+  },
   "status": {
     "queued": "Queued",
     "running": "Running",
@@ -785,6 +793,7 @@
     "subtitle": "Configure providers, narration, and system settings",
     "saved": "Settings saved",
     "saveSettings": "Save Settings",
+    "theme": "Color Theme",
     "saving": "Saving...",
     "tabGeneral": "General",
     "tabLLM": "LLM",
