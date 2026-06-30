@@ -104,6 +104,36 @@ export function getDb(): Database.Database {
     try { db.exec(sql); } catch { /* column already exists or index already exists */ }
   }
 
+  // Seed default templates if database does not have Ancient History
+  try {
+    const existing = db.prepare("SELECT COUNT(*) as count FROM storyboard_templates WHERE id = ?").get("64ef80eb-360a-447f-8a1f-fd0f8a08ee15") as { count: number } | undefined;
+    if (!existing || existing.count === 0) {
+      db.prepare(`
+        INSERT INTO storyboard_templates (
+          id, name, niche, description, template_text, custom_prompts, stage_prompts, stage_parts, color, youtube_url, memo, niche_status, visual_style, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "64ef80eb-360a-447f-8a1f-fd0f8a08ee15",
+        "Ancient History",
+        "History",
+        "Ancient civilizations, lost empires, historical secrets – educational + viral combo",
+        "",
+        '{"prompts":"You are an image prompt generator for \\"History\\" YouTube videos.\\nVisual style: \\"stick figure doodle\\"\\n\\nRules:\\n- Format: \\"Simple stick figure doodle of [subject doing action] in ancient style, wearing primitive clothing or animal fur, colorful illustration style. Plain totally white background. Minimal detail, no shading, clean black outlines with soft colors.\\"\\n- Describe only ONE subject doing ONE thing\\n- Do NOT add lighting, camera angles, textures, colors, or backgrounds\\n- Every prompt must start with \\"Simple stick figure doodle of\\""}',
+        '{"prompts":"You are an image prompt generator for \\"History\\" YouTube videos.\\nVisual style: \\"stick figure doodle\\"\\n\\nRules:\\n- Format: \\"Simple stick figure doodle of [subject doing action] in ancient style, wearing primitive clothing or animal fur, colorful illustration style. Plain totally white background. Minimal detail, no shading, clean black outlines with soft colors.\\"\\n- Describe only ONE subject doing ONE thing\\n- Do NOT add lighting, camera angles, textures, colors, or backgrounds\\n- Every prompt must start with \\"Simple stick figure doodle of\\""}',
+        "{}",
+        "#f59e0b",
+        "https://studio.youtube.com/channel/UCPNJhFfEsORbh3r-e-0pjnw",
+        "",
+        "active",
+        "stick figure doodle",
+        "2026-06-18T03:37:28.601Z",
+        "2026-06-29T14:54:33.957Z"
+      );
+    }
+  } catch (err) {
+    console.error('[Database] Failed to seed default templates:', err);
+  }
+
   return db;
 }
 
