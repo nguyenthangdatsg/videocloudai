@@ -182,6 +182,13 @@ export function TextToSpeech() {
 
   // --- Generate ---
   const [generateProgress, setGenerateProgress] = useState<string[]>([]);
+  const progressLogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (progressLogRef.current) {
+      const el = progressLogRef.current;
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    }
+  }, [generateProgress]);
   const generateMutation = useMutation({
     mutationFn: () => {
       setGenerateProgress([]);
@@ -461,7 +468,7 @@ export function TextToSpeech() {
                   <Spinner size="sm" />
                   <span className="text-xs font-medium text-cyan-300">{t('tts.generating')}</span>
                 </div>
-                <div className="max-h-28 overflow-y-auto font-mono text-[11px] text-c-dim space-y-0.5">
+                <div ref={progressLogRef} className="max-h-28 overflow-y-auto font-mono text-[11px] text-c-dim space-y-0.5">
                   {generateProgress.map((line, i) => (
                     <div key={i}>{line}</div>
                   ))}

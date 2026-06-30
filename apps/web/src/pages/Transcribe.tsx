@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { ttsApi } from '../lib/api';
@@ -39,6 +39,15 @@ export function Transcribe() {
   const [copied, setCopied] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const progressLogRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll progress logs to latest message
+  useEffect(() => {
+    if (progressLogRef.current) {
+      const el = progressLogRef.current;
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    }
+  }, [progress]);
 
   // Audio playback for segments
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
@@ -207,11 +216,11 @@ export function Transcribe() {
           {/* ═══ Progress ═══ */}
           {isTranscribing && progress.length > 0 && (
             <div className="border border-cyan-800/30 rounded-xl p-3 bg-cyan-900/10">
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-2">
                 <Spinner size="sm" />
                 <span className="text-xs font-medium text-cyan-300">{t('tts.transcribing')}</span>
               </div>
-              <div className="font-mono text-[11px] text-c-dim space-y-0.5">
+              <div ref={progressLogRef} className="max-h-28 overflow-y-auto font-mono text-[11px] text-c-dim space-y-0.5">
                 {progress.map((line, i) => (
                   <div key={i}>{line}</div>
                 ))}

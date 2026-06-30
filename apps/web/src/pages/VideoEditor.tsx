@@ -282,13 +282,16 @@ export function VideoEditor() {
       prevLogMsgRef.current = msg;
       const pct = liveJob?.progress ?? 0;
       setAssemblyLogs((prev) => [...prev, { msg, pct }]);
-      requestAnimationFrame(() => {
-        if (assemblyLogRef.current) {
-          assemblyLogRef.current.scrollTop = assemblyLogRef.current.scrollHeight;
-        }
-      });
     }
   }, [liveJob?.progressMessage, liveJob?.progress]);
+
+  // Auto-scroll progress logs to latest message
+  useEffect(() => {
+    if (assemblyLogRef.current) {
+      const el = assemblyLogRef.current;
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    }
+  }, [assemblyLogs]);
 
   const generateMutation = useMutation({
     mutationFn: () => videosApi.generateScenes(videoId!),

@@ -885,9 +885,24 @@ export function Storyboard() {
   const [assembleClipProgress, setAssembleClipProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [result, setResult] = useState<{ filename: string; url: string; sizeKB: number; duration: number } | null>(null);
   // Auto-scroll progress logs to latest message
-  useEffect(() => { if (audioLogRef.current) audioLogRef.current.scrollTop = audioLogRef.current.scrollHeight; }, [audioProgress]);
-  useEffect(() => { if (promptLogRef.current) promptLogRef.current.scrollTop = promptLogRef.current.scrollHeight; }, [promptProgress]);
-  useEffect(() => { if (assembleLogRef.current) assembleLogRef.current.scrollTop = assembleLogRef.current.scrollHeight; }, [assembleProgress]);
+  useEffect(() => {
+    if (audioLogRef.current) {
+      const el = audioLogRef.current;
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    }
+  }, [audioProgress]);
+  useEffect(() => {
+    if (promptLogRef.current) {
+      const el = promptLogRef.current;
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    }
+  }, [promptProgress]);
+  useEffect(() => {
+    if (assembleLogRef.current) {
+      const el = assembleLogRef.current;
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    }
+  }, [assembleProgress]);
 
   const allEffects: MotionEffect[] = ['static', 'zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'pan-up', 'pan-down'];
   const [randomEffects, setRandomEffects] = useState<Set<MotionEffect>>(new Set(['zoom-in', 'zoom-out', 'pan-left', 'pan-right']));
