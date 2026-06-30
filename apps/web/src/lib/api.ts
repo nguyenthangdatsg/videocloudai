@@ -625,6 +625,7 @@ export interface StoryboardProjectSummary {
   status: string; audioDuration?: number; resultFilename?: string; thumbnailUrl?: string;
   templateName?: string; templateNiche?: string; templateColor?: string;
   templateYoutubeUrl?: string; templateMemo?: string;
+  metadataDesc?: string; metadataTags?: string[] | string;
   createdAt: string; updatedAt: string;
 }
 

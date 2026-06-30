@@ -9,6 +9,7 @@ import { Spinner } from '../components/ui/Spinner';
 import {
   Clapperboard, Plus, Trash2, Clock, Mic, Film, FileText, Wand2, Image, CheckCircle,
   Layout, Pencil, X, Copy, Search, Filter, ChevronDown, ChevronUp, Play, ExternalLink, StickyNote, RefreshCw, Save,
+  LayoutGrid, List, AlignJustify,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -409,6 +410,7 @@ export function StoryboardList() {
   const [editingMemoNiche, setEditingMemoNiche] = useState<string | null>(null);
   const [memoDraft, setMemoDraft] = useState('');
   const [promptsOpenTpl, setPromptsOpenTpl] = useState<string | null>(null);
+  const [videoView, setVideoView] = useState<'card' | 'list' | 'detail'>('card');
 
   const { data: projects, isLoading, isError, refetch } = useQuery({
     queryKey: ['storyboard', 'projects'],
@@ -1191,14 +1193,36 @@ export function StoryboardList() {
 
                       return (
                         <div className="border-t border-c-border">
-                          {/* Video gallery grid for completed projects */}
+                          {/* Video gallery for completed projects */}
                           {completedProjects.length > 0 && (
                             <div className="p-4">
                               <div className="flex items-center gap-2 mb-3">
                                 <Film className="w-4 h-4 text-emerald-400" />
                                 <span className="text-sm font-medium text-c-text">{t('storyboardList.videos')}</span>
                                 <span className="text-xs text-c-muted font-medium tabular-nums">{completedProjects.length}</span>
+                                <div className="ml-auto flex items-center gap-0.5 bg-c-elevated rounded-lg p-0.5">
+                                  {([
+                                    { mode: 'card' as const, icon: LayoutGrid, label: t('storyboard.viewCard') },
+                                    { mode: 'list' as const, icon: List, label: t('storyboard.viewList') },
+                                    { mode: 'detail' as const, icon: AlignJustify, label: t('storyboard.viewDetail') },
+                                  ]).map(({ mode, icon: Icon, label }) => (
+                                    <button
+                                      key={mode}
+                                      onClick={() => setVideoView(mode)}
+                                      title={label}
+                                      className={clsx(
+                                        'p-1.5 rounded-md transition-colors',
+                                        videoView === mode ? 'bg-accent-primary text-white' : 'text-c-dim hover:text-c-text'
+                                      )}
+                                    >
+                                      <Icon className="w-3.5 h-3.5" />
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
+
+                              {/* ── Card view ── */}
+                              {videoView === 'card' && (
                               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                                 {completedProjects.map((p) => {
                                   const thumbIsVid = /\.(mp4|webm|mov)$/i.test(p.thumbnailUrl || '');
@@ -1216,63 +1240,36 @@ export function StoryboardList() {
                                         }
                                       }}
                                     >
-                                      {/* Video thumbnail — 16:9 */}
                                       <div className="aspect-video relative">
                                         {resultVideoUrl ? (
-                                          <video
-                                            src={`${resultVideoUrl}#t=0.5`}
-                                            muted
-                                            preload="metadata"
-                                            className="w-full h-full object-cover"
-                                          />
+                                          <video src={`${resultVideoUrl}#t=0.5`} muted preload="metadata" className="w-full h-full object-cover" />
                                         ) : p.thumbnailUrl ? (
                                           thumbIsVid ? (
-                                            <video
-                                              src={`${p.thumbnailUrl}#t=0.1`}
-                                              muted
-                                              preload="metadata"
-                                              className="w-full h-full object-cover"
-                                            />
+                                            <video src={`${p.thumbnailUrl}#t=0.1`} muted preload="metadata" className="w-full h-full object-cover" />
                                           ) : (
                                             <img src={p.thumbnailUrl} alt="" className="w-full h-full object-cover" />
                                           )
                                         ) : (
-                                          <div className="w-full h-full flex items-center justify-center">
-                                            <Film className="w-8 h-8 text-c-dim" />
-                                          </div>
+                                          <div className="w-full h-full flex items-center justify-center"><Film className="w-8 h-8 text-c-dim" /></div>
                                         )}
-                                        {/* Play overlay */}
                                         <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/30 transition-colors">
                                           <Play className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
                                         </div>
-                                        {/* Duration badge */}
                                         {p.audioDuration != null && (
                                           <span className="absolute bottom-1 right-1 text-xs bg-black/70 text-white px-1.5 py-0.5 rounded">
                                             {Math.floor(p.audioDuration / 60)}:{String(Math.round(p.audioDuration % 60)).padStart(2, '0')}
                                           </span>
                                         )}
                                       </div>
-                                      {/* Topic & meta */}
                                       <div className="p-2.5">
-                                        <div className="text-sm font-medium text-c-text leading-snug line-clamp-2 min-h-[2.5em]">
-                                          {p.topic || p.name}
-                                        </div>
+                                        <div className="text-sm font-medium text-c-text leading-snug line-clamp-2 min-h-[2.5em]">{p.topic || p.name}</div>
                                         <div className="flex items-center justify-between mt-1.5">
                                           <span className="text-xs text-c-muted truncate">{fmtDate(p.updatedAt)}</span>
                                           <div className="flex items-center gap-0.5">
-                                            <button
-                                              onClick={(e) => { e.stopPropagation(); navigate(`/storyboard/${p.id}`); }}
-                                              className="p-1 rounded hover:bg-c-surface text-c-dim hover:text-c-text transition-colors"
-                                              aria-label={`Edit ${p.name}`}
-                                            >
+                                            <button onClick={(e) => { e.stopPropagation(); navigate(`/storyboard/${p.id}`); }} className="p-1 rounded hover:bg-c-surface text-c-dim hover:text-c-text transition-colors" aria-label={t('common.editProject')}>
                                               <Pencil className="w-3 h-3" />
                                             </button>
-                                            <button
-                                              onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }}
-                                              disabled={deleting === p.id}
-                                              className="p-1 rounded hover:bg-red-900/30 text-c-dim hover:text-red-400 transition-colors"
-                                              aria-label={`Delete ${p.name}`}
-                                            >
+                                            <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} disabled={deleting === p.id} className="p-1 rounded hover:bg-red-900/30 text-c-dim hover:text-red-400 transition-colors" aria-label={t('common.delete')}>
                                               {deleting === p.id ? <Spinner className="w-3 h-3" /> : <Trash2 className="w-3 h-3" />}
                                             </button>
                                           </div>
@@ -1282,6 +1279,127 @@ export function StoryboardList() {
                                   );
                                 })}
                               </div>
+                              )}
+
+                              {/* ── List view ── */}
+                              {videoView === 'list' && (
+                              <div className="space-y-1">
+                                {completedProjects.map((p) => {
+                                  const thumbIsVid = /\.(mp4|webm|mov)$/i.test(p.thumbnailUrl || '');
+                                  const resultVideoUrl = p.resultFilename ? `/renders/storyboard/${p.resultFilename}` : '';
+                                  return (
+                                    <div
+                                      key={p.id}
+                                      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-c-hover transition-colors cursor-pointer group"
+                                      onClick={() => {
+                                        const videoUrl = resultVideoUrl || (thumbIsVid ? p.thumbnailUrl! : '');
+                                        if (videoUrl) setPlayingVideo({ url: videoUrl, title: p.topic || p.name, projectId: p.id });
+                                        else navigate(`/storyboard/${p.id}`);
+                                      }}
+                                    >
+                                      <div className="w-20 h-12 rounded overflow-hidden bg-c-bg shrink-0 relative">
+                                        {resultVideoUrl ? (
+                                          <video src={`${resultVideoUrl}#t=0.5`} muted preload="metadata" className="w-full h-full object-cover" />
+                                        ) : p.thumbnailUrl ? (
+                                          thumbIsVid ? (
+                                            <video src={`${p.thumbnailUrl}#t=0.1`} muted preload="metadata" className="w-full h-full object-cover" />
+                                          ) : (
+                                            <img src={p.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+                                          )
+                                        ) : (
+                                          <div className="w-full h-full flex items-center justify-center"><Film className="w-4 h-4 text-c-dim" /></div>
+                                        )}
+                                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/30 transition-opacity">
+                                          <Play className="w-4 h-4 text-white" />
+                                        </div>
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-sm text-c-text truncate">{p.topic || p.name}</div>
+                                        <div className="text-xs text-c-dim">{fmtDate(p.updatedAt)}</div>
+                                      </div>
+                                      {p.audioDuration != null && (
+                                        <span className="text-xs text-c-muted tabular-nums shrink-0">
+                                          {Math.floor(p.audioDuration / 60)}:{String(Math.round(p.audioDuration % 60)).padStart(2, '0')}
+                                        </span>
+                                      )}
+                                      <div className="flex items-center gap-0.5 shrink-0">
+                                        <button onClick={(e) => { e.stopPropagation(); navigate(`/storyboard/${p.id}`); }} className="p-1 rounded hover:bg-c-surface text-c-dim hover:text-c-text transition-colors" aria-label={t('common.editProject')}>
+                                          <Pencil className="w-3 h-3" />
+                                        </button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} disabled={deleting === p.id} className="p-1 rounded hover:bg-red-900/30 text-c-dim hover:text-red-400 transition-colors" aria-label={t('common.delete')}>
+                                          {deleting === p.id ? <Spinner className="w-3 h-3" /> : <Trash2 className="w-3 h-3" />}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              )}
+
+                              {/* ── Detail view ── */}
+                              {videoView === 'detail' && (
+                              <div className="space-y-3">
+                                {completedProjects.map((p) => {
+                                  const thumbIsVid = /\.(mp4|webm|mov)$/i.test(p.thumbnailUrl || '');
+                                  const resultVideoUrl = p.resultFilename ? `/renders/storyboard/${p.resultFilename}` : '';
+                                  return (
+                                    <div
+                                      key={p.id}
+                                      className="flex gap-4 p-3 rounded-lg border border-c-border hover:border-c-muted transition-all cursor-pointer group bg-c-bg"
+                                      onClick={() => {
+                                        const videoUrl = resultVideoUrl || (thumbIsVid ? p.thumbnailUrl! : '');
+                                        if (videoUrl) setPlayingVideo({ url: videoUrl, title: p.topic || p.name, projectId: p.id });
+                                        else navigate(`/storyboard/${p.id}`);
+                                      }}
+                                    >
+                                      <div className="w-48 aspect-video rounded-lg overflow-hidden bg-c-surface shrink-0 relative">
+                                        {resultVideoUrl ? (
+                                          <video src={`${resultVideoUrl}#t=0.5`} muted preload="metadata" className="w-full h-full object-cover" />
+                                        ) : p.thumbnailUrl ? (
+                                          thumbIsVid ? (
+                                            <video src={`${p.thumbnailUrl}#t=0.1`} muted preload="metadata" className="w-full h-full object-cover" />
+                                          ) : (
+                                            <img src={p.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+                                          )
+                                        ) : (
+                                          <div className="w-full h-full flex items-center justify-center"><Film className="w-8 h-8 text-c-dim" /></div>
+                                        )}
+                                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/30 transition-opacity">
+                                          <Play className="w-8 h-8 text-white drop-shadow-lg" />
+                                        </div>
+                                        {p.audioDuration != null && (
+                                          <span className="absolute bottom-1 right-1 text-xs bg-black/70 text-white px-1.5 py-0.5 rounded">
+                                            {Math.floor(p.audioDuration / 60)}:{String(Math.round(p.audioDuration % 60)).padStart(2, '0')}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex-1 min-w-0 py-1">
+                                        <div className="text-sm font-medium text-c-text leading-snug">{p.topic || p.name}</div>
+                                        <div className="text-xs text-c-dim mt-1">{fmtDate(p.updatedAt)}</div>
+                                        {p.metadataDesc && (
+                                          <div className="text-xs text-c-muted mt-2 line-clamp-3 leading-relaxed">{p.metadataDesc}</div>
+                                        )}
+                                        {p.metadataTags && p.metadataTags.length > 0 && (
+                                          <div className="flex flex-wrap gap-1 mt-2">
+                                            {(typeof p.metadataTags === 'string' ? JSON.parse(p.metadataTags) : p.metadataTags).slice(0, 5).map((tag: string) => (
+                                              <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-c-elevated text-c-dim">#{tag}</span>
+                                            ))}
+                                          </div>
+                                        )}
+                                        <div className="flex items-center gap-1 mt-2">
+                                          <button onClick={(e) => { e.stopPropagation(); navigate(`/storyboard/${p.id}`); }} className="text-xs px-2 py-1 rounded hover:bg-c-surface text-c-muted hover:text-c-text transition-colors" aria-label={t('common.editProject')}>
+                                            <Pencil className="w-3 h-3 inline mr-1" />{t('common.editProject')}
+                                          </button>
+                                          <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} disabled={deleting === p.id} className="text-xs px-2 py-1 rounded hover:bg-red-900/30 text-c-dim hover:text-red-400 transition-colors" aria-label={t('common.delete')}>
+                                            {deleting === p.id ? <Spinner className="w-3 h-3" /> : <><Trash2 className="w-3 h-3 inline mr-1" />{t('common.delete')}</>}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              )}
                             </div>
                           )}
 

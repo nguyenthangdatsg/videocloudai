@@ -8,9 +8,9 @@ echo ============================================
 echo.
 
 :: Set working directory to the project root
-cd /d "D:\AI\videocloudai"
+cd /d "%~dp0"
 if errorlevel 1 (
-    echo [ERROR] Cannot find project directory D:\AI\videocloudai
+    echo [ERROR] Cannot find project directory "%~dp0"
     pause
     exit /b 1
 )

@@ -1879,7 +1879,7 @@ Example response:
 
   router.get('/projects', (_req: Request, res: Response) => {
     const rows = dbAll<Record<string, unknown>>(
-      `SELECT s.id, s.name, s.template_id, s.current_step, s.topic, s.status, s.audio_duration, s.result_filename, s.segments, s.created_at, s.updated_at,
+      `SELECT s.id, s.name, s.template_id, s.current_step, s.topic, s.status, s.audio_duration, s.result_filename, s.segments, s.metadata_desc, s.metadata_tags, s.created_at, s.updated_at,
               t.name as template_name, t.niche as template_niche, t.color as template_color,
               t.youtube_url as template_youtube_url, t.memo as template_memo
        FROM storyboards s LEFT JOIN storyboard_templates t ON s.template_id = t.id
@@ -1898,6 +1898,7 @@ Example response:
         thumbnailUrl,
         templateName: r.template_name, templateNiche: r.template_niche, templateColor: r.template_color,
         templateYoutubeUrl: r.template_youtube_url || '', templateMemo: r.template_memo || '',
+        metadataDesc: r.metadata_desc || '', metadataTags: (() => { try { return JSON.parse((r.metadata_tags as string) || '[]'); } catch { return []; } })(),
         createdAt: r.created_at, updatedAt: r.updated_at,
       };
     }));
