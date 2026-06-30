@@ -104,10 +104,11 @@ export function getDb(): Database.Database {
     try { db.exec(sql); } catch { /* column already exists or index already exists */ }
   }
 
-  // Seed default templates if database does not have Ancient History
+  // Seed default templates if database does not have them
   try {
-    const existing = db.prepare("SELECT COUNT(*) as count FROM storyboard_templates WHERE id = ?").get("64ef80eb-360a-447f-8a1f-fd0f8a08ee15") as { count: number } | undefined;
-    if (!existing || existing.count === 0) {
+    // 1. Ancient History
+    const existingHistory = db.prepare("SELECT COUNT(*) as count FROM storyboard_templates WHERE id = ?").get("64ef80eb-360a-447f-8a1f-fd0f8a08ee15") as { count: number } | undefined;
+    if (!existingHistory || existingHistory.count === 0) {
       db.prepare(`
         INSERT INTO storyboard_templates (
           id, name, niche, description, template_text, custom_prompts, stage_prompts, stage_parts, color, youtube_url, memo, niche_status, visual_style, created_at, updated_at
@@ -128,6 +129,32 @@ export function getDb(): Database.Database {
         "stick figure doodle",
         "2026-06-18T03:37:28.601Z",
         "2026-06-29T14:54:33.957Z"
+      );
+    }
+
+    // 2. Modern Comparison
+    const existingComparison = db.prepare("SELECT COUNT(*) as count FROM storyboard_templates WHERE id = ?").get("78cf80eb-360a-447f-8a1f-fd0f8a08ee15") as { count: number } | undefined;
+    if (!existingComparison || existingComparison.count === 0) {
+      db.prepare(`
+        INSERT INTO storyboard_templates (
+          id, name, niche, description, template_text, custom_prompts, stage_prompts, stage_parts, color, youtube_url, memo, niche_status, visual_style, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "78cf80eb-360a-447f-8a1f-fd0f8a08ee15",
+        "Modern Comparison",
+        "Comparison",
+        "Comparing different things, sizes, scales, and concepts – modern flat infographic visual style",
+        "",
+        '{"prompts":"You are an image prompt generator for \\"Comparison\\" YouTube videos.\\nVisual style: \\"modern vector infographic\\"\\n\\nRules:\\n- Format: \\"Modern flat design vector illustration comparing [Item A] versus [Item B], clean comparison style, infographic elements, colorful minimalist design. Plain totally white background. Clean sharp black outlines with bright modern color fills, no shading, high contrast.\\"\\n- Describe the comparison clearly (e.g., scale comparison, old vs new, size difference)\\n- Do NOT add photographic textures, gradients, or complex backgrounds\\n- Every prompt must start with \\"Modern flat design vector illustration\\""}',
+        '{"prompts":"You are an image prompt generator for \\"Comparison\\" YouTube videos.\\nVisual style: \\"modern vector infographic\\"\\n\\nRules:\\n- Format: \\"Modern flat design vector illustration comparing [Item A] versus [Item B], clean comparison style, infographic elements, colorful minimalist design. Plain totally white background. Clean sharp black outlines with bright modern color fills, no shading, high contrast.\\"\\n- Describe the comparison clearly (e.g., scale comparison, old vs new, size difference)\\n- Do NOT add photographic textures, gradients, or complex backgrounds\\n- Every prompt must start with \\"Modern flat design vector illustration\\""}',
+        "{}",
+        "#3b82f6",
+        "",
+        "",
+        "active",
+        "modern vector infographic",
+        "2026-06-30T07:56:00.000Z",
+        "2026-06-30T07:56:00.000Z"
       );
     }
   } catch (err) {
