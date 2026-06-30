@@ -1870,11 +1870,22 @@ Example response:
     if (!name?.trim()) { res.status(400).json({ error: 'name is required' }); return; }
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
+
+    let finalTemplateId = templateId || null;
+    if (!finalTemplateId) {
+      const defaultTpl = dbGet<{ id: string }>(
+        "SELECT id FROM storyboard_templates WHERE name = 'Ancient History' OR niche = 'History' LIMIT 1"
+      );
+      if (defaultTpl) {
+        finalTemplateId = defaultTpl.id;
+      }
+    }
+
     dbRun(
       `INSERT INTO storyboards (id, name, template_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-      [id, name.trim(), templateId || null, now, now],
+      [id, name.trim(), finalTemplateId, now, now],
     );
-    res.status(201).json({ id, name: name.trim(), templateId: templateId || null, currentStep: 'topics', status: 'draft', createdAt: now, updatedAt: now });
+    res.status(201).json({ id, name: name.trim(), templateId: finalTemplateId, currentStep: 'topics', status: 'draft', createdAt: now, updatedAt: now });
   });
 
   router.get('/projects', (_req: Request, res: Response) => {

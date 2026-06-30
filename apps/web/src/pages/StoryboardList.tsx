@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
@@ -378,6 +378,7 @@ export function StoryboardList() {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [hasDefaultedTemplate, setHasDefaultedTemplate] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
   // Template management
@@ -425,6 +426,17 @@ export function StoryboardList() {
     retry: 3,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
   });
+
+  // Set default template to Ancient History when templates load
+  useEffect(() => {
+    if (templates && templates.length > 0 && !hasDefaultedTemplate) {
+      const defaultTpl = templates.find(t => t.name === 'Ancient History' || t.niche === 'History');
+      if (defaultTpl) {
+        setSelectedTemplateId(defaultTpl.id);
+      }
+      setHasDefaultedTemplate(true);
+    }
+  }, [templates, hasDefaultedTemplate]);
 
   const handleCreate = async () => {
     const name = newName.trim() || `Storyboard ${new Date().toLocaleDateString()}`;
