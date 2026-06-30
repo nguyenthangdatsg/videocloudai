@@ -117,11 +117,14 @@ export class SubtitleService {
     console.log('[whisper] running:', 'python', args);
 
     try {
-      const { stdout, stderr } = await execFileAsync('python', args, { timeout: 600000, maxBuffer: 50 * 1024 * 1024 });
+      const { stdout, stderr } = await execFileAsync('python', args, { timeout: 600000, maxBuffer: 50 * 1024 * 1024, shell: true });
       console.log('[whisper] stdout:', stdout);
       if (stderr) console.log('[whisper] stderr:', stderr);
-    } catch (err) {
-      throw new Error(`Whisper transcription failed. Install with: pip install openai-whisper. Error: ${err}`);
+    } catch (err: unknown) {
+      const e = err as { stderr?: string; message?: string };
+      const detail = e.stderr || e.message || String(err);
+      console.error('[whisper] failed:', detail);
+      throw new Error(`Whisper transcription failed: ${detail}`);
     }
 
     // The script writes SRT named after the audio file basename
