@@ -1385,7 +1385,7 @@ export function Storyboard() {
         if (p.bgMusicFilename) setBgMusicFilename(p.bgMusicFilename);
         if (p.voiceVolume != null) setVoiceVolume(p.voiceVolume);
         if (p.musicVolume != null) setMusicVolume(p.musicVolume);
-        if (p.speed != null) setSpeed(p.speed);
+        setSpeed(p.speed ?? 1.0);
         // Load project-level prompts as initial values.
         // If a linked template has prompts, they will override these when applied.
         if (p.topicsPrompt) setTopicsPrompt(p.topicsPrompt);

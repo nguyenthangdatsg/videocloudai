@@ -1450,7 +1450,7 @@ Rules:
 - Title: catchy, under 100 characters, includes power words
 - Description: 2-3 paragraphs, SEO-friendly, includes relevant keywords
 - Tags: 10-15 relevant tags as a JSON array
-- Thumbnail Prompt: A highly descriptive, detailed prompt for generating a high-CTR, click-enticing YouTube thumbnail image. The prompt should specify visual composition, dramatic lighting, and focal subject. It MUST match the video's Niche, Visual Style DNA, and Topic if provided.
+- Thumbnail Prompt: A highly descriptive, detailed prompt for generating a high-CTR, click-enticing YouTube thumbnail. The prompt should specify visual composition, dramatic lighting, and focal subject. It MUST NOT contain generic filler meta-words like "image of", "photo of", "picture of", "graphic of", "generate...", etc. Describe the visual elements directly (e.g. "A weathered archaeologist holding a glowing artifact" instead of "An image of a weathered archaeologist..."). It MUST match the video's Niche, Visual Style DNA, and Topic if provided.
 
 Output ONLY valid JSON with keys: "title", "description", "tags" (array of strings), "thumbnailPrompt" (string). No markdown, no commentary.`;
     }
@@ -1460,6 +1460,7 @@ Output ONLY valid JSON with keys: "title", "description", "tags" (array of strin
       systemPrompt += `\n\nADDITIONAL RULE:
 You MUST also generate a highly engaging, high Click-Through Rate (CTR) YouTube thumbnail image prompt.
 - The prompt MUST be detailed and describe a visually dramatic scene related to the video topic, specifying visual composition, dramatic lighting, and focal subject.
+- The prompt MUST NOT contain generic filler meta-words like "image of", "photo of", "picture of", "graphic of", etc. Describe the scene's visual content directly.
 - Ensure the prompt matches the video's Niche and Visual Style DNA if provided.
 - Return this in the "thumbnailPrompt" key of your JSON response.`;
     }
@@ -1551,6 +1552,7 @@ ${script}`,
       
 Rules:
 - The output prompt must specify visual composition, dramatic lighting, epic background, and focal subjects.
+- The prompt MUST NOT contain generic filler meta-words like "image of", "photo of", "picture of", "graphic of", "generate...", etc. Describe the visual elements directly.
 - It MUST be optimized for high CTR (Click-Through Rate).
 - It MUST match the video's Niche and Visual Style DNA if provided.
 - Do NOT include any intro, commentary, or markdown fences. Output ONLY the raw image generation prompt string.`;
@@ -2029,7 +2031,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       `INSERT INTO storyboards (id, name, template_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
       [id, name.trim(), finalTemplateId, now, now],
     );
-    res.status(201).json({ id, name: name.trim(), templateId: finalTemplateId, currentStep: 'topics', status: 'draft', createdAt: now, updatedAt: now });
+    res.status(201).json({ id, name: name.trim(), templateId: finalTemplateId, currentStep: 'topics', status: 'draft', speed: 1.0, createdAt: now, updatedAt: now });
   });
 
   router.get('/projects', (_req: Request, res: Response) => {
