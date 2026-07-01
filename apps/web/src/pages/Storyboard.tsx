@@ -10,7 +10,7 @@ import {
   Film, Mic, Image, ArrowRight, ArrowUp, ArrowDown,
   X, Download, CheckCircle, Clock, FileText, Upload, Trash2,
   Wand2, GripVertical, RefreshCw, Pencil, Play, Square, FileUp, Save,
-  ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Tag, Copy, Volume2, Globe, SlidersHorizontal, ZoomIn, Shuffle, Move, Pause, SkipBack, SkipForward, Video, Music,
+  ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Tag, Copy, Volume2, Globe, SlidersHorizontal, ZoomIn, Shuffle, Move, Pause, SkipBack, SkipForward, Video, Music, ExternalLink,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useImageGenStore } from '../store/image-generation';
@@ -868,11 +868,15 @@ export function Storyboard() {
   const [voiceVolume, setVoiceVolume] = useState(1.0);
   const [musicVolume, setMusicVolume] = useState(0.3);
 
-  // Step 6: Metadata
+  // Step 6: Metadata & Thumbnail
   const [generatingMetadata, setGeneratingMetadata] = useState(false);
   const [metadataTitle, setMetadataTitle] = useState('');
   const [metadataDesc, setMetadataDesc] = useState('');
   const [metadataTags, setMetadataTags] = useState<string[]>([]);
+  const [metadataThumbnailPrompt, setMetadataThumbnailPrompt] = useState('');
+  const [thumbnailUrl, setThumbnailUrl] = useState('');
+  const [generatingThumbnail, setGeneratingThumbnail] = useState(false);
+  const [thumbnailProgress, setThumbnailProgress] = useState('');
 
   // Step 7: Assemble
   const [assembling, setAssembling] = useState(false);
@@ -1373,6 +1377,8 @@ export function Storyboard() {
         if (p.metadataTitle) setMetadataTitle(p.metadataTitle);
         if (p.metadataDesc) setMetadataDesc(p.metadataDesc);
         if (p.metadataTags?.length) setMetadataTags(p.metadataTags);
+        if (p.thumbnailUrl) setThumbnailUrl(p.thumbnailUrl);
+        if (p.thumbnailPrompt) setMetadataThumbnailPrompt(p.thumbnailPrompt);
         if (p.resultFilename) setResult({ filename: p.resultFilename, url: p.resultUrl || '', sizeKB: p.resultSizeKB || 0, duration: p.audioDuration || 0 });
         if (p.bgMusicFilename) setBgMusicFilename(p.bgMusicFilename);
         if (p.voiceVolume != null) setVoiceVolume(p.voiceVolume);
@@ -1997,15 +2003,56 @@ export function Storyboard() {
         script: scriptText.trim(),
         topic: scriptTopic.trim() || undefined,
         systemPrompt: metadataPrompt.trim() || undefined,
-      });
+      }) as any;
       setMetadataTitle(meta.title);
       setMetadataDesc(meta.description);
       setMetadataTags(meta.tags);
-      saveProject({ metadataTitle: meta.title, metadataDesc: meta.description, metadataTags: meta.tags, currentStep: 'metadata' });
+      if (meta.thumbnailPrompt) setMetadataThumbnailPrompt(meta.thumbnailPrompt);
+      saveProject({
+        metadataTitle: meta.title,
+        metadataDesc: meta.description,
+        metadataTags: meta.tags,
+        thumbnailPrompt: meta.thumbnailPrompt || '',
+        currentStep: 'metadata'
+      });
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setGeneratingMetadata(false);
+    }
+  };
+
+  const handleThumbnailPromptChange = (val: string) => {
+    setMetadataThumbnailPrompt(val);
+    saveProject({ thumbnailPrompt: val });
+  };
+
+  const handleGenerateThumbnail = async () => {
+    if (!metadataThumbnailPrompt.trim()) return;
+    setGeneratingThumbnail(true);
+    setThumbnailProgress('Initializing...');
+    setError(null);
+    try {
+      const result = await imageApi.generate(
+        {
+          prompt: metadataThumbnailPrompt.trim(),
+          aspectRatio: '16:9',
+          count: 1,
+          provider: provider === 'auto' ? undefined : provider,
+        },
+        (step, detail) => {
+          setThumbnailProgress(`${step}: ${detail || ''}`);
+        }
+      );
+      if (result.length > 0) {
+        setThumbnailUrl(result[0].url);
+        saveProject({ thumbnailUrl: result[0].url, thumbnailPrompt: metadataThumbnailPrompt.trim() });
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setGeneratingThumbnail(false);
+      setThumbnailProgress('');
     }
   };
 
@@ -4108,57 +4155,150 @@ export function Storyboard() {
                 )}
               </div>
 
-              {/* Metadata fields */}
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs text-c-muted mb-1 block">{t('storyboard.metadataTitle')}</label>
-                  <input
-                    type="text"
-                    value={metadataTitle}
-                    onChange={(e) => setMetadataTitle(e.target.value)}
-                    className="input text-sm w-full"
-                    placeholder={t('storyboard.titlePlaceholder')}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-c-muted mb-1 block">{t('storyboard.metadataDescription')}</label>
-                  <textarea
-                    value={metadataDesc}
-                    onChange={(e) => setMetadataDesc(e.target.value)}
-                    rows={6}
-                    className="input text-sm w-full resize-y min-h-[100px]"
-                    placeholder={t('storyboard.descriptionPlaceholder')}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-c-muted mb-1 block">{t('storyboard.metadataTags')} ({metadataTags.length})</label>
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {metadataTags.map((tag, i) => (
-                      <span key={i} className="inline-flex items-center gap-1 text-[11px] bg-cyan-900/30 text-cyan-300 px-2 py-0.5 rounded-full">
-                        {tag}
-                        <button onClick={() => setMetadataTags((prev) => prev.filter((_, j) => j !== i))} className="p-0.5 -m-0.5 hover:text-red-400 transition-colors" aria-label={`Remove tag ${tag}`}>
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    ))}
+              {/* Metadata & Thumbnail layout */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Left Column: Metadata Fields */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs text-c-muted mb-1 block">{t('storyboard.metadataTitle')}</label>
+                    <input
+                      type="text"
+                      value={metadataTitle}
+                      onChange={(e) => { setMetadataTitle(e.target.value); saveProject({ metadataTitle: e.target.value }); }}
+                      className="input text-sm w-full"
+                      placeholder={t('storyboard.titlePlaceholder') || 'Enter video title'}
+                    />
                   </div>
-                  <input
-                    type="text"
-                    placeholder={t('storyboard.addTagPlaceholder')}
-                    className="input text-sm w-full"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
-                        setMetadataTags((prev) => [...prev, (e.target as HTMLInputElement).value.trim()]);
-                        (e.target as HTMLInputElement).value = '';
-                      }
-                    }}
-                  />
+                  <div>
+                    <label className="text-xs text-c-muted mb-1 block">{t('storyboard.metadataDescription')}</label>
+                    <textarea
+                      value={metadataDesc}
+                      onChange={(e) => { setMetadataDesc(e.target.value); saveProject({ metadataDesc: e.target.value }); }}
+                      rows={6}
+                      className="input text-sm w-full resize-y min-h-[100px]"
+                      placeholder={t('storyboard.descriptionPlaceholder') || 'Enter video description'}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-c-muted mb-1 block">{t('storyboard.metadataTags')} ({metadataTags.length})</label>
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {metadataTags.map((tag, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 text-[11px] bg-cyan-900/30 text-cyan-300 px-2 py-0.5 rounded-full">
+                          {tag}
+                          <button onClick={() => {
+                            const updated = metadataTags.filter((_, j) => j !== i);
+                            setMetadataTags(updated);
+                            saveProject({ metadataTags: updated });
+                          }} className="p-0.5 -m-0.5 hover:text-red-400 transition-colors" aria-label={`Remove tag ${tag}`}>
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder={t('storyboard.addTagPlaceholder') || 'Add tag...'}
+                      className="input text-sm w-full"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
+                          const updated = [...metadataTags, (e.target as HTMLInputElement).value.trim()];
+                          setMetadataTags(updated);
+                          saveProject({ metadataTags: updated });
+                          (e.target as HTMLInputElement).value = '';
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Right Column: YouTube Thumbnail Generator */}
+                <div className="border border-c-border rounded-xl bg-c-surface p-4 flex flex-col justify-between space-y-3">
+                  <div>
+                    <h4 className="text-xs font-semibold text-c-text mb-1 uppercase tracking-wider text-cyan-400">
+                      YouTube Thumbnail (High CTR)
+                    </h4>
+                    <p className="text-[10px] text-c-dim mb-3">
+                      Generate an eye-catching, high-clickability 16:9 thumbnail image optimized for YouTube.
+                    </p>
+
+                    {/* Preview Image */}
+                    <div className="aspect-video w-full rounded-lg bg-c-bg border border-c-border overflow-hidden relative flex items-center justify-center group mb-3 shadow-md">
+                      {thumbnailUrl ? (
+                        <>
+                          <img src={thumbnailUrl} alt="Thumbnail preview" className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-all duration-200">
+                            <a
+                              href={thumbnailUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn-secondary text-[10px] py-1 px-2 flex items-center gap-1"
+                            >
+                              <ExternalLink className="w-3 h-3" /> View Full
+                            </a>
+                            <button
+                              onClick={() => {
+                                setThumbnailUrl('');
+                                saveProject({ thumbnailUrl: '' });
+                              }}
+                              className="btn-secondary hover:bg-red-900/35 hover:text-red-400 text-[10px] py-1 px-2"
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-center p-4">
+                          <Image className="w-8 h-8 text-c-dim mx-auto mb-2 opacity-50" />
+                          <span className="text-xs text-c-dim block">No thumbnail generated yet</span>
+                        </div>
+                      )}
+                      {generatingThumbnail && (
+                        <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center p-4 text-center">
+                          <Spinner className="w-6 h-6 text-cyan-400 mb-2" />
+                          <span className="text-xs text-cyan-400 font-medium animate-pulse">{thumbnailProgress}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Thumbnail Prompt Input */}
+                    <div>
+                      <label className="text-[11px] text-c-muted mb-1 block font-medium">CTR Image Prompt</label>
+                      <textarea
+                        value={metadataThumbnailPrompt}
+                        onChange={(e) => handleThumbnailPromptChange(e.target.value)}
+                        rows={4}
+                        className="input text-xs w-full resize-none bg-c-bg"
+                        placeholder="Describe a dramatic, click-enticing thumbnail image..."
+                        disabled={generatingThumbnail}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleGenerateThumbnail}
+                      disabled={generatingThumbnail || !metadataThumbnailPrompt.trim()}
+                      className="btn-primary text-xs flex items-center gap-1.5 flex-1 justify-center disabled:opacity-50 py-2"
+                    >
+                      {generatingThumbnail ? <Spinner className="w-3.5 h-3.5" /> : <Wand2 className="w-3.5 h-3.5" />}
+                      Generate Thumbnail
+                    </button>
+                    {thumbnailUrl && (
+                      <button
+                        onClick={() => navigator.clipboard.writeText(window.location.origin + thumbnailUrl)}
+                        className="btn-secondary text-xs px-3"
+                        title="Copy image link"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
               {/* Copy all metadata */}
               {metadataTitle && (
-                <div className="flex gap-2">
+                <div className="flex gap-2 pt-2 border-t border-c-border">
                   <button
                     onClick={() => {
                       const text = `Title: ${metadataTitle}\n\nDescription:\n${metadataDesc}\n\nTags: ${metadataTags.join(', ')}`;

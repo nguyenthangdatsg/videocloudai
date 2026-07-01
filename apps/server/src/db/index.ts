@@ -99,6 +99,8 @@ export function getDb(): Database.Database {
     `ALTER TABLE storyboards ADD COLUMN bg_music_filename TEXT`,
     `ALTER TABLE storyboards ADD COLUMN voice_volume REAL NOT NULL DEFAULT 1.0`,
     `ALTER TABLE storyboards ADD COLUMN music_volume REAL NOT NULL DEFAULT 0.3`,
+    `ALTER TABLE storyboards ADD COLUMN thumbnail_url TEXT`,
+    `ALTER TABLE storyboards ADD COLUMN thumbnail_prompt TEXT`,
   ];
   for (const sql of columnMigrations) {
     try { db.exec(sql); } catch { /* column already exists or index already exists */ }

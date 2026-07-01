@@ -1377,7 +1377,7 @@ Rules:
   });
 
   // Normalize metadata — tags may come as string or array
-  function normalizeMetadata(raw: Record<string, unknown>): { title: string; description: string; tags: string[] } {
+  function normalizeMetadata(raw: Record<string, unknown>): { title: string; description: string; tags: string[]; thumbnailPrompt: string } {
     let tags: string[] = [];
     if (Array.isArray(raw.tags)) {
       tags = raw.tags.map(String);
@@ -1388,6 +1388,7 @@ Rules:
       title: String(raw.title || ''),
       description: String(raw.description || ''),
       tags,
+      thumbnailPrompt: String(raw.thumbnailPrompt || ''),
     };
   }
 
@@ -1410,14 +1411,15 @@ Rules:
     if (!systemPrompt) {
       const templateRaw = s.get('storyboard_template') || '';
       const { sections: parsed } = parseTemplate(templateRaw);
-      systemPrompt = parsed.metadataSystemPrompt || `You are a YouTube metadata optimizer. Generate a viral title, SEO-optimized description, and relevant tags for a video.
+      systemPrompt = parsed.metadataSystemPrompt || `You are a YouTube metadata optimizer. Generate a viral title, SEO-optimized description, relevant tags, and a highly engaging, high Click-Through Rate (CTR) YouTube thumbnail image prompt for a video.
 
 Rules:
 - Title: catchy, under 100 characters, includes power words
 - Description: 2-3 paragraphs, SEO-friendly, includes relevant keywords
 - Tags: 10-15 relevant tags as a JSON array
+- Thumbnail Prompt: A highly descriptive, detailed prompt for generating a high-CTR, click-enticing YouTube thumbnail image. The prompt should specify visual composition, dramatic lighting, and focal subject.
 
-Output ONLY valid JSON with keys: "title", "description", "tags" (array of strings). No markdown, no commentary.`;
+Output ONLY valid JSON with keys: "title", "description", "tags" (array of strings), "thumbnailPrompt" (string). No markdown, no commentary.`;
     }
 
     try {
@@ -1425,10 +1427,12 @@ Output ONLY valid JSON with keys: "title", "description", "tags" (array of strin
 
 CRITICAL: You MUST respond with ONLY a single JSON object. No other text, no markdown, no explanation.
 The JSON must have exactly these keys:
-{"title": "...", "description": "...", "tags": ["...", "..."]}
+{"title": "...", "description": "...", "tags": ["...", "..."], "thumbnailPrompt": "..."}
+
+In addition to title, description, and tags, you MUST generate a high-CTR, engaging YouTube thumbnail image prompt in the "thumbnailPrompt" key. Describe a visually dramatic scene related to the video topic.
 
 Example response:
-{"title": "Sunset Over Mountains", "description": "Watch a breathtaking sunset...", "tags": ["sunset", "nature", "mountains"]}`;
+{"title": "Sunset Over Mountains", "description": "Watch a breathtaking sunset...", "tags": ["sunset", "nature", "mountains"], "thumbnailPrompt": "A dramatic wide-angle shot of a glowing orange sunset reflecting on jagged snow-capped mountain peaks, epic cinematic lighting, highly detailed, photorealistic 8k"}`;
 
       const raw = await llmComplete({
         systemPrompt: systemPrompt + jsonInstruction,
@@ -1446,7 +1450,7 @@ Example response:
         console.log('[metadata] JSON not found, retrying with strict prompt...');
         const retry = await llmComplete({
           systemPrompt: 'You are a JSON generator. Output ONLY valid JSON. No text before or after.',
-          userMessage: `Convert this into a JSON object with keys "title" (string), "description" (string), "tags" (array of strings):\n\n${raw}`,
+          userMessage: `Convert this into a JSON object with keys "title" (string), "description" (string), "tags" (array of strings), "thumbnailPrompt" (string):\n\n${raw}`,
           temperature: 0.2,
           maxTokens: 2000,
         });
@@ -1908,7 +1912,7 @@ Example response:
 
   router.get('/projects', (_req: Request, res: Response) => {
     const rows = dbAll<Record<string, unknown>>(
-      `SELECT s.id, s.name, s.template_id, s.current_step, s.topic, s.status, s.audio_duration, s.result_filename, s.segments, s.metadata_desc, s.metadata_tags, s.created_at, s.updated_at,
+      `SELECT s.id, s.name, s.template_id, s.current_step, s.topic, s.status, s.audio_duration, s.result_filename, s.segments, s.metadata_desc, s.metadata_tags, s.created_at, s.updated_at, s.thumbnail_url, s.thumbnail_prompt,
               t.name as template_name, t.niche as template_niche, t.color as template_color,
               t.youtube_url as template_youtube_url, t.memo as template_memo
        FROM storyboards s LEFT JOIN storyboard_templates t ON s.template_id = t.id
@@ -1924,7 +1928,8 @@ Example response:
       return {
         id: r.id, name: r.name, templateId: r.template_id, currentStep: r.current_step, topic: r.topic,
         status: r.status, audioDuration: r.audio_duration, resultFilename: r.result_filename,
-        thumbnailUrl,
+        thumbnailUrl: (r.thumbnail_url as string) || thumbnailUrl,
+        thumbnailPrompt: (r.thumbnail_prompt as string) || '',
         templateName: r.template_name, templateNiche: r.template_niche, templateColor: r.template_color,
         templateYoutubeUrl: r.template_youtube_url || '', templateMemo: r.template_memo || '',
         metadataDesc: r.metadata_desc || '', metadataTags: (() => { try { return JSON.parse((r.metadata_tags as string) || '[]'); } catch { return []; } })(),
@@ -1954,6 +1959,8 @@ Example response:
       imagePromptPrompt: row.image_prompt_prompt, metadataPrompt: row.metadata_prompt,
       stageParts: JSON.parse((row.stage_parts as string) || '{}'),
       status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
+      thumbnailUrl: row.thumbnail_url || '',
+      thumbnailPrompt: row.thumbnail_prompt || '',
     });
   });
 
@@ -1967,6 +1974,7 @@ Example response:
       resultUrl: 'result_url', resultSizeKB: 'result_size_kb', topicsPrompt: 'topics_prompt', scriptPrompt: 'script_prompt',
       imagePromptPrompt: 'image_prompt_prompt', metadataPrompt: 'metadata_prompt', status: 'status',
       bgMusicFilename: 'bg_music_filename', voiceVolume: 'voice_volume', musicVolume: 'music_volume',
+      thumbnailUrl: 'thumbnail_url', thumbnailPrompt: 'thumbnail_prompt',
     };
     const jsonCols: Record<string, string> = {
       transcriptEntries: 'transcript_entries', prompts: 'prompts',

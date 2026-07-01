@@ -623,6 +623,7 @@ export const storyboardApi = {
 export interface StoryboardProjectSummary {
   id: string; name: string; templateId?: string; currentStep: string; topic?: string;
   status: string; audioDuration?: number; resultFilename?: string; thumbnailUrl?: string;
+  thumbnailPrompt?: string;
   templateName?: string; templateNiche?: string; templateColor?: string;
   templateYoutubeUrl?: string; templateMemo?: string;
   metadataDesc?: string; metadataTags?: string[] | string;
