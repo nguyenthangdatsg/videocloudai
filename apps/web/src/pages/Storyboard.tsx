@@ -2000,6 +2000,7 @@ export function Storyboard() {
     setError(null);
     try {
       const meta = await storyboardApi.generateMetadata({
+        projectId: projectId || undefined,
         script: scriptText.trim(),
         topic: scriptTopic.trim() || undefined,
         systemPrompt: metadataPrompt.trim() || undefined,

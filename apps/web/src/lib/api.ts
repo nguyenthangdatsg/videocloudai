@@ -578,8 +578,8 @@ export const storyboardApi = {
   delete: (filename: string) =>
     api.delete(`/storyboard/video/${encodeURIComponent(filename)}`).then((r) => r.data),
 
-  generateMetadata: (data: { script: string; topic?: string; systemPrompt?: string }) =>
-    api.post<{ metadata: { title: string; description: string; tags: string[] } }>('/storyboard/generate-metadata', data).then((r) => r.data.metadata),
+  generateMetadata: (data: { projectId?: string; script: string; topic?: string; systemPrompt?: string }) =>
+    api.post<{ metadata: { title: string; description: string; tags: string[]; thumbnailPrompt: string } }>('/storyboard/generate-metadata', data).then((r) => r.data.metadata),
 
   // Project CRUD
   createProject: (name: string, templateId?: string) =>

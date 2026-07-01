@@ -1394,7 +1394,8 @@ Rules:
 
   // ── Generate metadata (title, description, tags) via Groq ──
   router.post('/generate-metadata', async (req: Request, res: Response) => {
-    const { script, topic, systemPrompt: customPrompt } = req.body as {
+    const { projectId, script, topic, systemPrompt: customPrompt } = req.body as {
+      projectId?: string;
       script: string;
       topic?: string;
       systemPrompt?: string;
@@ -1403,6 +1404,28 @@ Rules:
     if (!script?.trim()) {
       res.status(400).json({ error: 'script is required' });
       return;
+    }
+
+    // Build context info based on niche, project name, and visual style
+    let contextInfo = '';
+    if (projectId) {
+      const proj = dbGet<{ name: string; topic: string; template_id: string }>(
+        'SELECT name, topic, template_id FROM storyboards WHERE id = ?', [projectId]
+      );
+      if (proj) {
+        contextInfo += `Project Name: ${proj.name}\n`;
+        if (proj.topic || topic) contextInfo += `Topic: ${proj.topic || topic}\n`;
+        if (proj.template_id) {
+          const tpl = dbGet<{ name: string; niche: string; visual_style: string }>(
+            'SELECT name, niche, visual_style FROM storyboard_templates WHERE id = ?', [proj.template_id]
+          );
+          if (tpl) {
+            if (tpl.niche) contextInfo += `Niche/Category: ${tpl.niche}\n`;
+            if (tpl.name) contextInfo += `Style Template: ${tpl.name}\n`;
+            if (tpl.visual_style) contextInfo += `Visual Style DNA: ${tpl.visual_style}\n`;
+          }
+        }
+      }
     }
 
     const s = getSettings();
@@ -1417,7 +1440,7 @@ Rules:
 - Title: catchy, under 100 characters, includes power words
 - Description: 2-3 paragraphs, SEO-friendly, includes relevant keywords
 - Tags: 10-15 relevant tags as a JSON array
-- Thumbnail Prompt: A highly descriptive, detailed prompt for generating a high-CTR, click-enticing YouTube thumbnail image. The prompt should specify visual composition, dramatic lighting, and focal subject.
+- Thumbnail Prompt: A highly descriptive, detailed prompt for generating a high-CTR, click-enticing YouTube thumbnail image. The prompt should specify visual composition, dramatic lighting, and focal subject. It MUST match the video's Niche, Visual Style DNA, and Topic if provided.
 
 Output ONLY valid JSON with keys: "title", "description", "tags" (array of strings), "thumbnailPrompt" (string). No markdown, no commentary.`;
     }
@@ -1436,7 +1459,11 @@ Example response:
 
       const raw = await llmComplete({
         systemPrompt: systemPrompt + jsonInstruction,
-        userMessage: `Generate metadata for this video. Respond with ONLY a JSON object.\n\nTopic: ${topic || 'N/A'}\n\nScript:\n${script}`,
+        userMessage: `Generate metadata and a high-CTR thumbnail prompt for this video. Respond with ONLY a JSON object.
+
+${contextInfo}
+Script:
+${script}`,
         temperature: 0.5,
         maxTokens: 2000,
       });
