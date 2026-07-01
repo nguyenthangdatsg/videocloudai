@@ -838,7 +838,7 @@ export function Storyboard() {
   const [uploadingZip, setUploadingZip] = useState(false);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const imageCardRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [imageTab, setImageTab] = useState<'generate' | 'upload' | 'flow'>('generate');
+  const [imageTab, setImageTab] = useState<'generate' | 'upload' | 'flow'>('flow');
   const [flowAvailable, setFlowAvailable] = useState(false);
   const [flowProvider, setFlowProvider] = useState<'google-flow' | 'grok' | 'chatgpt'>('google-flow');
   const [mediaType, setMediaType] = useState<GenMediaType>('image');
@@ -880,6 +880,7 @@ export function Storyboard() {
 
   // Step 7: Assemble
   const [assembling, setAssembling] = useState(false);
+  const [speed, setSpeed] = useState<number>(1.0);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [assembleProgress, setAssembleProgress] = useState<string[]>([]);
   const audioLogRef = useRef<HTMLDivElement>(null);
@@ -1383,6 +1384,7 @@ export function Storyboard() {
         if (p.bgMusicFilename) setBgMusicFilename(p.bgMusicFilename);
         if (p.voiceVolume != null) setVoiceVolume(p.voiceVolume);
         if (p.musicVolume != null) setMusicVolume(p.musicVolume);
+        if (p.speed != null) setSpeed(p.speed);
         // Load project-level prompts as initial values.
         // If a linked template has prompts, they will override these when applied.
         if (p.topicsPrompt) setTopicsPrompt(p.topicsPrompt);
@@ -2069,7 +2071,7 @@ export function Storyboard() {
 
     try {
       const res = await storyboardApi.assemble(
-        { segments, audioFilename: audioFile.filename, aspectRatio, bgMusicFilename: bgMusicFilename || undefined, voiceVolume, musicVolume, outputName: scriptTopic.trim() || projectName.trim() || undefined },
+        { segments, audioFilename: audioFile.filename, aspectRatio, bgMusicFilename: bgMusicFilename || undefined, voiceVolume, musicVolume, outputName: scriptTopic.trim() || projectName.trim() || undefined, speed },
         (step, detail) => {
           if (step) setAssembleStep(step);
           if (detail) {
@@ -4347,6 +4349,27 @@ export function Storyboard() {
                         <option value="9:16">9:16</option>
                         <option value="1:1">1:1</option>
                       </select>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-c-dim">Speed:</span>
+                        <select
+                          value={speed}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setSpeed(val);
+                            saveProject({ speed: val });
+                          }}
+                          className="input text-xs py-1"
+                        >
+                          <option value="0.8">0.8x</option>
+                          <option value="1.0">1.0x (Normal)</option>
+                          <option value="1.1">1.1x</option>
+                          <option value="1.2">1.2x</option>
+                          <option value="1.25">1.25x</option>
+                          <option value="1.5">1.5x</option>
+                          <option value="1.75">1.75x</option>
+                          <option value="2.0">2.0x</option>
+                        </select>
+                      </div>
                       <button
                         onClick={randomizeMotion}
                         disabled={randomEffects.size === 0}

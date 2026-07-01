@@ -1384,11 +1384,19 @@ Rules:
     } else if (typeof raw.tags === 'string') {
       tags = (raw.tags as string).split(',').map((t: string) => t.trim()).filter(Boolean);
     }
+    const thumbnailPrompt = String(
+      raw.thumbnailPrompt ||
+      raw.thumbnail_prompt ||
+      raw.thumbnail ||
+      raw.thumbnail_image_prompt ||
+      raw.thumbnailprompt ||
+      ''
+    );
     return {
       title: String(raw.title || ''),
       description: String(raw.description || ''),
       tags,
-      thumbnailPrompt: String(raw.thumbnailPrompt || ''),
+      thumbnailPrompt,
     };
   }
 
@@ -1548,7 +1556,7 @@ ${script}`,
 
   // Assemble: combine images + audio into a video
   router.post('/assemble', async (req: Request, res: Response) => {
-    const { segments, audioFilename, aspectRatio, bgMusicFilename, voiceVolume, musicVolume, outputName } = req.body as {
+    const { segments, audioFilename, aspectRatio, bgMusicFilename, voiceVolume, musicVolume, outputName, speed } = req.body as {
       segments: StoryboardSegment[];
       audioFilename: string;
       aspectRatio?: string;
@@ -1556,6 +1564,7 @@ ${script}`,
       voiceVolume?: number;
       musicVolume?: number;
       outputName?: string;
+      speed?: number;
     };
 
     if (!segments?.length || !audioFilename) {
@@ -1581,6 +1590,24 @@ ${script}`,
         res.write(JSON.stringify({ error: 'Audio file not found' }) + '\n');
         res.end();
         return;
+      }
+
+      // Build FFmpeg concat demuxer input
+      const concatId = crypto.randomUUID().slice(0, 8);
+      const concatDir = path.join(outputDir, `tmp_${concatId}`);
+      fs.mkdirSync(concatDir, { recursive: true });
+
+      const speedFactor = typeof speed === 'number' && speed > 0 ? speed : 1.0;
+      if (speedFactor !== 1.0) {
+        res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `Adjusting narration speed to ${speedFactor}x...` }) + '\n');
+        const speededAudioPath = path.join(concatDir, 'speeded_audio.wav');
+        await execFileAsync(ffmpeg, [
+          '-i', audioPath,
+          '-filter:a', `atempo=${speedFactor}`,
+          '-y',
+          speededAudioPath,
+        ]);
+        audioPath = speededAudioPath;
       }
 
       // Get audio duration
@@ -1619,11 +1646,6 @@ ${script}`,
 
       res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `${segments.length} segments → ${merged.length} clips` }) + '\n');
 
-      // Build FFmpeg concat demuxer input
-      const concatId = crypto.randomUUID().slice(0, 8);
-      const concatDir = path.join(outputDir, `tmp_${concatId}`);
-      fs.mkdirSync(concatDir, { recursive: true });
-
       const videoDir = path.resolve(cacheDir, 'videos');
 
       // Helper: build static filter for FFmpeg (no motion)
@@ -1639,7 +1661,7 @@ ${script}`,
       const fps = 24;
       for (let i = 0; i < merged.length; i++) {
         const seg = merged[i];
-        const duration = Math.max(seg.endTime - seg.startTime, 0.5);
+        const duration = Math.max((seg.endTime - seg.startTime) / speedFactor, 0.5);
         const segOut = path.join(concatDir, `seg_${String(i).padStart(3, '0')}.mp4`);
 
         // ── Video clip: scale/trim to target duration and resolution ──
@@ -1659,7 +1681,8 @@ ${script}`,
           const filterComplex = [
             `[0:v]scale=w=${w}:h=${h}:force_original_aspect_ratio=decrease[scaled]`,
             `[scaled]pad=w=${w}:h=${h}:x=(ow-iw)/2:y=(oh-ih)/2:color=black[padded]`,
-            `[padded]fps=${fps},setsar=1/1,format=yuv420p[out]`,
+            speedFactor !== 1.0 ? `[padded]setpts=PTS/${speedFactor}[sped]` : `[padded]null[sped]`,
+            `[sped]fps=${fps},setsar=1/1,format=yuv420p[out]`,
           ].join(';');
 
           await execFileAsync(ffmpeg, [
@@ -1939,7 +1962,7 @@ ${script}`,
 
   router.get('/projects', (_req: Request, res: Response) => {
     const rows = dbAll<Record<string, unknown>>(
-      `SELECT s.id, s.name, s.template_id, s.current_step, s.topic, s.status, s.audio_duration, s.result_filename, s.segments, s.metadata_desc, s.metadata_tags, s.created_at, s.updated_at, s.thumbnail_url, s.thumbnail_prompt,
+      `SELECT s.id, s.name, s.template_id, s.current_step, s.topic, s.status, s.audio_duration, s.result_filename, s.segments, s.metadata_desc, s.metadata_tags, s.created_at, s.updated_at, s.thumbnail_url, s.thumbnail_prompt, s.speed,
               t.name as template_name, t.niche as template_niche, t.color as template_color,
               t.youtube_url as template_youtube_url, t.memo as template_memo
        FROM storyboards s LEFT JOIN storyboard_templates t ON s.template_id = t.id
@@ -1957,6 +1980,7 @@ ${script}`,
         status: r.status, audioDuration: r.audio_duration, resultFilename: r.result_filename,
         thumbnailUrl: (r.thumbnail_url as string) || thumbnailUrl,
         thumbnailPrompt: (r.thumbnail_prompt as string) || '',
+        speed: typeof r.speed === 'number' ? r.speed : 1.0,
         templateName: r.template_name, templateNiche: r.template_niche, templateColor: r.template_color,
         templateYoutubeUrl: r.template_youtube_url || '', templateMemo: r.template_memo || '',
         metadataDesc: r.metadata_desc || '', metadataTags: (() => { try { return JSON.parse((r.metadata_tags as string) || '[]'); } catch { return []; } })(),
@@ -1988,6 +2012,7 @@ ${script}`,
       status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
       thumbnailUrl: row.thumbnail_url || '',
       thumbnailPrompt: row.thumbnail_prompt || '',
+      speed: typeof row.speed === 'number' ? row.speed : 1.0,
     });
   });
 
@@ -2002,6 +2027,7 @@ ${script}`,
       imagePromptPrompt: 'image_prompt_prompt', metadataPrompt: 'metadata_prompt', status: 'status',
       bgMusicFilename: 'bg_music_filename', voiceVolume: 'voice_volume', musicVolume: 'music_volume',
       thumbnailUrl: 'thumbnail_url', thumbnailPrompt: 'thumbnail_prompt',
+      speed: 'speed',
     };
     const jsonCols: Record<string, string> = {
       transcriptEntries: 'transcript_entries', prompts: 'prompts',

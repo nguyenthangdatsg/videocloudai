@@ -553,7 +553,7 @@ export const storyboardApi = {
     api.post<{ segments: StoryboardSegment[] }>('/storyboard/match', data).then((r) => r.data.segments),
 
   assemble: async (
-    data: { segments: StoryboardSegment[]; audioFilename: string; aspectRatio?: string; bgMusicFilename?: string; voiceVolume?: number; musicVolume?: number; outputName?: string },
+    data: { segments: StoryboardSegment[]; audioFilename: string; aspectRatio?: string; bgMusicFilename?: string; voiceVolume?: number; musicVolume?: number; outputName?: string; speed?: number },
     onProgress: (step: string, detail?: string) => void,
   ): Promise<{ filename: string; url: string; sizeKB: number; duration: number }> => {
     const res = await fetch('/api/storyboard/assemble', {
@@ -624,6 +624,7 @@ export interface StoryboardProjectSummary {
   id: string; name: string; templateId?: string; currentStep: string; topic?: string;
   status: string; audioDuration?: number; resultFilename?: string; thumbnailUrl?: string;
   thumbnailPrompt?: string;
+  speed?: number;
   templateName?: string; templateNiche?: string; templateColor?: string;
   templateYoutubeUrl?: string; templateMemo?: string;
   metadataDesc?: string; metadataTags?: string[] | string;
