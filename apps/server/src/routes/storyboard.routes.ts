@@ -1416,6 +1416,7 @@ Rules:
 
     // Build context info based on niche, project name, and visual style
     let contextInfo = '';
+    let projectTemplateRaw = '';
     if (projectId) {
       const proj = dbGet<{ name: string; topic: string; template_id: string }>(
         'SELECT name, topic, template_id FROM storyboards WHERE id = ?', [projectId]
@@ -1424,13 +1425,14 @@ Rules:
         contextInfo += `Project Name: ${proj.name}\n`;
         if (proj.topic || topic) contextInfo += `Topic: ${proj.topic || topic}\n`;
         if (proj.template_id) {
-          const tpl = dbGet<{ name: string; niche: string; visual_style: string }>(
-            'SELECT name, niche, visual_style FROM storyboard_templates WHERE id = ?', [proj.template_id]
+          const tpl = dbGet<{ name: string; niche: string; visual_style: string; template_text: string }>(
+            'SELECT name, niche, visual_style, template_text FROM storyboard_templates WHERE id = ?', [proj.template_id]
           );
           if (tpl) {
             if (tpl.niche) contextInfo += `Niche/Category: ${tpl.niche}\n`;
             if (tpl.name) contextInfo += `Style Template: ${tpl.name}\n`;
             if (tpl.visual_style) contextInfo += `Visual Style DNA: ${tpl.visual_style}\n`;
+            if (tpl.template_text) projectTemplateRaw = tpl.template_text;
           }
         }
       }
@@ -1440,7 +1442,7 @@ Rules:
 
     let systemPrompt = customPrompt;
     if (!systemPrompt) {
-      const templateRaw = s.get('storyboard_template') || '';
+      const templateRaw = projectTemplateRaw || s.get('storyboard_template') || '';
       const { sections: parsed } = parseTemplate(templateRaw);
       systemPrompt = parsed.metadataSystemPrompt || `You are a YouTube metadata optimizer. Generate a viral title, SEO-optimized description, relevant tags, and a highly engaging, high Click-Through Rate (CTR) YouTube thumbnail image prompt for a video.
 
