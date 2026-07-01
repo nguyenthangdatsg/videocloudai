@@ -1453,6 +1453,15 @@ Rules:
 Output ONLY valid JSON with keys: "title", "description", "tags" (array of strings), "thumbnailPrompt" (string). No markdown, no commentary.`;
     }
 
+    // Force inclusion of the thumbnail prompt generation instruction
+    if (!systemPrompt.includes('thumbnailPrompt') && !systemPrompt.includes('thumbnail_prompt')) {
+      systemPrompt += `\n\nADDITIONAL RULE:
+You MUST also generate a highly engaging, high Click-Through Rate (CTR) YouTube thumbnail image prompt.
+- The prompt MUST be detailed and describe a visually dramatic scene related to the video topic, specifying visual composition, dramatic lighting, and focal subject.
+- Ensure the prompt matches the video's Niche and Visual Style DNA if provided.
+- Return this in the "thumbnailPrompt" key of your JSON response.`;
+    }
+
     try {
       const jsonInstruction = `
 
@@ -1500,6 +1509,67 @@ ${script}`,
       res.json({ metadata });
     } catch (err) {
       console.error('[metadata] error:', (err as Error).message, (err as Error).stack?.split('\n')[1]);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Dedicated route to generate a single high-CTR YouTube thumbnail prompt
+  router.post('/generate-thumbnail-prompt', async (req: Request, res: Response) => {
+    const { projectId, title, script, topic } = req.body as {
+      projectId?: string;
+      title?: string;
+      script?: string;
+      topic?: string;
+    };
+
+    let contextInfo = '';
+    let visualStyle = '';
+    let niche = '';
+    if (projectId) {
+      const proj = dbGet<{ name: string; topic: string; template_id: string }>(
+        'SELECT name, topic, template_id FROM storyboards WHERE id = ?', [projectId]
+      );
+      if (proj) {
+        contextInfo += `Project Name: ${proj.name}\n`;
+        if (proj.topic || topic) contextInfo += `Topic: ${proj.topic || topic}\n`;
+        if (proj.template_id) {
+          const tpl = dbGet<{ name: string; niche: string; visual_style: string }>(
+            'SELECT name, niche, visual_style FROM storyboard_templates WHERE id = ?', [proj.template_id]
+          );
+          if (tpl) {
+            if (tpl.niche) { contextInfo += `Niche/Category: ${tpl.niche}\n`; niche = tpl.niche; }
+            if (tpl.visual_style) { contextInfo += `Visual Style DNA: ${tpl.visual_style}\n`; visualStyle = tpl.visual_style; }
+          }
+        }
+      }
+    }
+
+    try {
+      const systemPrompt = `You are a professional YouTube thumbnail designer. Your job is to write a highly detailed, dramatic, and click-enticing image generation prompt for a YouTube thumbnail.
+      
+Rules:
+- The output prompt must specify visual composition, dramatic lighting, epic background, and focal subjects.
+- It MUST be optimized for high CTR (Click-Through Rate).
+- It MUST match the video's Niche and Visual Style DNA if provided.
+- Do NOT include any intro, commentary, or markdown fences. Output ONLY the raw image generation prompt string.`;
+
+      const userMessage = `Generate a high-CTR thumbnail prompt for this video.
+Topic: ${topic || 'N/A'}
+Title: ${title || 'N/A'}
+Niche: ${niche || 'N/A'}
+Visual Style DNA: ${visualStyle || 'N/A'}
+${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
+
+      const raw = await llmComplete({
+        systemPrompt,
+        userMessage,
+        temperature: 0.7,
+        maxTokens: 500,
+      });
+
+      res.json({ thumbnailPrompt: raw.trim() });
+    } catch (err) {
+      console.error('[thumbnail-prompt] error:', (err as Error).message);
       res.status(500).json({ error: (err as Error).message });
     }
   });

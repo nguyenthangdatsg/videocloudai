@@ -877,6 +877,7 @@ export function Storyboard() {
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [generatingThumbnail, setGeneratingThumbnail] = useState(false);
   const [thumbnailProgress, setThumbnailProgress] = useState('');
+  const [generatingThumbnailPrompt, setGeneratingThumbnailPrompt] = useState(false);
 
   // Step 7: Assemble
   const [assembling, setAssembling] = useState(false);
@@ -2056,6 +2057,28 @@ export function Storyboard() {
     } finally {
       setGeneratingThumbnail(false);
       setThumbnailProgress('');
+    }
+  };
+
+  const handleAutoGenerateThumbnailPrompt = async () => {
+    if (!projectId) return;
+    setGeneratingThumbnailPrompt(true);
+    setError(null);
+    try {
+      const res = await storyboardApi.generateThumbnailPrompt({
+        projectId,
+        title: metadataTitle || undefined,
+        script: scriptText || undefined,
+        topic: scriptTopic || undefined,
+      });
+      if (res.thumbnailPrompt) {
+        setMetadataThumbnailPrompt(res.thumbnailPrompt);
+        saveProject({ thumbnailPrompt: res.thumbnailPrompt });
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setGeneratingThumbnailPrompt(false);
     }
   };
 
@@ -4265,7 +4288,18 @@ export function Storyboard() {
 
                     {/* Thumbnail Prompt Input */}
                     <div>
-                      <label className="text-[11px] text-c-muted mb-1 block font-medium">CTR Image Prompt</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] text-c-muted font-medium">CTR Image Prompt</label>
+                        <button
+                          onClick={handleAutoGenerateThumbnailPrompt}
+                          disabled={generatingThumbnailPrompt || (!metadataTitle && !scriptTopic)}
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-0.5 transition-colors disabled:opacity-50"
+                          title="Generate CTR prompt based on style & topic"
+                        >
+                          {generatingThumbnailPrompt ? <Spinner size="sm" /> : <Wand2 className="w-2.5 h-2.5" />}
+                          Auto-Generate
+                        </button>
+                      </div>
                       <textarea
                         value={metadataThumbnailPrompt}
                         onChange={(e) => handleThumbnailPromptChange(e.target.value)}

@@ -580,6 +580,8 @@ export const storyboardApi = {
 
   generateMetadata: (data: { projectId?: string; script: string; topic?: string; systemPrompt?: string }) =>
     api.post<{ metadata: { title: string; description: string; tags: string[]; thumbnailPrompt: string } }>('/storyboard/generate-metadata', data).then((r) => r.data.metadata),
+  generateThumbnailPrompt: (data: { projectId?: string; title?: string; script?: string; topic?: string }) =>
+    api.post<{ thumbnailPrompt: string }>('/storyboard/generate-thumbnail-prompt', data).then((r) => r.data),
 
   // Project CRUD
   createProject: (name: string, templateId?: string) =>
