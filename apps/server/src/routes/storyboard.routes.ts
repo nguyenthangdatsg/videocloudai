@@ -1600,7 +1600,7 @@ Example response:
         return [
           `[0:v]scale=w=${outW}:h=${outH}:force_original_aspect_ratio=decrease[scaled]`,
           `[scaled]pad=w=${outW}:h=${outH}:x=(ow-iw)/2:y=(oh-ih)/2:color=black[padded]`,
-          `[padded]fps=${fps},format=yuv420p[out]`,
+          `[padded]fps=${fps},setsar=1/1,format=yuv420p[out]`,
         ].join(';');
       }
 
@@ -1628,7 +1628,7 @@ Example response:
           const filterComplex = [
             `[0:v]scale=w=${w}:h=${h}:force_original_aspect_ratio=decrease[scaled]`,
             `[scaled]pad=w=${w}:h=${h}:x=(ow-iw)/2:y=(oh-ih)/2:color=black[padded]`,
-            `[padded]fps=${fps},format=yuv420p[out]`,
+            `[padded]fps=${fps},setsar=1/1,format=yuv420p[out]`,
           ].join(';');
 
           await execFileAsync(ffmpeg, [
@@ -1640,6 +1640,7 @@ Example response:
             '-preset', 'fast',
             '-crf', '23',
             '-pix_fmt', 'yuv420p',
+            '-video_track_timescale', '90000',
             '-an',
             '-y',
             segOut,
@@ -1672,6 +1673,22 @@ Example response:
             durationInFrames: totalFrames,
           };
           await renderSceneClip(segOut, sceneConfig, w, h);
+
+          // Conform Remotion output to ensure identical properties (pixel format, timescale, SAR)
+          const tmpOut = segOut + '.conform.mp4';
+          await execFileAsync(ffmpeg, [
+            '-i', segOut,
+            '-c:v', 'libx264',
+            '-preset', 'superfast',
+            '-crf', '23',
+            '-pix_fmt', 'yuv420p',
+            '-video_track_timescale', '90000',
+            '-vf', 'setsar=1/1',
+            '-an',
+            '-y',
+            tmpOut,
+          ], { timeout: 30_000 });
+          fs.renameSync(tmpOut, segOut);
         } else {
           // Use FFmpeg for static clips — simple scale+pad, much faster
           const filterComplex = buildStaticFilter(w, h, fps);
@@ -1685,6 +1702,7 @@ Example response:
             '-preset', 'fast',
             '-crf', '23',
             '-pix_fmt', 'yuv420p',
+            '-video_track_timescale', '90000',
             '-an',
             '-y',
             segOut,
