@@ -401,20 +401,21 @@ export function createStoryboardRouter(narrationService: NarrationService, subti
 
   // ── Multi-Template CRUD ──
   router.post('/templates', (req: Request, res: Response) => {
-    const { name, niche, description, templateText, color, youtubeUrl, memo, nicheStatus, visualStyle } = req.body as {
-      name?: string; niche?: string; description?: string; templateText?: string; color?: string; youtubeUrl?: string; memo?: string; nicheStatus?: string; visualStyle?: string;
+    const { name, niche, description, templateText, color, youtubeUrl, memo, nicheStatus, visualStyle, customPrompts } = req.body as {
+      name?: string; niche?: string; description?: string; templateText?: string; color?: string; youtubeUrl?: string; memo?: string; nicheStatus?: string; visualStyle?: string; customPrompts?: Record<string, string>;
     };
     if (!name?.trim()) { res.status(400).json({ error: 'name is required' }); return; }
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
+    const customPromptsJson = customPrompts && Object.keys(customPrompts).length ? JSON.stringify(customPrompts) : null;
     dbRun(
-      `INSERT INTO storyboard_templates (id, name, niche, description, template_text, color, youtube_url, memo, niche_status, visual_style, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, name.trim(), niche?.trim() || '', description?.trim() || '', templateText?.trim() || '', color || '#7c6af5', youtubeUrl?.trim() || '', memo?.trim() || '', nicheStatus || 'active', visualStyle?.trim() || '', now, now],
+      `INSERT INTO storyboard_templates (id, name, niche, description, template_text, color, youtube_url, memo, niche_status, visual_style, custom_prompts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, name.trim(), niche?.trim() || '', description?.trim() || '', templateText?.trim() || '', color || '#7c6af5', youtubeUrl?.trim() || '', memo?.trim() || '', nicheStatus || 'active', visualStyle?.trim() || '', customPromptsJson, now, now],
     );
-    // Pre-compute stage prompts from template text
-    if (templateText?.trim()) recomputeTemplatePrompts(id);
-    res.status(201).json({ id, name: name.trim(), niche: niche?.trim() || '', description: description?.trim() || '', templateText: templateText?.trim() || '', customPrompts: {}, color: color || '#7c6af5', youtubeUrl: youtubeUrl?.trim() || '', memo: memo?.trim() || '', nicheStatus: nicheStatus || 'active', visualStyle: visualStyle?.trim() || '', createdAt: now, updatedAt: now });
+    // Pre-compute stage prompts from template text (includes custom_prompts overrides)
+    if (templateText?.trim() || customPromptsJson) recomputeTemplatePrompts(id);
+    res.status(201).json({ id, name: name.trim(), niche: niche?.trim() || '', description: description?.trim() || '', templateText: templateText?.trim() || '', customPrompts: customPrompts || {}, color: color || '#7c6af5', youtubeUrl: youtubeUrl?.trim() || '', memo: memo?.trim() || '', nicheStatus: nicheStatus || 'active', visualStyle: visualStyle?.trim() || '', createdAt: now, updatedAt: now });
   });
 
   router.get('/templates', (_req: Request, res: Response) => {
@@ -2086,6 +2087,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
       thumbnailUrl: row.thumbnail_url || '',
       thumbnailPrompt: row.thumbnail_prompt || '',
+      thumbnailBgColor: row.thumbnail_bg_color || '',
       speed: typeof row.speed === 'number' ? row.speed : 1.0,
     });
   });
@@ -2100,7 +2102,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       resultUrl: 'result_url', resultSizeKB: 'result_size_kb', topicsPrompt: 'topics_prompt', scriptPrompt: 'script_prompt',
       imagePromptPrompt: 'image_prompt_prompt', metadataPrompt: 'metadata_prompt', status: 'status',
       bgMusicFilename: 'bg_music_filename', voiceVolume: 'voice_volume', musicVolume: 'music_volume',
-      thumbnailUrl: 'thumbnail_url', thumbnailPrompt: 'thumbnail_prompt',
+      thumbnailUrl: 'thumbnail_url', thumbnailPrompt: 'thumbnail_prompt', thumbnailBgColor: 'thumbnail_bg_color',
       speed: 'speed',
     };
     const jsonCols: Record<string, string> = {

@@ -227,6 +227,7 @@ function StagePromptEditor({
   onPartsChange,
   onSave,
   saving,
+  saved,
   placeholder,
   t,
 }: {
@@ -237,6 +238,7 @@ function StagePromptEditor({
   onPartsChange?: (parts: StagePart[]) => void;
   onSave?: () => void;
   saving?: boolean;
+  saved?: boolean;
   placeholder?: string;
   t: (key: string) => string;
 }) {
@@ -334,14 +336,21 @@ function StagePromptEditor({
               {t('storyboard.fullPrompt')}
             </button>
             {onSave && (
-              <button
-                onClick={onSave}
-                disabled={saving}
-                className="ml-auto text-[10px] px-3 py-1 rounded-lg bg-green-700/60 hover:bg-green-700/80 text-green-200 font-medium flex items-center gap-1 disabled:opacity-50 transition-colors"
-              >
-                <Save className="w-3 h-3" />
-                {saving ? t('storyboard.saving') : t('storyboard.savePrompt')}
-              </button>
+              saved ? (
+                <span className="ml-auto text-[10px] px-3 py-1 rounded-lg bg-green-800/40 text-green-400 font-medium flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3" />
+                  {t('storyboard.saved')}
+                </span>
+              ) : (
+                <button
+                  onClick={onSave}
+                  disabled={saving}
+                  className="ml-auto text-[10px] px-3 py-1 rounded-lg bg-green-700/60 hover:bg-green-700/80 text-green-200 font-medium flex items-center gap-1 disabled:opacity-50 transition-colors"
+                >
+                  <Save className="w-3 h-3" />
+                  {saving ? t('storyboard.saving') : t('storyboard.savePrompt')}
+                </button>
+              )
             )}
           </div>
 
@@ -878,6 +887,7 @@ export function Storyboard() {
   const [generatingThumbnail, setGeneratingThumbnail] = useState(false);
   const [thumbnailProgress, setThumbnailProgress] = useState('');
   const [generatingThumbnailPrompt, setGeneratingThumbnailPrompt] = useState(false);
+  const [thumbnailBgColor, setThumbnailBgColor] = useState('');
 
   // Step 7: Assemble
   const [assembling, setAssembling] = useState(false);
@@ -1259,15 +1269,29 @@ export function Storyboard() {
   const [error, setError] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const projectPromptsRef = useRef<Record<string, string>>({});
 
+  const [savedPromptStage, setSavedPromptStage] = useState<string | null>(null);
   const handleSaveStagePrompt = async (stage: string, prompt: string) => {
     setSavingPrompt(stage);
+    setSavedPromptStage(null);
     try {
       if (projectTemplateId) {
         await storyboardApi.saveTemplatePrompt(projectTemplateId, stage, prompt);
       } else {
         await storyboardApi.savePrompt(stage, prompt);
       }
+      // Also persist to project record so it survives reload
+      const projectKeyMap: Record<string, string> = {
+        topics: 'topicsPrompt', script: 'scriptPrompt',
+        prompts: 'imagePromptPrompt', metadata: 'metadataPrompt',
+      };
+      if (projectKeyMap[stage]) {
+        saveProject({ [projectKeyMap[stage]]: prompt, stageParts: templateStageParts });
+        projectPromptsRef.current[stage] = prompt;
+      }
+      setSavedPromptStage(stage);
+      setTimeout(() => setSavedPromptStage(null), 2000);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1309,14 +1333,23 @@ export function Storyboard() {
   });
 
   // Shared: apply parsed sections + stageParts to state
+  // Only set prompts if the project doesn't already have saved values
   const applySections = useCallback((sections: Record<string, string>, stageParts?: Record<string, StagePart[]>) => {
     setTemplateSections(sections);
-    setTemplateStageParts(stageParts || {});
+    setTemplateStageParts(prev => {
+      const tpl = stageParts || {};
+      const merged = { ...tpl };
+      for (const key of Object.keys(prev)) {
+        if (prev[key]?.length) merged[key] = prev[key];
+      }
+      return merged;
+    });
     setTemplateLoaded(true);
-    if (sections.topicsSystemPrompt) setTopicsPrompt(sections.topicsSystemPrompt);
-    if (sections.scriptSystemPrompt) setScriptPrompt(sections.scriptSystemPrompt);
-    if (sections.imagePromptSystemPrompt) setImagePromptPrompt(sections.imagePromptSystemPrompt);
-    if (sections.metadataSystemPrompt) setMetadataPrompt(sections.metadataSystemPrompt);
+    const pp = projectPromptsRef.current;
+    if (sections.topicsSystemPrompt && !pp.topics) setTopicsPrompt(sections.topicsSystemPrompt);
+    if (sections.scriptSystemPrompt && !pp.script) setScriptPrompt(sections.scriptSystemPrompt);
+    if (sections.imagePromptSystemPrompt && !pp.prompts) setImagePromptPrompt(sections.imagePromptSystemPrompt);
+    if (sections.metadataSystemPrompt && !pp.metadata) setMetadataPrompt(sections.metadataSystemPrompt);
   }, []);
 
   // Apply linked template — prompts are owned by the template (niche), not the project.
@@ -1324,22 +1357,32 @@ export function Storyboard() {
   // Always applies when linkedTemplate arrives (overrides any global template that loaded first).
   const [linkedTemplateApplied, setLinkedTemplateApplied] = useState(false);
   useEffect(() => {
-    if (!linkedTemplate || linkedTemplateApplied) return;
+    if (!linkedTemplate || linkedTemplateApplied || !projectLoaded) return;
     const sp = linkedTemplate.stagePrompts;
     const hasContent = linkedTemplate.templateText || sp?.topics || sp?.script || sp?.prompts || sp?.metadata;
     if (!hasContent) return; // wait for backend to populate fallback prompts on next refetch
     if (linkedTemplate.templateText) {
       setTemplateText(linkedTemplate.templateText);
       setTemplateSections(linkedTemplate.sections);
-      setTemplateStageParts(linkedTemplate.stageParts || {});
+      // Merge: keep project-saved stage parts, fill in missing from template
+      setTemplateStageParts(prev => {
+        const tpl = linkedTemplate.stageParts || {};
+        const merged = { ...tpl };
+        for (const key of Object.keys(prev)) {
+          if (prev[key]?.length) merged[key] = prev[key];
+        }
+        return merged;
+      });
     }
     setTemplateLoaded(true);
     setLinkedTemplateApplied(true);
-    setTopicsPrompt(sp?.topics || linkedTemplate.sections.topicsSystemPrompt || '');
-    setScriptPrompt(sp?.script || linkedTemplate.sections.scriptSystemPrompt || '');
-    setImagePromptPrompt(sp?.prompts || linkedTemplate.sections.imagePromptSystemPrompt || '');
-    setMetadataPrompt(sp?.metadata || linkedTemplate.sections.metadataSystemPrompt || '');
-  }, [linkedTemplate, linkedTemplateApplied]);
+    // Only apply template prompts if the project doesn't have saved values
+    const pp = projectPromptsRef.current;
+    if (!pp.topics) setTopicsPrompt(sp?.topics || linkedTemplate.sections.topicsSystemPrompt || '');
+    if (!pp.script) setScriptPrompt(sp?.script || linkedTemplate.sections.scriptSystemPrompt || '');
+    if (!pp.prompts) setImagePromptPrompt(sp?.prompts || linkedTemplate.sections.imagePromptSystemPrompt || '');
+    if (!pp.metadata) setMetadataPrompt(sp?.metadata || linkedTemplate.sections.metadataSystemPrompt || '');
+  }, [linkedTemplate, linkedTemplateApplied, projectLoaded]);
 
   // Fallback: apply global template if linked template is empty or absent
   // Only apply after project has loaded so we know whether a template is linked
@@ -1381,6 +1424,7 @@ export function Storyboard() {
         if (p.metadataTags?.length) setMetadataTags(p.metadataTags);
         if (p.thumbnailUrl) setThumbnailUrl(p.thumbnailUrl);
         if (p.thumbnailPrompt) setMetadataThumbnailPrompt(p.thumbnailPrompt);
+        if (p.thumbnailBgColor) setThumbnailBgColor(p.thumbnailBgColor);
         if (p.resultFilename) setResult({ filename: p.resultFilename, url: p.resultUrl || '', sizeKB: p.resultSizeKB || 0, duration: p.audioDuration || 0 });
         if (p.bgMusicFilename) setBgMusicFilename(p.bgMusicFilename);
         if (p.voiceVolume != null) setVoiceVolume(p.voiceVolume);
@@ -1393,6 +1437,13 @@ export function Storyboard() {
         if (p.imagePromptPrompt) setImagePromptPrompt(p.imagePromptPrompt);
         if (p.metadataPrompt) setMetadataPrompt(p.metadataPrompt);
         if (p.stageParts && Object.keys(p.stageParts).length) setTemplateStageParts(p.stageParts);
+        // Track which prompts the project has saved — prevent templates from overwriting
+        projectPromptsRef.current = {
+          topics: p.topicsPrompt || '',
+          script: p.scriptPrompt || '',
+          prompts: p.imagePromptPrompt || '',
+          metadata: p.metadataPrompt || '',
+        };
       } catch {
         navigate('/storyboard');
       } finally {
@@ -2037,9 +2088,16 @@ export function Storyboard() {
     setThumbnailProgress('Initializing...');
     setError(null);
     try {
+      const basePrompt = metadataThumbnailPrompt.trim();
+      const bgSuffix = thumbnailBgColor === 'transparent'
+        ? '. Transparent/no background, subject isolated on transparent background'
+        : thumbnailBgColor
+          ? `. Background color: ${thumbnailBgColor}`
+          : '';
+      const finalPrompt = basePrompt + bgSuffix;
       const result = await imageApi.generate(
         {
-          prompt: metadataThumbnailPrompt.trim(),
+          prompt: finalPrompt,
           aspectRatio: '16:9',
           count: 1,
           provider: provider === 'auto' ? undefined : provider,
@@ -2291,6 +2349,7 @@ export function Storyboard() {
                 onPartsChange={(parts) => setTemplateStageParts(p => ({ ...p, topics: parts }))}
                 onSave={() => handleSaveStagePrompt('topics', topicsPrompt)}
                 saving={savingPrompt === 'topics'}
+                saved={savedPromptStage === 'topics'}
                 t={t}
               />
 
@@ -2357,6 +2416,7 @@ export function Storyboard() {
                 onPartsChange={(parts) => setTemplateStageParts(p => ({ ...p, script: parts }))}
                 onSave={() => handleSaveStagePrompt('script', scriptPrompt)}
                 saving={savingPrompt === 'script'}
+                saved={savedPromptStage === 'script'}
                 t={t}
               />
 
@@ -2759,6 +2819,7 @@ export function Storyboard() {
                 onPartsChange={(parts) => setTemplateStageParts(p => ({ ...p, prompts: parts }))}
                 onSave={() => handleSaveStagePrompt('prompts', imagePromptPrompt)}
                 saving={savingPrompt === 'prompts'}
+                saved={savedPromptStage === 'prompts'}
                 t={t}
               />
 
@@ -4162,6 +4223,7 @@ export function Storyboard() {
                 onPartsChange={(parts) => setTemplateStageParts(p => ({ ...p, metadata: parts }))}
                 onSave={() => handleSaveStagePrompt('metadata', metadataPrompt)}
                 saving={savingPrompt === 'metadata'}
+                saved={savedPromptStage === 'metadata'}
                 t={t}
               />
 
@@ -4308,6 +4370,68 @@ export function Storyboard() {
                         placeholder="Describe a dramatic, click-enticing thumbnail image..."
                         disabled={generatingThumbnail}
                       />
+                    </div>
+
+                    {/* Background Color */}
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] text-c-muted font-medium">Background</label>
+                        {thumbnailBgColor && (
+                          <button
+                            onClick={() => { setThumbnailBgColor(''); saveProject({ thumbnailBgColor: '' }); }}
+                            className="text-[10px] text-c-dim hover:text-red-400 transition-colors"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                      {/* Preset options */}
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {[
+                          { label: 'None', value: '', icon: '—' },
+                          { label: 'Transparent', value: 'transparent', icon: '🏁' },
+                          { label: 'White', value: '#FFFFFF', swatch: '#FFFFFF' },
+                          { label: 'Black', value: '#000000', swatch: '#000000' },
+                          { label: 'Red', value: '#FF0000', swatch: '#FF0000' },
+                          { label: 'Blue', value: '#0066FF', swatch: '#0066FF' },
+                          { label: 'Yellow', value: '#FFD600', swatch: '#FFD600' },
+                          { label: 'Green', value: '#00C853', swatch: '#00C853' },
+                          { label: 'Gradient', value: 'cinematic gradient background' },
+                        ].map((opt) => (
+                          <button
+                            key={opt.value}
+                            onClick={() => { setThumbnailBgColor(opt.value); saveProject({ thumbnailBgColor: opt.value }); }}
+                            className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border transition-colors ${
+                              thumbnailBgColor === opt.value
+                                ? 'border-cyan-500 bg-cyan-500/10 text-cyan-400'
+                                : 'border-c-border bg-c-bg text-c-muted hover:border-c-text/30'
+                            }`}
+                          >
+                            {opt.swatch ? (
+                              <span className="w-3 h-3 rounded-sm border border-c-border/50 inline-block" style={{ backgroundColor: opt.swatch }} />
+                            ) : opt.icon ? (
+                              <span className="text-[10px]">{opt.icon}</span>
+                            ) : null}
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      {/* Custom color row */}
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={thumbnailBgColor.startsWith('#') && thumbnailBgColor.length <= 7 ? thumbnailBgColor : '#000000'}
+                          onChange={(e) => { setThumbnailBgColor(e.target.value); saveProject({ thumbnailBgColor: e.target.value }); }}
+                          className="w-7 h-7 rounded cursor-pointer border border-c-border bg-transparent p-0 shrink-0"
+                        />
+                        <input
+                          type="text"
+                          value={thumbnailBgColor}
+                          onChange={(e) => { setThumbnailBgColor(e.target.value); saveProject({ thumbnailBgColor: e.target.value }); }}
+                          className="input text-xs flex-1 bg-c-bg"
+                          placeholder="Custom: hex, color name, or description..."
+                        />
+                      </div>
                     </div>
                   </div>
 

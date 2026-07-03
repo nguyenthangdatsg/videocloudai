@@ -596,7 +596,7 @@ export const storyboardApi = {
     api.delete(`/storyboard/projects/${id}`).then((r) => r.data),
 
   // Template CRUD
-  createTemplate: (data: { name: string; niche?: string; description?: string; templateText?: string; color?: string; youtubeUrl?: string; memo?: string; visualStyle?: string }) =>
+  createTemplate: (data: { name: string; niche?: string; description?: string; templateText?: string; color?: string; youtubeUrl?: string; memo?: string; visualStyle?: string; customPrompts?: Record<string, string> }) =>
     api.post<StoryboardTemplate>('/storyboard/templates', data).then((r) => r.data),
   listTemplates: () =>
     api.get<StoryboardTemplateSummary[]>('/storyboard/templates').then((r) => r.data),

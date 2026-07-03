@@ -102,6 +102,7 @@ export function getDb(): Database.Database {
     `ALTER TABLE storyboards ADD COLUMN thumbnail_url TEXT`,
     `ALTER TABLE storyboards ADD COLUMN thumbnail_prompt TEXT`,
     `ALTER TABLE storyboards ADD COLUMN speed REAL DEFAULT 1.0`,
+    `ALTER TABLE storyboards ADD COLUMN thumbnail_bg_color TEXT DEFAULT ''`,
   ];
   for (const sql of columnMigrations) {
     try { db.exec(sql); } catch { /* column already exists or index already exists */ }

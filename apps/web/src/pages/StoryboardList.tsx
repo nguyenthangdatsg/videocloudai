@@ -496,6 +496,8 @@ export function StoryboardList() {
       await storyboardApi.createTemplate({
         name: `${tpl.name} (copy)`, niche: tpl.niche, description: tpl.description,
         templateText: full.templateText, color: tpl.color,
+        youtubeUrl: tpl.youtubeUrl, memo: tpl.memo, visualStyle: tpl.visualStyle,
+        customPrompts: full.customPrompts,
       });
       queryClient.invalidateQueries({ queryKey: ['storyboard', 'templates'] });
     } catch { /* silent */ }

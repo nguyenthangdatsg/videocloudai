@@ -365,6 +365,8 @@
     "promptPartsHint": "Chỉnh sửa từng khối bên dưới. Chúng kết hợp thành prompt hệ thống đầy đủ. Preamble = vai trò, Knowledge = dữ liệu kênh, Stage Rules = hướng dẫn nhiệm vụ, Operator Rules = ràng buộc luôn áp dụng.",
     "savePrompt": "Lưu",
     "saving": "Đang lưu...",
+    "saved": "Đã lưu",
+    "resumeFailed": "Thử lại {{count}} lỗi",
     "addPart": "Thêm phần prompt",
     "showPrompt": "Hiện Prompt",
     "hideStagePrompt": "Ẩn Prompt",

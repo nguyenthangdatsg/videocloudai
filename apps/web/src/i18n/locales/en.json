@@ -365,6 +365,8 @@
     "promptPartsHint": "Edit each block below. They combine into the full system prompt. Preamble = role/persona, Knowledge = channel data, Stage Rules = task instructions, Operator Rules = always-active constraints.",
     "savePrompt": "Save",
     "saving": "Saving...",
+    "saved": "Saved",
+    "resumeFailed": "Retry {{count}} failed",
     "addPart": "Add Prompt Part",
     "showPrompt": "Show Prompt",
     "hideStagePrompt": "Hide Prompt",

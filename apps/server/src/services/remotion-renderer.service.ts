@@ -24,6 +24,8 @@ export function invalidateBundle(): void {
   cachedBundleUrl = null;
 }
 
+const MAX_RENDER_RETRIES = 2;
+
 async function renderComposition(
   compositionId: 'Intro' | 'Outro' | 'SceneClip',
   outputPath: string,
@@ -37,28 +39,47 @@ async function renderComposition(
   const serveUrl = await getBundleUrl();
   const inputProps = props as unknown as Record<string, unknown>;
 
+  const chromiumOptions = {
+    disableWebSecurity: true,
+    gl: 'angle' as const,
+  };
+
   const compositions = await getCompositions(serveUrl, {
     inputProps,
     browserExecutable,
+    chromiumOptions,
   });
 
   const composition = compositions.find((c) => c.id === compositionId);
   if (!composition) throw new Error(`Composition "${compositionId}" not found in bundle`);
 
-  await renderMedia({
-    composition: {
-      ...composition,
-      durationInFrames: props.durationInFrames,
-      ...(overrides?.width ? { width: overrides.width } : {}),
-      ...(overrides?.height ? { height: overrides.height } : {}),
-    },
-    serveUrl,
-    codec: 'h264',
-    outputLocation: outputPath,
-    inputProps,
-    browserExecutable,
-    muted: true,
-  });
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt <= MAX_RENDER_RETRIES; attempt++) {
+    try {
+      await renderMedia({
+        composition: {
+          ...composition,
+          durationInFrames: props.durationInFrames,
+          ...(overrides?.width ? { width: overrides.width } : {}),
+          ...(overrides?.height ? { height: overrides.height } : {}),
+        },
+        serveUrl,
+        codec: 'h264',
+        outputLocation: outputPath,
+        inputProps,
+        browserExecutable,
+        chromiumOptions,
+        muted: true,
+      });
+      return;
+    } catch (err: any) {
+      lastError = err;
+      const isTargetClosed = err?.message?.includes('Target closed');
+      if (!isTargetClosed || attempt === MAX_RENDER_RETRIES) throw err;
+      console.warn(`[remotion] Target closed on attempt ${attempt + 1}, retrying...`);
+    }
+  }
+  throw lastError;
 }
 
 export async function renderIntroClip(outputPath: string, config: IntroConfig): Promise<void> {
