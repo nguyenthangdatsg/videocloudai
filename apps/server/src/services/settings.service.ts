@@ -18,7 +18,7 @@ export const SETTING_DEFAULTS: Record<string, string> = {
   llm_provider: 'gemini',
   gemini_model: 'gemini-2.5-flash',
   groq_api_key: '',
-  groq_model: 'llama-3.3-70b-versatile',
+  groq_model: 'openai/gpt-oss-120b',
   anthropic_api_key: '',
   anthropic_model: 'claude-sonnet-4-6',
   huggingface_api_key: '',

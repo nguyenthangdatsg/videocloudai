@@ -393,11 +393,10 @@ export function Settings() {
                       </div>
                       <div>
                         <label className="text-xs text-c-muted mb-1.5 block">{t('settings.groqModel')}</label>
-                        <select className="input" value={form['groq_model'] ?? 'llama-3.3-70b-versatile'} onChange={(e) => set('groq_model', e.target.value)}>
-                          <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile — {t('settings.groqModelMostCapable')}</option>
-                          <option value="llama-3.1-8b-instant">llama-3.1-8b-instant — {t('settings.groqModelFastest')}</option>
-                          <option value="gemma2-9b-it">gemma2-9b-it — {t('settings.groqModelBalanced')}</option>
-                          <option value="mixtral-8x7b-32768">mixtral-8x7b-32768 — {t('settings.groqModelLongContext')}</option>
+                        <select className="input" value={form['groq_model'] ?? 'openai/gpt-oss-120b'} onChange={(e) => set('groq_model', e.target.value)}>
+                          <option value="openai/gpt-oss-120b">openai/gpt-oss-120b — {t('settings.groqModelMostCapable')}</option>
+                          <option value="openai/gpt-oss-20b">openai/gpt-oss-20b — {t('settings.groqModelFastest')}</option>
+                          <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b — {t('settings.groqModelBalanced')}</option>
                         </select>
                       </div>
                       <div className="flex items-center gap-3">

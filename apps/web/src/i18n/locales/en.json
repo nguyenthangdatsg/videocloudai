@@ -905,7 +905,6 @@
     "groqModelMostCapable": "Most capable",
     "groqModelFastest": "Fastest",
     "groqModelBalanced": "Balanced",
-    "groqModelLongContext": "Long context",
     "introOutro": "Intro & Outro (Remotion)",
     "introEnabled": "Enable Intro",
     "introEnabledHint": "Prepend an animated intro card to the assembled video",

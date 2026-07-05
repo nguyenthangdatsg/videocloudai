@@ -905,7 +905,6 @@
     "groqModelMostCapable": "Mạnh nhất",
     "groqModelFastest": "Nhanh nhất",
     "groqModelBalanced": "Cân bằng",
-    "groqModelLongContext": "Ngữ cảnh dài",
     "introOutro": "Intro & Outro (Remotion)",
     "introEnabled": "Bật Intro",
     "introEnabledHint": "Thêm đoạn intro hoạt hình vào đầu video",

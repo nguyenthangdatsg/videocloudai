@@ -113,7 +113,7 @@ async function geminiComplete(req: LlmRequest, s: ReturnType<typeof getSettings>
 
 function groqComplete(req: LlmRequest, s: ReturnType<typeof getSettings>): Promise<string> {
   const apiKey = s.get('groq_api_key');
-  const model = s.get('groq_model') || 'llama-3.3-70b-versatile';
+  const model = s.get('groq_model') || 'openai/gpt-oss-120b';
   if (!apiKey) throw new Error('Groq API key not configured');
 
   return openaiCompatible({
