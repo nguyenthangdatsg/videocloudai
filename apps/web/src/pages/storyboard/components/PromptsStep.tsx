@@ -161,7 +161,14 @@ export function PromptsStep() {
                 <span className="text-[10px] font-mono text-cyan-300/70">[{p.timestamp}]</span>
                 <span className="text-[10px] text-c-dim italic truncate">{p.text}</span>
                 <button
-                  onClick={() => setEditingPromptIdx(editingPromptIdx === i ? null : i)}
+                  onClick={() => {
+                    if (editingPromptIdx === i) {
+                      setEditingPromptIdx(null);
+                      saveProject({ prompts });
+                    } else {
+                      setEditingPromptIdx(i);
+                    }
+                  }}
                   className="ml-auto p-1 text-c-muted hover:text-cyan-400 shrink-0"
                 >
                   <Pencil className="w-3 h-3" />
@@ -174,6 +181,19 @@ export function PromptsStep() {
                     onChange={(e) => {
                       const val = e.target.value;
                       setPrompts((prev) => prev.map((pp, j) => j === i ? { ...pp, prompt: val } : pp));
+                    }}
+                    onBlur={(e) => {
+                      setEditingPromptIdx(null);
+                      const updated = prompts.map((pp, j) => j === i ? { ...pp, prompt: e.target.value } : pp);
+                      saveProject({ prompts: updated });
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        setEditingPromptIdx(null);
+                        const updated = prompts.map((pp, j) => j === i ? { ...pp, prompt: e.currentTarget.value } : pp);
+                        saveProject({ prompts: updated });
+                      }
                     }}
                     rows={4}
                     className="input text-[11px] w-full font-mono resize-y"
