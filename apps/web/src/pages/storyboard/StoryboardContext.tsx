@@ -80,6 +80,7 @@ export interface StoryboardContextValue {
   audioFile: { filename: string; url: string; duration: number } | null;
   transcriptEntries: TranscriptEntry[];
   setTranscriptEntries: React.Dispatch<React.SetStateAction<TranscriptEntry[]>>;
+  handleSplitEntry: (entryIndex: number, maxSec: number) => void;
   voices: { voices: Record<string, VoiceInfo>; languages: Record<string, string> } | undefined;
   handleVoicePreview: () => void;
   handleGenerateAudio: () => void;

@@ -25,6 +25,56 @@ export function parseTimeInput(val: string): number {
   return parseFloat(val) || 0;
 }
 
+/** Split a single transcript entry into sub-entries no longer than maxMs.
+ *  Distributes words proportionally to duration of each slice. */
+export function splitSegment(seg: TranscriptEntry, maxMs: number): TranscriptEntry[] {
+  const duration = seg.endMs - seg.startMs;
+  if (duration <= maxMs) {
+    return [seg];
+  }
+
+  const result: TranscriptEntry[] = [];
+  let currentStart = seg.startMs;
+  const totalDuration = duration;
+  const words = seg.text.trim().split(/\s+/).filter(Boolean);
+
+  if (words.length <= 1) {
+    const mid = Math.round((seg.startMs + seg.endMs) / 2);
+    const part1 = { ...seg, endMs: mid, text: seg.text };
+    const part2 = { ...seg, startMs: mid, text: '' };
+    return [...splitSegment(part1, maxMs), ...splitSegment(part2, maxMs)];
+  }
+
+  let remainingDuration = totalDuration;
+  let wordIdx = 0;
+
+  while (remainingDuration > 0) {
+    const chunkDur = Math.min(maxMs, remainingDuration);
+    const chunkEnd = currentStart + chunkDur;
+
+    const ratio = chunkDur / remainingDuration;
+    const remainingWordsCount = words.length - wordIdx;
+    const chunkWordsCount = Math.max(1, Math.round(ratio * remainingWordsCount));
+
+    const chunkWords = words.slice(wordIdx, Math.min(words.length, wordIdx + chunkWordsCount));
+    wordIdx += chunkWordsCount;
+
+    result.push({
+      index: 0,
+      startTime: '',
+      endTime: '',
+      text: chunkWords.join(' '),
+      startMs: currentStart,
+      endMs: chunkEnd,
+    });
+
+    currentStart = chunkEnd;
+    remainingDuration -= chunkDur;
+  }
+
+  return result;
+}
+
 /** Merge adjacent transcript entries into complete sentences, then split overly long ones.
  *  Step 1: Join entries until sentence-ending punctuation is found (fixes Whisper mid-sentence splits).
  *  Step 2: Split any segment longer than ~2 sentences at internal sentence boundaries,

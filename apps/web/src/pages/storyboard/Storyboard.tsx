@@ -17,7 +17,7 @@ import { useImageGenStore } from '../../store/image-generation';
 import type { GenImage, GenMediaType } from '../../store/image-generation';
 
 import type { WorkflowStep, TranscriptEntry, StagePart } from './types';
-import { mergeToSentences } from './utils';
+import { mergeToSentences, splitSegment, msToTimeStr } from './utils';
 import { StoryboardProvider } from './StoryboardContext';
 import {
   TopicsStep,
@@ -873,6 +873,24 @@ export function Storyboard() {
     }
   };
 
+  const handleSplitEntry = (entryIndex: number, maxSec: number) => {
+    setTranscriptEntries(prev => {
+      const idx = prev.findIndex(e => e.index === entryIndex);
+      if (idx === -1) return prev;
+      const target = prev[idx];
+      const splits = splitSegment(target, maxSec * 1000);
+      const next = [...prev];
+      next.splice(idx, 1, ...splits);
+      for (let i = 0; i < next.length; i++) {
+        next[i].index = i + 1;
+        next[i].startTime = msToTimeStr(next[i].startMs);
+        next[i].endTime = msToTimeStr(next[i].endMs);
+      }
+      saveProject({ transcriptEntries: next });
+      return next;
+    });
+  };
+
   // ── Step 3: Generate Image Prompts ──
   const handleGeneratePrompts = async () => {
     if (!transcriptEntries.length) return;
@@ -1335,6 +1353,7 @@ export function Storyboard() {
     ttsStyle, setTtsStyle,
     voicePreviewLoading, voicePreviewPlaying, generatingAudio,
     audioProgress, audioFile, transcriptEntries, setTranscriptEntries,
+    handleSplitEntry,
     voices, handleVoicePreview, handleGenerateAudio, audioLogRef,
     prompts, setPrompts, generatingPrompts, promptProgress,
     editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, promptLogRef,

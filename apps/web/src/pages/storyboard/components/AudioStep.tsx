@@ -11,6 +11,7 @@ export function AudioStep() {
     voicePreviewLoading, voicePreviewPlaying, handleVoicePreview,
     generatingAudio, audioProgress, handleGenerateAudio,
     audioFile, transcriptEntries, setTranscriptEntries,
+    handleSplitEntry,
     scriptText, setStep, saveProject,
     audioLogRef,
     t,
@@ -260,12 +261,40 @@ export function AudioStep() {
             </button>
           </div>
           <div className="max-h-[250px] overflow-auto divide-y divide-c-border">
-            {transcriptEntries.map((e) => (
-              <div key={e.index} className="px-3 py-1.5 flex gap-3 items-start">
-                <span className="text-[10px] font-mono text-cyan-300/70 shrink-0 w-24">{e.startTime} → {e.endTime}</span>
-                <span className="text-xs text-c-muted">{e.text}</span>
-              </div>
-            ))}
+            {transcriptEntries.map((e) => {
+              const dur = (e.endMs - e.startMs) / 1000;
+              return (
+                <div key={e.index} className="px-3 py-2 flex gap-3 items-center justify-between hover:bg-c-surface/30 transition-colors">
+                  <div className="flex gap-3 items-start flex-1 min-w-0">
+                    <span className="text-[10px] font-mono text-cyan-300/70 shrink-0 w-28 flex items-center gap-1.5">
+                      <span>{e.startTime.split(',')[0]} → {e.endTime.split(',')[0]}</span>
+                      <span className="text-[9px] text-c-dim">({dur.toFixed(1)}s)</span>
+                    </span>
+                    <span className="text-xs text-c-muted leading-relaxed break-words flex-1">{e.text}</span>
+                  </div>
+                  {dur > 3.0 && (
+                    <div className="shrink-0 ml-4 flex items-center gap-1">
+                      <select
+                        onChange={(evt) => {
+                          const val = parseInt(evt.target.value);
+                          if (val) {
+                            handleSplitEntry(e.index, val);
+                          }
+                          evt.target.value = '';
+                        }}
+                        className="input text-[10px] py-0.5 px-1 bg-c-bg border-c-border h-6 pr-6"
+                        defaultValue=""
+                      >
+                        <option value="" disabled>Split...</option>
+                        {[3, 4, 5, 6, 7].map((s) => (
+                          <option key={s} value={s}>{s}s limit</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
