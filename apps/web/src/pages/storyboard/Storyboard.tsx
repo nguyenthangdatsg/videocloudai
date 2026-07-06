@@ -891,6 +891,31 @@ export function Storyboard() {
     });
   };
 
+  const handleAutoSeparate = () => {
+    setTranscriptEntries(prev => {
+      let changed = false;
+      const next: TranscriptEntry[] = [];
+      for (const e of prev) {
+        const dur = (e.endMs - e.startMs) / 1000;
+        if (dur / 3 >= 2) {
+          const splits = splitSegment(e, 3000);
+          next.push(...splits);
+          changed = true;
+        } else {
+          next.push(e);
+        }
+      }
+      if (!changed) return prev;
+      for (let i = 0; i < next.length; i++) {
+        next[i].index = i + 1;
+        next[i].startTime = msToTimeStr(next[i].startMs);
+        next[i].endTime = msToTimeStr(next[i].endMs);
+      }
+      saveProject({ transcriptEntries: next });
+      return next;
+    });
+  };
+
   // ── Step 3: Generate Image Prompts ──
   const handleGeneratePrompts = async () => {
     if (!transcriptEntries.length) return;
@@ -1354,6 +1379,7 @@ export function Storyboard() {
     voicePreviewLoading, voicePreviewPlaying, generatingAudio,
     audioProgress, audioFile, transcriptEntries, setTranscriptEntries,
     handleSplitEntry,
+    handleAutoSeparate,
     voices, handleVoicePreview, handleGenerateAudio, audioLogRef,
     prompts, setPrompts, generatingPrompts, promptProgress,
     editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, promptLogRef,

@@ -81,6 +81,7 @@ export interface StoryboardContextValue {
   transcriptEntries: TranscriptEntry[];
   setTranscriptEntries: React.Dispatch<React.SetStateAction<TranscriptEntry[]>>;
   handleSplitEntry: (entryIndex: number, maxSec: number) => void;
+  handleAutoSeparate: () => void;
   voices: { voices: Record<string, VoiceInfo>; languages: Record<string, string> } | undefined;
   handleVoicePreview: () => void;
   handleGenerateAudio: () => void;

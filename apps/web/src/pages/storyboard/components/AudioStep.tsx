@@ -12,6 +12,7 @@ export function AudioStep() {
     generatingAudio, audioProgress, handleGenerateAudio,
     audioFile, transcriptEntries, setTranscriptEntries,
     handleSplitEntry,
+    handleAutoSeparate,
     scriptText, setStep, saveProject,
     audioLogRef,
     t,
@@ -254,11 +255,20 @@ export function AudioStep() {
       {/* Transcript segments */}
       {transcriptEntries.length > 0 && (
         <div className="border border-c-border rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-c-border bg-c-surface flex items-center justify-between">
-            <span className="text-xs font-medium text-c-text">{transcriptEntries.length} {t('storyboard.segments')}</span>
-            <button onClick={() => { setStep('prompts'); saveProject({ currentStep: 'prompts' }); }} className="btn-primary text-xs flex items-center gap-1">
-              {t('storyboard.generatePrompts')} <ArrowRight className="w-3 h-3" />
-            </button>
+          <div className="px-3 py-2 border-b border-c-border bg-c-surface flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-c-text shrink-0">{transcriptEntries.length} {t('storyboard.segments')}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleAutoSeparate}
+                className="btn border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 text-[10px] px-2.5 py-1 rounded-lg h-7 font-medium transition-colors"
+                title="Automatically splits any segment >= 6s into 3s pieces"
+              >
+                Auto Separate (&gt;= 6s)
+              </button>
+              <button onClick={() => { setStep('prompts'); saveProject({ currentStep: 'prompts' }); }} className="btn-primary text-xs flex items-center gap-1 h-7">
+                {t('storyboard.generatePrompts')} <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
           </div>
           <div className="max-h-[250px] overflow-auto divide-y divide-c-border">
             {transcriptEntries.map((e) => {
