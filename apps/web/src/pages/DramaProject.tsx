@@ -763,6 +763,8 @@ function CharactersTab({ characters, onExtract, isExtracting, onAdd, onDelete, o
 function CharacterEditPanel({ character, onSave, onClose }: { character: DramaCharacter; onSave: (data: Partial<DramaCharacter>) => void; onClose: () => void }) {
   const { t } = useTranslation();
   const [form, setForm] = useState({
+    name: character.name || '',
+    role: character.role || 'extra',
     physicalDescription: character.physicalDescription || '', personality: character.personality || '',
     wardrobeDefault: character.wardrobeDefault || '', backstory: character.backstory || '',
     age: character.age || '', gender: character.gender || '',
@@ -770,6 +772,21 @@ function CharacterEditPanel({ character, onSave, onClose }: { character: DramaCh
 
   return (
     <div className="mt-3 pt-3 border-t border-c-border space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-c-muted mb-1">{t('drama.characterName')}</label>
+          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="input text-xs rounded-lg py-1.5" />
+        </div>
+        <div>
+          <label className="block text-xs text-c-muted mb-1">{t('drama.characterRole')}</label>
+          <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as any }))} className="input text-xs rounded-lg py-1.5 w-full pr-8">
+            <option value="protagonist">{t('drama.protagonist')}</option>
+            <option value="antagonist">{t('drama.antagonist')}</option>
+            <option value="supporting">{t('drama.supporting')}</option>
+            <option value="extra">{t('drama.extra')}</option>
+          </select>
+        </div>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs text-c-muted mb-1">{t('drama.age')}</label>
