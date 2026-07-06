@@ -7,9 +7,10 @@ export interface SceneClipProps {
   imageSrc: string;       // absolute path or URL to the image
   motion: MotionEffect;
   durationInFrames: number;
+  bgColor?: string;
 }
 
-export function SceneClip({ imageSrc, motion }: SceneClipProps) {
+export function SceneClip({ imageSrc, motion, bgColor }: SceneClipProps) {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
@@ -52,7 +53,7 @@ export function SceneClip({ imageSrc, motion }: SceneClipProps) {
   }
 
   return (
-    <AbsoluteFill style={{ backgroundColor: 'black' }}>
+    <AbsoluteFill style={{ backgroundColor: bgColor || 'black' }}>
       <AbsoluteFill
         style={{
           display: 'flex',

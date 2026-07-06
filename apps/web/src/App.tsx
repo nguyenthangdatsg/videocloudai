@@ -12,12 +12,13 @@ import { Settings } from './pages/Settings';
 import { TextToSpeech } from './pages/TextToSpeech';
 import { Transcribe } from './pages/Transcribe';
 import { ImageGenerator } from './pages/ImageGenerator';
-import { Storyboard } from './pages/Storyboard';
+import { Storyboard } from './pages/storyboard';
 import { StoryboardList } from './pages/StoryboardList';
 import { DramaList } from './pages/DramaList';
 import { DramaProjectPage } from './pages/DramaProject';
 import { useSSE } from './hooks/useSSE';
 import { ToastContainer } from './components/ui/ToastContainer';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
 function AppShell() {
   useSSE();
@@ -40,7 +41,7 @@ function AppShell() {
             <Route path="/transcribe" element={<Transcribe />} />
             <Route path="/image" element={<ImageGenerator />} />
             <Route path="/storyboard" element={<StoryboardList />} />
-            <Route path="/storyboard/:id" element={<Storyboard />} />
+            <Route path="/storyboard/:id" element={<ErrorBoundary><Storyboard /></ErrorBoundary>} />
             <Route path="/drama" element={<DramaList />} />
             <Route path="/drama/:id" element={<DramaProjectPage />} />
             <Route path="/settings" element={<Settings />} />

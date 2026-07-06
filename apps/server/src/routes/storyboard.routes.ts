@@ -14,6 +14,20 @@ import type { SceneClipConfig } from '../remotion/types';
 
 const execFileAsync = promisify(execFile);
 
+/** Safely parse JSON from LLM output, handling control characters that break JSON.parse. */
+function safeJsonParse(raw: string): unknown {
+  try { return JSON.parse(raw); } catch { /* fallback below */ }
+  // Replace control chars inside string values: newlines→\n, tabs→\t, others→removed
+  const fixed = raw.replace(/"(?:[^"\\]|\\.)*"/gs, (m) =>
+    m.replace(/[\x00-\x1F]/g, (c) =>
+      c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : ''
+    )
+  );
+  try { return JSON.parse(fixed); } catch { /* fallback below */ }
+  // Last resort: strip ALL control chars (loses newlines in values but parses)
+  return JSON.parse(raw.replace(/[\x00-\x1F]/g, ' '));
+}
+
 /** Resolve a full-featured FFmpeg binary (not Remotion's limited build). */
 async function resolveFullFfmpeg(): Promise<string> {
   // 1. User-configured path
@@ -938,7 +952,7 @@ IMPORTANT:
       // Parse JSON array from response
       const match = raw.match(/\[[\s\S]*\]/);
       if (!match) throw new Error('Could not parse topics');
-      const topics = JSON.parse(match[0]) as string[];
+      const topics = safeJsonParse(match[0]) as string[];
       res.json({ topics });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -1489,7 +1503,7 @@ ${script}`,
         maxTokens: 2000,
       });
 
-      // Parse JSON from response — strip markdown fences if present
+      // Parse JSON from response — strip markdown fences and control chars
       console.log('[metadata] raw LLM response:', raw.slice(0, 500));
       const cleaned = raw.replace(/```(?:json)?\s*/gi, '').replace(/```\s*/g, '').trim();
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -1505,11 +1519,11 @@ ${script}`,
         const retryClean = retry.replace(/```(?:json)?\s*/gi, '').replace(/```\s*/g, '').trim();
         const retryMatch = retryClean.match(/\{[\s\S]*\}/);
         if (!retryMatch) throw new Error('Could not parse metadata JSON after retry');
-        const metadata = normalizeMetadata(JSON.parse(retryMatch[0]));
+        const metadata = normalizeMetadata(safeJsonParse(retryMatch[0]) as Record<string, unknown>);
         res.json({ metadata });
         return;
       }
-      const metadata = normalizeMetadata(JSON.parse(jsonMatch[0]));
+      const metadata = normalizeMetadata(safeJsonParse(jsonMatch[0]) as Record<string, unknown>);
       res.json({ metadata });
     } catch (err) {
       console.error('[metadata] error:', (err as Error).message, (err as Error).stack?.split('\n')[1]);
@@ -1631,7 +1645,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
 
   // Assemble: combine images + audio into a video
   router.post('/assemble', async (req: Request, res: Response) => {
-    const { segments, audioFilename, aspectRatio, bgMusicFilename, voiceVolume, musicVolume, outputName, speed } = req.body as {
+    const { segments, audioFilename, aspectRatio, bgMusicFilename, voiceVolume, musicVolume, outputName, speed, bgColor } = req.body as {
       segments: StoryboardSegment[];
       audioFilename: string;
       aspectRatio?: string;
@@ -1640,6 +1654,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       musicVolume?: number;
       outputName?: string;
       speed?: number;
+      bgColor?: string;
     };
 
     if (!segments?.length || !audioFilename) {
@@ -1723,11 +1738,22 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
 
       const videoDir = path.resolve(cacheDir, 'videos');
 
+      let padColor = 'black';
+      if (bgColor) {
+        if (/^#[0-9a-fA-F]{6}$/.test(bgColor)) {
+          padColor = '0x' + bgColor.substring(1);
+        } else if (/^[0-9a-fA-F]{6}$/.test(bgColor)) {
+          padColor = '0x' + bgColor;
+        } else if (/^[a-zA-Z]+$/.test(bgColor)) {
+          padColor = bgColor;
+        }
+      }
+
       // Helper: build static filter for FFmpeg (no motion)
       function buildStaticFilter(outW: number, outH: number, fps: number): string {
         return [
           `[0:v]scale=w=${outW}:h=${outH}:force_original_aspect_ratio=decrease[scaled]`,
-          `[scaled]pad=w=${outW}:h=${outH}:x=(ow-iw)/2:y=(oh-ih)/2:color=black[padded]`,
+          `[scaled]pad=w=${outW}:h=${outH}:x=(ow-iw)/2:y=(oh-ih)/2:color=${padColor}[padded]`,
           `[padded]fps=${fps},setsar=1/1,format=yuv420p[out]`,
         ].join(';');
       }
@@ -1755,7 +1781,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
           // Scale, pad, trim to target duration, strip audio
           const filterComplex = [
             `[0:v]scale=w=${w}:h=${h}:force_original_aspect_ratio=decrease[scaled]`,
-            `[scaled]pad=w=${w}:h=${h}:x=(ow-iw)/2:y=(oh-ih)/2:color=black[padded]`,
+            `[scaled]pad=w=${w}:h=${h}:x=(ow-iw)/2:y=(oh-ih)/2:color=${padColor}[padded]`,
             speedFactor !== 1.0 ? `[padded]setpts=PTS/${speedFactor}[sped]` : `[padded]null[sped]`,
             `[sped]fps=${fps},setsar=1/1,format=yuv420p[out]`,
           ].join(';');
@@ -1800,11 +1826,14 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
             imageSrc: dataUri,
             motion: seg.motion,
             durationInFrames: totalFrames,
+            bgColor: bgColor || 'black',
           };
           await renderSceneClip(segOut, sceneConfig, w, h);
 
           // Conform Remotion output to ensure identical properties (pixel format, timescale, SAR)
           const tmpOut = segOut + '.conform.mp4';
+          // Timeout scales with duration: 30s base + 10s per second of video
+          const conformTimeout = Math.max(30_000, Math.ceil(duration) * 10_000);
           await execFileAsync(ffmpeg, [
             '-i', segOut,
             '-c:v', 'libx264',
@@ -1816,7 +1845,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
             '-an',
             '-y',
             tmpOut,
-          ], { timeout: 30_000 });
+          ], { timeout: conformTimeout });
           fs.renameSync(tmpOut, segOut);
         } else {
           // Use FFmpeg for static clips — simple scale+pad, much faster
@@ -2032,12 +2061,12 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       `INSERT INTO storyboards (id, name, template_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
       [id, name.trim(), finalTemplateId, now, now],
     );
-    res.status(201).json({ id, name: name.trim(), templateId: finalTemplateId, currentStep: 'topics', status: 'draft', speed: 1.0, createdAt: now, updatedAt: now });
+    res.status(201).json({ id, name: name.trim(), templateId: finalTemplateId, currentStep: 'topics', status: 'draft', speed: 1.0, bgColor: 'black', createdAt: now, updatedAt: now });
   });
 
   router.get('/projects', (_req: Request, res: Response) => {
     const rows = dbAll<Record<string, unknown>>(
-      `SELECT s.id, s.name, s.template_id, s.current_step, s.topic, s.status, s.audio_duration, s.result_filename, s.segments, s.metadata_desc, s.metadata_tags, s.created_at, s.updated_at, s.thumbnail_url, s.thumbnail_prompt, s.speed,
+      `SELECT s.id, s.name, s.template_id, s.current_step, s.topic, s.status, s.audio_duration, s.result_filename, s.segments, s.metadata_desc, s.metadata_tags, s.created_at, s.updated_at, s.thumbnail_url, s.thumbnail_prompt, s.speed, s.bg_color,
               t.name as template_name, t.niche as template_niche, t.color as template_color,
               t.youtube_url as template_youtube_url, t.memo as template_memo
        FROM storyboards s LEFT JOIN storyboard_templates t ON s.template_id = t.id
@@ -2055,6 +2084,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         status: r.status, audioDuration: r.audio_duration, resultFilename: r.result_filename,
         thumbnailUrl: (r.thumbnail_url as string) || thumbnailUrl,
         thumbnailPrompt: (r.thumbnail_prompt as string) || '',
+        bgColor: (r.bg_color as string) || 'black',
         speed: typeof r.speed === 'number' ? r.speed : 1.0,
         templateName: r.template_name, templateNiche: r.template_niche, templateColor: r.template_color,
         templateYoutubeUrl: r.template_youtube_url || '', templateMemo: r.template_memo || '',
@@ -2088,6 +2118,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       thumbnailUrl: row.thumbnail_url || '',
       thumbnailPrompt: row.thumbnail_prompt || '',
       thumbnailBgColor: row.thumbnail_bg_color || '',
+      bgColor: row.bg_color || 'black',
       speed: typeof row.speed === 'number' ? row.speed : 1.0,
     });
   });
@@ -2103,6 +2134,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       imagePromptPrompt: 'image_prompt_prompt', metadataPrompt: 'metadata_prompt', status: 'status',
       bgMusicFilename: 'bg_music_filename', voiceVolume: 'voice_volume', musicVolume: 'music_volume',
       thumbnailUrl: 'thumbnail_url', thumbnailPrompt: 'thumbnail_prompt', thumbnailBgColor: 'thumbnail_bg_color',
+      bgColor: 'bg_color',
       speed: 'speed',
     };
     const jsonCols: Record<string, string> = {

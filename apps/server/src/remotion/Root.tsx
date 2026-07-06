@@ -54,6 +54,7 @@ function RemotionRoot() {
           imageSrc: '',
           motion: 'static',
           durationInFrames: 120,
+          bgColor: 'black',
         } satisfies SceneClipConfig}
       />
     </>

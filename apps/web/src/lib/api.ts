@@ -553,13 +553,15 @@ export const storyboardApi = {
     api.post<{ segments: StoryboardSegment[] }>('/storyboard/match', data).then((r) => r.data.segments),
 
   assemble: async (
-    data: { segments: StoryboardSegment[]; audioFilename: string; aspectRatio?: string; bgMusicFilename?: string; voiceVolume?: number; musicVolume?: number; outputName?: string; speed?: number },
+    data: { segments: StoryboardSegment[]; audioFilename: string; aspectRatio?: string; bgMusicFilename?: string; voiceVolume?: number; musicVolume?: number; outputName?: string; speed?: number; bgColor?: string },
     onProgress: (step: string, detail?: string) => void,
+    signal?: AbortSignal,
   ): Promise<{ filename: string; url: string; sizeKB: number; duration: number }> => {
     const res = await fetch('/api/storyboard/assemble', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
+      signal,
     });
     let result: { filename: string; url: string; sizeKB: number; duration: number } | null = null;
 
@@ -643,6 +645,8 @@ export interface StoryboardProject extends StoryboardProjectSummary {
   resultUrl?: string; resultSizeKB?: number;
   bgMusicFilename?: string; voiceVolume?: number; musicVolume?: number;
   topicsPrompt?: string; scriptPrompt?: string; imagePromptPrompt?: string; metadataPrompt?: string;
+  thumbnailBgColor?: string;
+  bgColor?: string;
   stageParts: Record<string, Array<{ label: string; content: string }>>;
 }
 

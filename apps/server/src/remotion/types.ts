@@ -4,6 +4,7 @@ export interface SceneClipConfig {
   imageSrc: string;
   motion: MotionEffect;
   durationInFrames: number;
+  bgColor?: string;
 }
 
 export interface IntroConfig {
