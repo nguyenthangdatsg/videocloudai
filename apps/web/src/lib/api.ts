@@ -489,6 +489,7 @@ export interface StoryboardPromptItem {
   timestamp: string;
   text: string;
   prompt: string;
+  model?: string;
 }
 
 export const storyboardApi = {

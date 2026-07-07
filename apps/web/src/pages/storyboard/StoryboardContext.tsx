@@ -81,7 +81,11 @@ export interface StoryboardContextValue {
   transcriptEntries: TranscriptEntry[];
   setTranscriptEntries: React.Dispatch<React.SetStateAction<TranscriptEntry[]>>;
   handleSplitEntry: (entryIndex: number, maxSec: number) => void;
-  handleAutoSeparate: () => void;
+  handleMergeEntry: (entryIndex: number, direction: 'prev' | 'next') => void;
+  handleSplitAtCursor: (entryIndex: number, cursorPos: number, currentText?: string) => void;
+  handleUpdateEntryText: (entryIndex: number, text: string) => void;
+  handleAutoSeparate: (maxSec?: number) => void;
+  handleRetranscribe: () => void;
   voices: { voices: Record<string, VoiceInfo>; languages: Record<string, string> } | undefined;
   handleVoicePreview: () => void;
   handleGenerateAudio: () => void;
@@ -95,6 +99,8 @@ export interface StoryboardContextValue {
   editingPromptIdx: number | null;
   setEditingPromptIdx: (v: number | null) => void;
   handleGeneratePrompts: () => void;
+  handleRegenPrompt: (idx: number) => void;
+  regenPromptIdx: number | null;
   promptLogRef: React.RefObject<HTMLDivElement>;
   linkedTemplate: { visualStyle?: string } | undefined;
 

@@ -647,7 +647,7 @@ export function Storyboard() {
           if (p.prompts?.length && p.generatedImages.length !== p.prompts.length) {
             setGeneratedImages([]);
           } else {
-            setGeneratedImages(p.generatedImages.map((img) => ({ ...img, status: (img.status as 'done' | 'pending' | 'generating' | 'error') })));
+            setGeneratedImages(p.generatedImages.map((img) => ({ ...img, status: img.status === 'generating' ? 'pending' : (img.status as 'done' | 'pending' | 'error') })));
           }
         }
         if (p.segments?.length) setSegments(p.segments.map((s) => ({ ...s, motion: s.motion || 'static' })));
@@ -850,12 +850,11 @@ export function Storyboard() {
       saveProject({ voice, audioFilename: audio.filename, audioDuration: audio.duration, transcriptEntries: mergedEntries, currentStep: 'audio' });
 
       if (segments.length > 0 && entries.length > 0) {
-        const doneImages = generatedImages.filter((img) => img.status === 'done' && img.filename && img.url);
-        if (doneImages.length > 0) {
+        if (generatedImages.length > 0) {
           try {
             const matched = await storyboardApi.match({
               segments: entries.map((e) => ({ startMs: e.startMs, endMs: e.endMs, text: e.text })),
-              images: doneImages.map((img) => ({ filename: img.filename, url: img.url, timestamp: img.timestamp })),
+              images: generatedImages.map((img) => ({ filename: img.filename || '', url: img.url || '', timestamp: img.timestamp })),
             });
             const synced = matched.map((seg, i) => ({
               ...seg,
@@ -891,14 +890,91 @@ export function Storyboard() {
     });
   };
 
-  const handleAutoSeparate = () => {
+  const handleMergeEntry = (entryIndex: number, direction: 'prev' | 'next') => {
+    setTranscriptEntries(prev => {
+      const idx = prev.findIndex(e => e.index === entryIndex);
+      if (idx === -1) return prev;
+      const targetIdx = direction === 'prev' ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+      const keptIdx = direction === 'prev' ? targetIdx : idx;
+      const removedIdx = direction === 'prev' ? idx : targetIdx;
+      const merged = {
+        ...prev[keptIdx],
+        text: prev[keptIdx].text + ' ' + prev[removedIdx].text,
+        startMs: Math.min(prev[keptIdx].startMs, prev[removedIdx].startMs),
+        endMs: Math.max(prev[keptIdx].endMs, prev[removedIdx].endMs),
+      };
+      const next = prev.filter((_, i) => i !== removedIdx);
+      next[keptIdx] = merged;
+      for (let i = 0; i < next.length; i++) {
+        next[i] = { ...next[i], index: i + 1 };
+        next[i].startTime = msToTimeStr(next[i].startMs);
+        next[i].endTime = msToTimeStr(next[i].endMs);
+      }
+      saveProject({ transcriptEntries: next });
+      return next;
+    });
+  };
+
+  const handleSplitAtCursor = (entryIndex: number, cursorPos: number, currentText?: string) => {
+    setTranscriptEntries(prev => {
+      const idx = prev.findIndex(e => e.index === entryIndex);
+      if (idx === -1) return prev;
+      const target = prev[idx];
+      const text = currentText ?? target.text;
+      const textBefore = text.slice(0, cursorPos).trim();
+      const textAfter = text.slice(cursorPos).trim();
+      if (!textBefore || !textAfter) return prev;
+      const totalMs = target.endMs - target.startMs;
+      const ratio = textBefore.length / text.length;
+      const splitMs = Math.round(target.startMs + totalMs * ratio);
+      const next = [...prev];
+      next.splice(idx, 1, {
+        ...target, text: textBefore, endMs: splitMs,
+      }, {
+        ...target, text: textAfter, startMs: splitMs,
+      });
+      for (let i = 0; i < next.length; i++) {
+        next[i].index = i + 1;
+        next[i].startTime = msToTimeStr(next[i].startMs);
+        next[i].endTime = msToTimeStr(next[i].endMs);
+      }
+      saveProject({ transcriptEntries: next });
+      return next;
+    });
+  };
+
+  const handleUpdateEntryText = (entryIndex: number, text: string) => {
+    setTranscriptEntries(prev => {
+      const next = prev.map(e => e.index === entryIndex ? { ...e, text } : e);
+      saveProject({ transcriptEntries: next });
+      return next;
+    });
+  };
+
+  const handleRetranscribe = () => {
+    setTranscriptEntries(prev => {
+      // Flatten all entries into one continuous block, then re-run smart segmentation
+      const flat: TranscriptEntry[] = prev.map((e, i) => ({ ...e, index: i + 1 }));
+      const result = mergeToSentences(flat);
+      saveProject({ transcriptEntries: result });
+      return result;
+    });
+  };
+
+  const handleAutoSeparate = (maxSec = 3) => {
+    const maxMs = maxSec * 1000;
     setTranscriptEntries(prev => {
       let changed = false;
       const next: TranscriptEntry[] = [];
       for (const e of prev) {
-        const dur = (e.endMs - e.startMs) / 1000;
-        if (dur / 3 >= 2) {
-          const splits = splitSegment(e, 3000);
+        const dur = e.endMs - e.startMs;
+        const remainder = dur % maxMs;
+        // Only split if remainder >= 2s, otherwise the last piece would be too short
+        if (remainder >= 2000 ? dur > maxMs : dur > maxMs + maxMs) {
+          // If remainder < 2s, use fewer splits so no piece is under maxSec
+          const splitMs = remainder >= 2000 ? maxMs : Math.ceil(dur / Math.floor(dur / maxMs));
+          const splits = splitSegment(e, splitMs);
           next.push(...splits);
           changed = true;
         } else {
@@ -947,6 +1023,28 @@ export function Storyboard() {
       setError((err as Error).message);
     } finally {
       setGeneratingPrompts(false);
+    }
+  };
+
+  const [regenPromptIdx, setRegenPromptIdx] = useState<number | null>(null);
+  const handleRegenPrompt = async (idx: number) => {
+    const p = prompts[idx];
+    if (!p) return;
+    setRegenPromptIdx(idx);
+    try {
+      const result = await storyboardApi.generatePrompts(
+        { segments: [{ timestamp: p.timestamp, text: p.text }], styleTemplate: imagePromptPrompt.trim() || undefined, visualStyle: linkedTemplate?.visualStyle || undefined, aspectRatio },
+        () => {},
+      );
+      if (result.length > 0 && result[0].prompt) {
+        const updated = prompts.map((pp, j) => j === idx ? { ...pp, prompt: result[0].prompt } : pp);
+        setPrompts(updated);
+        saveProject({ prompts: updated });
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRegenPromptIdx(null);
     }
   };
 
@@ -1139,14 +1237,13 @@ export function Storyboard() {
 
   // ── Step 5: Auto-match to timeline ──
   const handleBuildTimeline = async () => {
-    const doneImages = generatedImages.filter((img) => img.status === 'done' && img.filename && img.url);
-    if (!doneImages.length) return;
+    if (!generatedImages.length) return;
     setError(null);
 
     try {
       let segSource: Array<{ startMs: number; endMs: number; text: string }>;
 
-      if (doneImages.length > transcriptEntries.length && prompts.length >= doneImages.length) {
+      if (generatedImages.length > transcriptEntries.length && prompts.length >= generatedImages.length) {
         const audioDurationMs = (audioFile?.duration || 0) * 1000;
         segSource = prompts.map((p, i) => {
           const parts = p.timestamp.split(':').map(Number);
@@ -1166,9 +1263,9 @@ export function Storyboard() {
       } else if (transcriptEntries.length > 0) {
         segSource = transcriptEntries.map((e) => ({ startMs: e.startMs, endMs: e.endMs, text: e.text }));
       } else {
-        const totalMs = (audioFile?.duration || doneImages.length * 5) * 1000;
-        const stepMs = totalMs / doneImages.length;
-        segSource = doneImages.map((_, i) => ({
+        const totalMs = (audioFile?.duration || generatedImages.length * 5) * 1000;
+        const stepMs = totalMs / generatedImages.length;
+        segSource = generatedImages.map((_, i) => ({
           startMs: Math.round(i * stepMs),
           endMs: Math.round((i + 1) * stepMs),
           text: prompts[i]?.text || '',
@@ -1192,10 +1289,10 @@ export function Storyboard() {
 
       const matched = await storyboardApi.match({
         segments: segSource,
-        images: doneImages.map((img) => {
+        images: generatedImages.map((img) => {
           const isVideo = img.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(img.filename || '');
           return {
-            filename: img.filename, url: img.url, timestamp: img.timestamp,
+            filename: img.filename || '', url: img.url || '', timestamp: img.timestamp,
             mediaType: isVideo ? 'video' as const : img.mediaType,
             videoFilename: isVideo ? img.filename : undefined,
             videoUrl: isVideo ? img.url : undefined,
@@ -1379,10 +1476,13 @@ export function Storyboard() {
     voicePreviewLoading, voicePreviewPlaying, generatingAudio,
     audioProgress, audioFile, transcriptEntries, setTranscriptEntries,
     handleSplitEntry,
-    handleAutoSeparate,
+    handleMergeEntry,
+    handleSplitAtCursor,
+    handleUpdateEntryText,
+    handleAutoSeparate, handleRetranscribe,
     voices, handleVoicePreview, handleGenerateAudio, audioLogRef,
     prompts, setPrompts, generatingPrompts, promptProgress,
-    editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, promptLogRef,
+    editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, handleRegenPrompt, regenPromptIdx, promptLogRef,
     linkedTemplate: linkedTemplate as { visualStyle?: string } | undefined,
     generatedImages, setGeneratedImages, generatingImages, imageProgress,
     provider, setProvider, imageModel, setImageModel, aspectRatio, setAspectRatio,

@@ -75,14 +75,81 @@ export function splitSegment(seg: TranscriptEntry, maxMs: number): TranscriptEnt
   return result;
 }
 
+// Transition words/phrases that signal a natural break point
+const TRANSITION_RE = /^(however|but|then|so|yet|still|also|meanwhile|furthermore|moreover|therefore|thus|hence|instead|nevertheless|nonetheless|otherwise|consequently|additionally|finally|next|first|second|third|lastly|in fact|for example|for instance|on the other hand|in contrast|as a result|in addition|at the same time|after that|because of this|that's why|and then|which means|this means|while|although|even though|despite|in other words|not only)\b/i;
+
+/** Check if text starts with a transition word/phrase */
+function startsWithTransition(text: string): boolean {
+  return TRANSITION_RE.test(text.trim());
+}
+
+/** Find the best split point in text, preferring natural boundaries.
+ *  Priority: sentence end > semicolon/colon > transition word after comma > comma > dash > space
+ *  Returns character index of the split point, or -1 if no good split found. */
+function findBestSplitPoint(text: string, idealPos: number, minPos: number, maxPos: number): number {
+  // Search window around idealPos
+  const windowStart = Math.max(minPos, idealPos - Math.floor(text.length * 0.3));
+  const windowEnd = Math.min(maxPos, idealPos + Math.floor(text.length * 0.3));
+  const region = text.substring(windowStart, windowEnd);
+
+  type Candidate = { pos: number; priority: number };
+  const candidates: Candidate[] = [];
+
+  // Find sentence endings (.!?)
+  const sentenceRe = /[.!?…。！？]\s+/g;
+  let m: RegExpExecArray | null;
+  while ((m = sentenceRe.exec(region)) !== null) {
+    candidates.push({ pos: windowStart + m.index + m[0].length, priority: 1 });
+  }
+
+  // Find semicolons/colons
+  const semiRe = /[;:]\s+/g;
+  while ((m = semiRe.exec(region)) !== null) {
+    candidates.push({ pos: windowStart + m.index + m[0].length, priority: 2 });
+  }
+
+  // Find commas followed by transition words
+  const commaTransRe = /,\s+/g;
+  while ((m = commaTransRe.exec(region)) !== null) {
+    const afterComma = text.substring(windowStart + m.index + m[0].length);
+    if (startsWithTransition(afterComma)) {
+      candidates.push({ pos: windowStart + m.index + m[0].length, priority: 3 });
+    }
+  }
+
+  // Find regular commas
+  const commaRe = /,\s+/g;
+  while ((m = commaRe.exec(region)) !== null) {
+    candidates.push({ pos: windowStart + m.index + m[0].length, priority: 4 });
+  }
+
+  // Find dashes
+  const dashRe = /\s+[-–—]\s+/g;
+  while ((m = dashRe.exec(region)) !== null) {
+    candidates.push({ pos: windowStart + m.index + m[0].length, priority: 5 });
+  }
+
+  if (candidates.length === 0) return -1;
+
+  // Pick the highest priority (lowest number), breaking ties by closest to idealPos
+  candidates.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return Math.abs(a.pos - idealPos) - Math.abs(b.pos - idealPos);
+  });
+
+  return candidates[0].pos;
+}
+
 /** Merge adjacent transcript entries into complete sentences, then split overly long ones.
- *  Step 1: Join entries until sentence-ending punctuation is found (fixes Whisper mid-sentence splits).
- *  Step 2: Split any segment longer than ~2 sentences at internal sentence boundaries,
+ *  Step 1: Join entries until a natural boundary is found (sentence end, transition word).
+ *  Step 2: Split long segments at natural boundaries (sentences, commas, transitions),
  *          distributing time proportionally by character count. */
 export function mergeToSentences(entries: TranscriptEntry[]): TranscriptEntry[] {
   if (entries.length <= 1) return entries;
 
-  // Step 1: Merge fragments into complete sentences
+  // Step 1: Merge fragments into natural clauses (minimum 3 seconds)
+  const MIN_SEGMENT_MS = 3000;
+  const IDEAL_SEGMENT_MS = 6000;
   const merged: TranscriptEntry[] = [];
   let acc: TranscriptEntry | null = null;
   for (const e of entries) {
@@ -93,69 +160,101 @@ export function mergeToSentences(entries: TranscriptEntry[]): TranscriptEntry[] 
       acc.endTime = e.endTime;
       acc.endMs = e.endMs;
     }
-    if (/[.!?…。！？]\s*$/.test(acc.text.trim())) {
+    const duration = acc.endMs - acc.startMs;
+    const text = acc.text.trim();
+
+    // Check for natural break points
+    const hasSentenceEnd = /[.!?…。！？]\s*$/.test(text);
+    const endsWithCommaClause = /,\s*$/.test(text) && duration >= IDEAL_SEGMENT_MS;
+    const endsWithSemicolon = /[;:]\s*$/.test(text) && duration >= MIN_SEGMENT_MS;
+
+    // Finalize segment at natural boundaries when duration is sufficient
+    if ((hasSentenceEnd && duration >= MIN_SEGMENT_MS) ||
+        endsWithSemicolon ||
+        endsWithCommaClause ||
+        duration >= IDEAL_SEGMENT_MS * 2) {
       acc.index = merged.length + 1;
       merged.push(acc);
       acc = null;
     }
   }
   if (acc) {
-    acc.index = merged.length + 1;
-    merged.push(acc);
+    if (merged.length > 0 && (acc.endMs - acc.startMs) < MIN_SEGMENT_MS) {
+      const last = merged[merged.length - 1];
+      last.text = last.text + ' ' + acc.text;
+      last.endTime = acc.endTime;
+      last.endMs = acc.endMs;
+    } else {
+      acc.index = merged.length + 1;
+      merged.push(acc);
+    }
   }
 
-  // Step 2: Split long segments at sentence boundaries
-  const MAX_CHARS = 150;
-  const MAX_MS = 15000;
+  // Step 2: Split long segments at natural boundaries
+  const MAX_CHARS = 120;
+  const MAX_MS = 10000;
   const result: TranscriptEntry[] = [];
 
   for (const seg of merged) {
-    if (seg.text.length <= MAX_CHARS && (seg.endMs - seg.startMs) <= MAX_MS) {
+    const segDur = seg.endMs - seg.startMs;
+    if (seg.text.length <= MAX_CHARS && segDur <= MAX_MS) {
       seg.index = result.length + 1;
       result.push(seg);
       continue;
     }
-    const sentences = seg.text.match(/[^.!?…。！？]*[.!?…。！？]+\s*/g) || [seg.text];
-    if (sentences.length <= 1) {
-      seg.index = result.length + 1;
-      result.push(seg);
-      continue;
-    }
-    const totalChars = seg.text.length;
-    const totalMs = seg.endMs - seg.startMs;
-    let chunkText = '';
-    let chunkStartMs = seg.startMs;
-    let charsSoFar = 0;
 
-    for (let i = 0; i < sentences.length; i++) {
-      const s = sentences[i].trim();
-      if (!s) continue;
-      const wouldBe = chunkText ? chunkText + ' ' + s : s;
-      if (chunkText && (wouldBe.length > MAX_CHARS)) {
-        const chunkEndMs = seg.startMs + Math.round((charsSoFar / totalChars) * totalMs);
+    // Try to split at natural boundaries
+    const parts: { text: string; startMs: number; endMs: number }[] = [];
+    let remaining = seg.text;
+    let remainStartMs = seg.startMs;
+    const totalChars = seg.text.length;
+    const totalMs = segDur;
+
+    while (remaining.length > MAX_CHARS || (seg.endMs - remainStartMs) > MAX_MS) {
+      const idealSplitChar = Math.round(MAX_CHARS * 0.7);
+      const splitPos = findBestSplitPoint(remaining, idealSplitChar, Math.floor(MAX_CHARS * 0.3), Math.min(remaining.length - 10, MAX_CHARS));
+
+      if (splitPos <= 0 || splitPos >= remaining.length - 5) {
+        // No good split found — try sentence boundary fallback
+        const sentenceMatch = remaining.match(/^([^.!?…。！？]*[.!?…。！？]+\s*)/);
+        if (sentenceMatch && sentenceMatch[0].length < remaining.length) {
+          const partText = sentenceMatch[0].trim();
+          const charRatio = (totalChars - remaining.length + partText.length) / totalChars;
+          const partEndMs = seg.startMs + Math.round(charRatio * totalMs);
+          parts.push({ text: partText, startMs: remainStartMs, endMs: partEndMs });
+          remaining = remaining.substring(sentenceMatch[0].length).trim();
+          remainStartMs = partEndMs;
+        } else {
+          break; // Can't split further
+        }
+      } else {
+        const partText = remaining.substring(0, splitPos).trim();
+        const charRatio = (totalChars - remaining.length + splitPos) / totalChars;
+        const partEndMs = seg.startMs + Math.round(charRatio * totalMs);
+        parts.push({ text: partText, startMs: remainStartMs, endMs: partEndMs });
+        remaining = remaining.substring(splitPos).trim();
+        remainStartMs = partEndMs;
+      }
+    }
+
+    // Push remaining
+    if (remaining.trim()) {
+      parts.push({ text: remaining.trim(), startMs: remainStartMs, endMs: seg.endMs });
+    }
+
+    if (parts.length <= 1) {
+      seg.index = result.length + 1;
+      result.push(seg);
+    } else {
+      for (const p of parts) {
         result.push({
           index: result.length + 1,
           startTime: '', endTime: '',
-          text: chunkText.trim(),
-          startMs: chunkStartMs,
-          endMs: chunkEndMs,
+          text: p.text,
+          startMs: p.startMs,
+          endMs: p.endMs,
         });
-        chunkStartMs = chunkEndMs;
-        chunkText = s;
-        charsSoFar += s.length;
-      } else {
-        chunkText = wouldBe;
-        charsSoFar += s.length;
       }
-    }
-    if (chunkText.trim()) {
-      result.push({
-        index: result.length + 1,
-        startTime: '', endTime: '',
-        text: chunkText.trim(),
-        startMs: chunkStartMs,
-        endMs: seg.endMs,
-      });
     }
   }
 

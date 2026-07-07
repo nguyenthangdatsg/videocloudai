@@ -6,11 +6,20 @@ import { TopBar } from '../components/layout/TopBar';
 import { Badge } from '../components/ui/Badge';
 import { Spinner } from '../components/ui/Spinner';
 import { useAppStore } from '../store';
-import { Settings as SettingsIcon, Zap, Mic, Server, Eye, EyeOff, CheckCircle, XCircle, Save, Music, Play, Trash2, Sparkles, Film, Palette, Image as ImageIcon } from 'lucide-react';
+import { Settings as SettingsIcon, Zap, Mic, Server, Eye, EyeOff, CheckCircle, XCircle, Save, Music, Play, Trash2, Sparkles, Film, Palette, Image as ImageIcon, GripVertical, ChevronUp, ChevronDown, RotateCcw, Menu } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useTheme, THEMES, type ThemeName } from '../hooks/useTheme';
+import { useMenuOrderEditor } from '../hooks/useMenuOrder';
 
 type SettingsTab = 'general' | 'llm' | 'image' | 'narration' | 'video' | 'music';
+
+const PATH_TO_NAV_KEY: Record<string, string> = {
+  '/': 'dashboard', '/script': 'scriptEditor', '/library': 'sceneLibrary',
+  '/editor': 'videoEditor', '/batch': 'batchGenerator', '/queue': 'queue',
+  '/tts': 'tts', '/transcribe': 'transcribe', '/storyboard': 'storyboard',
+  '/drama': 'dramaStudio', '/image-drama': 'imageDramaStudio',
+  '/channels': 'channels', '/distributions': 'distributions', '/settings': 'settings',
+};
 
 const THEME_COLORS: Record<ThemeName, { accent: string; bg: string; surface: string }> = {
   midnight: { accent: '#8578f6', bg: '#0c0c14', surface: '#14141e' },
@@ -54,6 +63,14 @@ export function Settings() {
   const [musicSearching, setMusicSearching] = useState(false);
   const [downloadingTrack, setDownloadingTrack] = useState<string | null>(null);
   const queryClient = useQueryClient();
+
+  const DEFAULT_MENU_PATHS = [
+    '/', '/script', '/library', '/editor', '/batch', '/queue',
+    '/tts', '/transcribe', '/storyboard', '/drama', '/image-drama',
+    '/channels', '/distributions', '/settings',
+  ];
+  const menuEditor = useMenuOrderEditor(DEFAULT_MENU_PATHS);
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
 
   const { data: ttsData } = useQuery({
     queryKey: ['tts', 'voices'],
@@ -272,6 +289,60 @@ export function Settings() {
                 />
               </div>
             )}
+          </div>
+        </section>
+
+        {/* Menu Order */}
+        <section className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-medium text-c-text flex items-center gap-2">
+              <Menu className="w-4 h-4 text-accent-primary" />
+              {t('settings.menuOrder')}
+            </h2>
+            <button
+              onClick={menuEditor.reset}
+              className="text-[10px] px-2 py-1 rounded-md text-c-dim hover:text-c-text hover:bg-c-elevated transition-colors flex items-center gap-1"
+            >
+              <RotateCcw className="w-3 h-3" /> {t('settings.menuOrderReset')}
+            </button>
+          </div>
+          <p className="text-xs text-c-dim mb-3">{t('settings.menuOrderHint')}</p>
+          <div className="space-y-0.5">
+            {menuEditor.order.map((path, idx) => (
+              <div
+                key={path}
+                draggable
+                onDragStart={() => setDragIdx(idx)}
+                onDragOver={(e) => { e.preventDefault(); }}
+                onDrop={() => { if (dragIdx !== null && dragIdx !== idx) menuEditor.move(dragIdx, idx); setDragIdx(null); }}
+                onDragEnd={() => setDragIdx(null)}
+                className={clsx(
+                  'flex items-center gap-2 px-2 py-1.5 rounded-lg border transition-colors cursor-grab active:cursor-grabbing select-none',
+                  dragIdx === idx ? 'border-c-accent bg-accent-muted/30' : 'border-transparent hover:bg-c-elevated',
+                )}
+              >
+                <GripVertical className="w-3.5 h-3.5 text-c-dim shrink-0" />
+                <span className="text-xs text-c-text flex-1">
+                  {t(`nav.${PATH_TO_NAV_KEY[path] || 'dashboard'}`)}
+                </span>
+                <div className="flex gap-0.5 shrink-0">
+                  <button
+                    onClick={() => idx > 0 && menuEditor.move(idx, idx - 1)}
+                    disabled={idx === 0}
+                    className="p-0.5 rounded text-c-dim hover:text-c-text disabled:opacity-20 disabled:cursor-default transition-colors"
+                  >
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => idx < menuEditor.order.length - 1 && menuEditor.move(idx, idx + 1)}
+                    disabled={idx === menuEditor.order.length - 1}
+                    className="p-0.5 rounded text-c-dim hover:text-c-text disabled:opacity-20 disabled:cursor-default transition-colors"
+                  >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
 

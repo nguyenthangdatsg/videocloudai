@@ -1,4 +1,5 @@
-import { Mic, Globe, SlidersHorizontal, Play, Pause, CheckCircle, ArrowRight } from 'lucide-react';
+import { useState } from 'react';
+import { Mic, Globe, SlidersHorizontal, Play, Pause, CheckCircle, ArrowRight, Merge, RefreshCw, Scissors } from 'lucide-react';
 import clsx from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
 import { useStoryboard } from '../StoryboardContext';
@@ -12,11 +13,13 @@ export function AudioStep() {
     generatingAudio, audioProgress, handleGenerateAudio,
     audioFile, transcriptEntries, setTranscriptEntries,
     handleSplitEntry,
-    handleAutoSeparate,
+    handleMergeEntry,
+    handleAutoSeparate, handleRetranscribe,
     scriptText, setStep, saveProject,
     audioLogRef,
     t,
   } = useStoryboard();
+  const [separateSec, setSeparateSec] = useState(3);
 
   // Compute voice data from query result
   const allVoices = voices?.voices ?? {};
@@ -259,31 +262,73 @@ export function AudioStep() {
             <span className="text-xs font-medium text-c-text shrink-0">{transcriptEntries.length} {t('storyboard.segments')}</span>
             <div className="flex items-center gap-2">
               <button
-                onClick={handleAutoSeparate}
-                className="btn border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 text-[10px] px-2.5 py-1 rounded-lg h-7 font-medium transition-colors"
-                title="Automatically splits any segment >= 6s into 3s pieces"
+                onClick={handleRetranscribe}
+                className="btn border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-[10px] px-2.5 py-1 rounded-lg h-7 font-medium transition-colors flex items-center gap-1"
+                title={t('storyboard.retranscribeHint')}
               >
-                Auto Separate (&gt;= 6s)
+                <RefreshCw className="w-3 h-3" />
+                {t('storyboard.retranscribe')}
               </button>
+              <div className="flex items-center gap-0 border border-cyan-500/30 rounded-lg h-7 overflow-hidden">
+                <button
+                  onClick={() => handleAutoSeparate(separateSec)}
+                  className="text-cyan-400 hover:bg-cyan-500/10 text-[10px] px-2 h-full font-medium transition-colors flex items-center gap-1"
+                  title={`Split segments longer than ${separateSec}s`}
+                >
+                  <Scissors className="w-3 h-3" />
+                  Split &gt; {separateSec}s
+                </button>
+                <select
+                  value={separateSec}
+                  onChange={(e) => setSeparateSec(Number(e.target.value))}
+                  className="text-[10px] bg-transparent text-cyan-400 border-l border-cyan-500/30 h-full px-1 cursor-pointer outline-none"
+                >
+                  {Array.from({ length: 18 }, (_, i) => i + 3).map(s => (
+                    <option key={s} value={s}>{s}s</option>
+                  ))}
+                </select>
+              </div>
               <button onClick={() => { setStep('prompts'); saveProject({ currentStep: 'prompts' }); }} className="btn-primary text-xs flex items-center gap-1 h-7">
                 {t('storyboard.generatePrompts')} <ArrowRight className="w-3 h-3" />
               </button>
             </div>
           </div>
           <div className="max-h-[250px] overflow-auto divide-y divide-c-border">
-            {transcriptEntries.map((e) => {
+            {transcriptEntries.map((e, idx) => {
               const dur = (e.endMs - e.startMs) / 1000;
+              const isShort = dur < separateSec;
+              const rowBg = isShort ? 'bg-orange-900/15' : '';
               return (
-                <div key={e.index} className="px-3 py-2 flex gap-3 items-center justify-between hover:bg-c-surface/30 transition-colors">
+                <div key={e.index} className={clsx('px-3 py-2 flex gap-3 items-center justify-between hover:bg-c-surface/30 transition-colors', rowBg)}>
                   <div className="flex gap-3 items-start flex-1 min-w-0">
                     <span className="text-[10px] font-mono text-cyan-300/70 shrink-0 w-28 flex items-center gap-1.5">
                       <span>{e.startTime.split(',')[0]} → {e.endTime.split(',')[0]}</span>
-                      <span className="text-[9px] text-c-dim">({dur.toFixed(1)}s)</span>
+                      <span className={clsx('text-[9px] font-bold', isShort ? 'text-orange-400' : 'text-c-dim')}>({dur.toFixed(1)}s)</span>
                     </span>
                     <span className="text-xs text-c-muted leading-relaxed break-words flex-1">{e.text}</span>
                   </div>
-                  {dur > 3.0 && (
-                    <div className="shrink-0 ml-4 flex items-center gap-1">
+                  <div className="shrink-0 ml-4 flex items-center gap-1">
+                    {/* Merge buttons */}
+                    {idx > 0 && (
+                      <button
+                        onClick={() => handleMergeEntry(e.index, 'prev')}
+                        className="p-1 rounded text-c-dim hover:text-amber-400 hover:bg-amber-900/20 transition-colors"
+                        title={t('storyboard.mergeWithPrev')}
+                      >
+                        <Merge className="w-3 h-3 -rotate-90" />
+                      </button>
+                    )}
+                    {idx < transcriptEntries.length - 1 && (
+                      <button
+                        onClick={() => handleMergeEntry(e.index, 'next')}
+                        className="p-1 rounded text-c-dim hover:text-amber-400 hover:bg-amber-900/20 transition-colors"
+                        title={t('storyboard.mergeWithNext')}
+                      >
+                        <Merge className="w-3 h-3 rotate-90" />
+                      </button>
+                    )}
+                    {/* Split dropdown */}
+                    {dur > 3.0 && (
                       <select
                         onChange={(evt) => {
                           const val = parseInt(evt.target.value);
@@ -300,8 +345,8 @@ export function AudioStep() {
                           <option key={s} value={s}>{s}s limit</option>
                         ))}
                       </select>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               );
             })}

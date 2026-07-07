@@ -632,7 +632,7 @@ export function ImagesStep() {
                 </div>
               )}
 
-              {/* Footer: timestamp + prompt edit */}
+              {/* Footer: segment text + prompt edit */}
               <div className="px-2 py-1.5 bg-c-bg/50 space-y-1">
                 <div className="flex items-center gap-1">
                   <span className="text-[9px] text-cyan-400 font-mono shrink-0">[{img.timestamp}]</span>
@@ -655,6 +655,11 @@ export function ImagesStep() {
                     </button>
                   )}
                 </div>
+                {prompt?.text && (
+                  <div className="text-[10px] text-c-text leading-snug line-clamp-3">
+                    {prompt.text}
+                  </div>
+                )}
                 {isEditing ? (
                   <textarea
                     value={editingImagePrompt}

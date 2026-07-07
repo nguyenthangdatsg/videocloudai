@@ -14,7 +14,6 @@ import {
   BarChart2,
   Mic,
   FileAudio,
-  Image,
   Clapperboard,
   Film,
   Loader2,
@@ -22,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { useImageGenStore } from '../../store/image-generation';
+import { useMenuOrderStore } from '../../hooks/useMenuOrder';
 import { useQuery } from '@tanstack/react-query';
 import { queueApi, settingsApi } from '../../lib/api';
 import { useTranslation } from 'react-i18next';
@@ -35,7 +35,9 @@ export function Sidebar() {
   );
   const { t } = useTranslation();
 
-  const NAV_ITEMS = [
+  const storedOrder = useMenuOrderStore();
+
+  const DEFAULT_NAV_ITEMS = [
     { path: '/', icon: LayoutDashboard, label: t('nav.dashboard') },
     { path: '/script', icon: FileText, label: t('nav.scriptEditor') },
     { path: '/library', icon: Library, label: t('nav.sceneLibrary') },
@@ -44,7 +46,6 @@ export function Sidebar() {
     { path: '/queue', icon: ListChecks, label: t('nav.queue') },
     { path: '/tts', icon: Mic, label: t('nav.tts') },
     { path: '/transcribe', icon: FileAudio, label: t('nav.transcribe') },
-    { path: '/image', icon: Image, label: t('nav.imageGenerator') },
     { path: '/storyboard', icon: Clapperboard, label: t('nav.storyboard') },
     { path: '/drama', icon: Film, label: t('nav.dramaStudio') },
     { path: '/image-drama', icon: FileImage, label: t('nav.imageDramaStudio') },
@@ -52,6 +53,13 @@ export function Sidebar() {
     { path: '/distributions', icon: BarChart2, label: t('nav.distributions') },
     { path: '/settings', icon: Settings, label: t('nav.settings') },
   ];
+
+  const NAV_ITEMS = storedOrder
+    ? storedOrder
+        .map((p) => DEFAULT_NAV_ITEMS.find((item) => item.path === p))
+        .filter((item): item is (typeof DEFAULT_NAV_ITEMS)[number] => !!item)
+        .concat(DEFAULT_NAV_ITEMS.filter((item) => !storedOrder.includes(item.path)))
+    : DEFAULT_NAV_ITEMS;
 
   const { data: appSettings } = useQuery({
     queryKey: ['settings'],

@@ -40,6 +40,21 @@ export function StagePromptEditor({
     onChange(composed);
   };
 
+  const decompose = (text: string): StagePart[] => {
+    const parts: StagePart[] = [];
+    const sections = text.split(/^---\s*(.+?)\s*---$/m);
+    // sections[0] = text before first header (if any), then alternating [label, content, label, content, ...]
+    if (sections[0]?.trim()) {
+      parts.push({ label: 'Intro', content: sections[0].trim() });
+    }
+    for (let i = 1; i < sections.length; i += 2) {
+      const label = sections[i]?.trim();
+      const content = sections[i + 1]?.trim() ?? '';
+      if (label) parts.push({ label, content });
+    }
+    return parts;
+  };
+
   const handlePartEdit = (idx: number, newContent: string) => {
     if (!onPartsChange) return;
     const updated = allParts.map((p, i) => i === idx ? { ...p, content: newContent } : p);
@@ -172,7 +187,13 @@ export function StagePromptEditor({
               <div className="text-[10px] text-purple-300/60 mb-1">{t('storyboard.fullPromptHint')}</div>
               <textarea
                 value={value}
-                onChange={(e) => onChange(e.target.value)}
+                onChange={(e) => {
+                  const text = e.target.value;
+                  onChange(text);
+                  if (onPartsChange) {
+                    onPartsChange(decompose(text));
+                  }
+                }}
                 placeholder={placeholder || t('storyboard.noPromptSection')}
                 rows={12}
                 className="input text-[11px] w-full font-mono resize-y min-h-[150px] bg-purple-950/20 border-purple-800/30 focus:border-purple-600/50"

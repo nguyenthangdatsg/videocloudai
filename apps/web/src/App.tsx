@@ -11,7 +11,6 @@ import { Distributions } from './pages/Distributions';
 import { Settings } from './pages/Settings';
 import { TextToSpeech } from './pages/TextToSpeech';
 import { Transcribe } from './pages/Transcribe';
-import { ImageGenerator } from './pages/ImageGenerator';
 import { Storyboard } from './pages/storyboard';
 import { StoryboardList } from './pages/StoryboardList';
 import { DramaList } from './pages/DramaList';
@@ -39,7 +38,6 @@ function AppShell() {
             <Route path="/distributions" element={<Distributions />} />
             <Route path="/tts" element={<TextToSpeech />} />
             <Route path="/transcribe" element={<Transcribe />} />
-            <Route path="/image" element={<ImageGenerator />} />
             <Route path="/storyboard" element={<StoryboardList />} />
             <Route path="/storyboard/:id" element={<ErrorBoundary><Storyboard /></ErrorBoundary>} />
             <Route path="/drama" element={<DramaList />} />

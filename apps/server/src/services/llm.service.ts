@@ -29,6 +29,10 @@ const PROVIDER_FN: Record<Provider, (req: LlmRequest, s: ReturnType<typeof getSe
   openai: openaiComplete,
 };
 
+let _lastUsedModel = '';
+/** Returns the provider:model string from the most recent llmComplete call. */
+export function getLastUsedModel(): string { return _lastUsedModel; }
+
 /**
  * Unified LLM completion — dispatches to configured provider.
  * Falls back to other providers on missing key or runtime errors (rate limits, etc).
@@ -45,11 +49,19 @@ export async function llmComplete(req: LlmRequest): Promise<string> {
     throw new Error('No LLM provider configured. Add an API key in Settings.');
   }
 
+  const getModel = (p: Provider) => {
+    const modelKeys: Record<Provider, string> = { gemini: 'gemini_model', groq: 'groq_model', anthropic: 'anthropic_model', openrouter: 'openrouter_model', cerebras: 'cerebras_model', grok: 'grok_model', openai: 'openai_model' };
+    const defaults: Record<Provider, string> = { gemini: 'gemini-2.5-flash', groq: 'openai/gpt-oss-120b', anthropic: 'claude-sonnet-4-6', openrouter: 'meta-llama/llama-3.3-70b-instruct:free', cerebras: 'gpt-oss-120b', grok: 'grok-3-mini', openai: 'gpt-4o-mini' };
+    return s.get(modelKeys[p]) || defaults[p];
+  };
+
   let lastError: Error | null = null;
   const failedProviders: string[] = [];
   for (const provider of chain) {
     try {
-      return await PROVIDER_FN[provider](req, s);
+      const result = await PROVIDER_FN[provider](req, s);
+      _lastUsedModel = `${provider}/${getModel(provider)}`;
+      return result;
     } catch (err) {
       lastError = err as Error;
       const isRateLimit = lastError.message.includes('429') || lastError.message.includes('rate_limit') || lastError.message.includes('quota');

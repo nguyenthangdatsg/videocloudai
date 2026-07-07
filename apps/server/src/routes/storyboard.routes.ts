@@ -7,7 +7,7 @@ import { promisify } from 'util';
 import { NarrationService } from '../services/narration.service';
 import { SubtitleService } from '../services/subtitle.service';
 import { getSettings } from '../services/settings.service';
-import { llmComplete } from '../services/llm.service';
+import { llmComplete, getLastUsedModel } from '../services/llm.service';
 import { dbGet, dbAll, dbRun } from '../db';
 import { renderSceneClip } from '../services/remotion-renderer.service';
 import type { SceneClipConfig } from '../remotion/types';
@@ -1245,11 +1245,33 @@ Rules:
       }
     }
 
+    // Build a validator: reject prompts that are just raw narration text or missing required elements
+    const validatePrompt = (prompt: string, narrationText: string): boolean => {
+      if (!prompt || prompt.length < 15) return false;
+      // Reject if the prompt is basically the raw narration text (±minor suffix)
+      const cleanPrompt = prompt.replace(/,\s*(high quality|detailed|landscape layout|vertical portrait layout|square layout|16:9|9:16|1:1)\s*/gi, '').trim();
+      const cleanNarration = narrationText.trim();
+      if (cleanPrompt === cleanNarration || cleanPrompt === cleanNarration + '.') return false;
+      // If format template is set, check that prompt doesn't start with raw narration
+      if (formatTemplate) {
+        // Extract a key phrase from the format template (first few words before any placeholder)
+        const prefixMatch = formatTemplate.match(/^([^[{]+)/);
+        if (prefixMatch) {
+          const prefix = prefixMatch[1].trim().split(/\s+/).slice(0, 3).join(' ').toLowerCase();
+          if (prefix.length > 3 && !prompt.toLowerCase().includes(prefix)) return false;
+        }
+      }
+      // If visual style is set, prompt should mention it
+      if (visualStyle?.trim() && !prompt.toLowerCase().includes(visualStyle.toLowerCase().split(/\s+/)[0])) return false;
+      return true;
+    };
+
     res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `${expandedSegments.length} segments to process (expanded from ${segments.length} transcript blocks)` }) + '\n');
 
     // Process expanded segments in batches of 20
     const batchSize = 20;
     const allPrompts: Array<{ timestamp: string; prompt: string }> = [];
+    const modelBySec = new Map<number, string>();
 
     for (let i = 0; i < expandedSegments.length; i += batchSize) {
       const batch = expandedSegments.slice(i, i + batchSize);
@@ -1260,22 +1282,36 @@ Rules:
 
       const segmentText = batch.map((s) => `[${s.timestamp}] ${s.text}`).join('\n');
 
-      const parseBatch = (raw: string) => {
+      const parseBatch = (raw: string, usedModel: string) => {
         const lines = raw.split('\n');
         let currentTs = '';
         let currentPrompt = '';
+        const pushIfValid = () => {
+          if (!currentTs || !currentPrompt.trim()) return;
+          const sec = tsToSec(currentTs);
+          // Find matching segment narration text for validation
+          const seg = batch.find(s => tsToSec(s.timestamp) === sec) ||
+            batch.find(s => Math.abs(tsToSec(s.timestamp) - sec) <= 5);
+          const narration = seg?.text || '';
+          if (validatePrompt(currentPrompt.trim(), narration)) {
+            allPrompts.push({ timestamp: currentTs, prompt: currentPrompt.trim() });
+            modelBySec.set(sec, usedModel);
+          } else {
+            console.log(`[generate-prompts] Rejected invalid prompt for [${currentTs}]: "${currentPrompt.trim().substring(0, 60)}..."`);
+          }
+        };
         for (const line of lines) {
           const cleaned = line.replace(/^[\s`*#\-]*\d*[.)]\s*/, '').replace(/^[\s`*#\-]+/, '').replace(/`/g, '');
           const match = cleaned.match(/^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.*)/);
           if (match) {
-            if (currentPrompt.trim()) allPrompts.push({ timestamp: currentTs, prompt: currentPrompt.trim() });
+            pushIfValid();
             currentTs = match[1];
             currentPrompt = match[2];
           } else if (line.trim() && !line.match(/^---+$/) && !line.match(/^#{1,3}\s/)) {
             currentPrompt += ' ' + line.trim();
           }
         }
-        if (currentPrompt.trim()) allPrompts.push({ timestamp: currentTs, prompt: currentPrompt.trim() });
+        pushIfValid();
         return lines.length;
       };
 
@@ -1303,7 +1339,7 @@ Rules:
           });
         }
 
-        const lineCount = parseBatch(raw);
+        const lineCount = parseBatch(raw, getLastUsedModel());
         console.log(`[storyboard] Batch ${batchNum}: parsed ${allPrompts.length} prompts from ${lineCount} lines`);
         res.write(JSON.stringify({ progress: true, step: 'batch-done', detail: `Batch ${batchNum} done (${allPrompts.length} prompts so far)` }) + '\n');
 
@@ -1337,54 +1373,145 @@ Rules:
       promptBySec.set(tsToSec(p.timestamp), p.prompt);
     }
 
-    // If any segments didn't get prompts, fill with defaults using format template
-    const buildFallback = (text: string) => {
-      // If user provided a format template like "Simple stick figure doodle of [subject] ...",
-      // replace the placeholder with the segment text
-      if (formatTemplate) {
-        const filled = formatTemplate
-          .replace(/\[.*?\]/g, text)  // replace [placeholder] with actual text
-          .replace(/\.?\s*$/, '') + arTag;
-        return filled;
-      }
-      if (isSimpleStyle) {
-        return `${text}. ${visualStyle} style, plain white background, minimal detail, no shading, black lines only${arTag}`;
-      }
-      if (visualStyle?.trim()) return `${visualStyle} style scene of ${text}, high quality, detailed${arTag}`;
-      return `Cinematic scene depicting: ${text}, high quality, detailed${arTag}`;
+    // Match segments to prompts: exact timestamp first, then fuzzy (±5 seconds)
+    const matchPrompts = () => {
+      const usedSecs = new Set<number>();
+      return expandedSegments.map((seg) => {
+        const segSec = tsToSec(seg.timestamp);
+        let prompt = promptBySec.get(segSec);
+        let matchedSec = segSec;
+        if (prompt && !usedSecs.has(segSec)) {
+          usedSecs.add(segSec);
+        } else if (!prompt) {
+          for (let delta = 1; delta <= 5; delta++) {
+            for (const tryDelta of [delta, -delta]) {
+              const trySec = segSec + tryDelta;
+              if (promptBySec.has(trySec) && !usedSecs.has(trySec)) {
+                prompt = promptBySec.get(trySec);
+                matchedSec = trySec;
+                usedSecs.add(trySec);
+                break;
+              }
+            }
+            if (prompt) break;
+          }
+        }
+        return { timestamp: seg.timestamp, text: seg.text, prompt: prompt || '', model: modelBySec.get(matchedSec) || '' };
+      });
     };
 
-    // Match segments to prompts: exact timestamp first, then fuzzy (±2 seconds)
-    const usedSecs = new Set<number>();
-    const finalPrompts = expandedSegments.map((seg) => {
-      const segSec = tsToSec(seg.timestamp);
-      // Exact match first
-      let prompt = promptBySec.get(segSec);
-      if (prompt && !usedSecs.has(segSec)) {
-        usedSecs.add(segSec);
-      } else if (!prompt) {
-        // Fuzzy match: find closest prompt within ±2 seconds
-        for (let delta = 1; delta <= 2; delta++) {
-          for (const tryDelta of [delta, -delta]) {
-            const trySec = segSec + tryDelta;
-            if (promptBySec.has(trySec) && !usedSecs.has(trySec)) {
-              prompt = promptBySec.get(trySec);
-              usedSecs.add(trySec);
-              break;
-            }
+    let finalPrompts = matchPrompts();
+    let missingSegments = finalPrompts.filter(p => !p.prompt);
+
+    // Retry missing segments up to 3 times with random 10-20s delay
+    const MAX_RETRIES = 3;
+    for (let retry = 1; retry <= MAX_RETRIES && missingSegments.length > 0; retry++) {
+      const delay = Math.floor(Math.random() * 11 + 10) * 1000; // 10-20s
+      res.write(JSON.stringify({ progress: true, step: 'retrying', detail: `${missingSegments.length} segments missing prompts, retry ${retry}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s...` }) + '\n');
+      await new Promise((r) => setTimeout(r, delay));
+
+      const retryText = missingSegments.map(s => `[${s.timestamp}] ${s.text}`).join('\n');
+      const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
+
+      try {
+        const raw = await llmComplete({
+          systemPrompt,
+          userMessage: `Generate one image prompt per timestamp line:\n\n${retryText}${fmtReminder}`,
+          temperature: 0.7,
+          maxTokens: 8000,
+        });
+
+        // Parse retry results into promptBySec (with validation)
+        const retryModel = getLastUsedModel();
+        const lines = raw.split('\n');
+        let currentTs = '';
+        let currentPrompt = '';
+        const pushRetryIfValid = () => {
+          if (!currentTs || !currentPrompt.trim()) return;
+          const sec = tsToSec(currentTs);
+          const seg = expandedSegments.find(s => tsToSec(s.timestamp) === sec) ||
+            expandedSegments.find(s => Math.abs(tsToSec(s.timestamp) - sec) <= 5);
+          const narration = seg?.text || '';
+          if (validatePrompt(currentPrompt.trim(), narration)) {
+            promptBySec.set(sec, currentPrompt.trim());
+            modelBySec.set(sec, retryModel);
+          } else {
+            console.log(`[generate-prompts] Retry rejected invalid prompt for [${currentTs}]: "${currentPrompt.trim().substring(0, 60)}..."`);
           }
-          if (prompt) break;
+        };
+        for (const line of lines) {
+          const cleaned = line.replace(/^[\s`*#\-]*\d*[.)]\s*/, '').replace(/^[\s`*#\-]+/, '').replace(/`/g, '');
+          const match = cleaned.match(/^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.*)/);
+          if (match) {
+            pushRetryIfValid();
+            currentTs = match[1];
+            currentPrompt = match[2];
+          } else if (line.trim() && !line.match(/^---+$/) && !line.match(/^#{1,3}\s/)) {
+            currentPrompt += ' ' + line.trim();
+          }
+        }
+        pushRetryIfValid();
+
+        // Enforce aspect ratio on new prompts
+        for (const [sec, prompt] of promptBySec) {
+          if (!prompt.includes(arSuffix)) {
+            promptBySec.set(sec, prompt.replace(/\.?\s*$/, '') + arTag);
+          }
+        }
+
+        // Re-match all segments
+        finalPrompts = matchPrompts();
+        missingSegments = finalPrompts.filter(p => !p.prompt);
+
+        res.write(JSON.stringify({ progress: true, step: 'retry-done', detail: `Retry ${retry} done, ${missingSegments.length} still missing` }) + '\n');
+        console.log(`[generate-prompts] Retry ${retry}: ${missingSegments.length} segments still missing`);
+      } catch (err) {
+        res.write(JSON.stringify({ progress: true, step: 'retry-error', detail: `Retry ${retry} failed: ${(err as Error).message}` }) + '\n');
+        console.warn(`[generate-prompts] Retry ${retry} failed:`, (err as Error).message);
+      }
+    }
+
+    // Final: if still missing after batch retries, generate individually per segment — retry forever until all done
+    if (missingSegments.length > 0) {
+      res.write(JSON.stringify({ progress: true, step: 'individual', detail: `Generating ${missingSegments.length} remaining prompts individually...` }) + '\n');
+
+      for (const seg of missingSegments) {
+        let attempt = 0;
+        const MAX_INDIVIDUAL_ATTEMPTS = 20;
+        while (!promptBySec.has(tsToSec(seg.timestamp)) && attempt < MAX_INDIVIDUAL_ATTEMPTS) {
+          attempt++;
+          const delay = Math.floor(Math.random() * 11 + 10) * 1000;
+          if (attempt > 1) {
+            res.write(JSON.stringify({ progress: true, step: 'individual-retry', detail: `[${seg.timestamp}] retry #${attempt}/${MAX_INDIVIDUAL_ATTEMPTS} in ${Math.round(delay / 1000)}s...` }) + '\n');
+          }
+          await new Promise((r) => setTimeout(r, delay));
+          try {
+            const fmtReminder = formatTemplate ? `\nYou MUST follow this format: "${formatTemplate.substring(0, 200)}"` : '';
+            const raw = await llmComplete({
+              systemPrompt,
+              userMessage: `Generate exactly ONE image prompt for this narration:\n\n[${seg.timestamp}] ${seg.text}${fmtReminder}\n\nOutput ONLY the prompt text, no timestamp, no brackets, no commentary, no quotes.`,
+              temperature: Math.min(0.7 + (attempt - 1) * 0.05, 1.0),
+              maxTokens: 1000,
+            });
+            const prompt = raw.replace(/^\[[\d:]+\]\s*/, '').replace(/^["']|["']$/g, '').trim();
+            if (prompt && prompt.length > 10 && validatePrompt(prompt, seg.text)) {
+              const withAr = prompt.includes(arSuffix) ? prompt : prompt.replace(/\.?\s*$/, '') + arTag;
+              const segSec = tsToSec(seg.timestamp);
+              promptBySec.set(segSec, withAr);
+              modelBySec.set(segSec, getLastUsedModel());
+              res.write(JSON.stringify({ progress: true, step: 'individual-done', detail: `[${seg.timestamp}] prompt generated (attempt #${attempt})` }) + '\n');
+            } else if (prompt) {
+              console.log(`[generate-prompts] Individual rejected invalid prompt for [${seg.timestamp}]: "${prompt.substring(0, 60)}..."`);
+              res.write(JSON.stringify({ progress: true, step: 'individual-rejected', detail: `[${seg.timestamp}] prompt rejected (not formatted), will retry...` }) + '\n');
+            }
+          } catch (err) {
+            console.warn(`[generate-prompts] Individual [${seg.timestamp}] attempt #${attempt} failed:`, (err as Error).message);
+            res.write(JSON.stringify({ progress: true, step: 'individual-error', detail: `[${seg.timestamp}] attempt #${attempt} failed: ${(err as Error).message}, will retry...` }) + '\n');
+          }
         }
       }
-      return {
-        timestamp: seg.timestamp,
-        text: seg.text,
-        prompt: prompt || buildFallback(seg.text),
-      };
-    });
-    const fallbackCount = finalPrompts.filter(p => !promptBySec.has(tsToSec(p.timestamp))).length;
-    if (fallbackCount > 0) {
-      console.log(`[generate-prompts] ${fallbackCount}/${finalPrompts.length} segments used fallback prompts`);
+      // Final re-match — all segments guaranteed to have prompts
+      finalPrompts = matchPrompts();
     }
 
     res.write(JSON.stringify({ done: true, prompts: finalPrompts }) + '\n');
