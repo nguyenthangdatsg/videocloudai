@@ -81,6 +81,9 @@ export interface DramaEpisode {
   status: DramaEpisodeStatus;
   stage: DramaStage;
   reviewScore: number | null;
+  audioFilename?: string | null;
+  audioDuration?: number | null;
+  srtFilename?: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -32,7 +32,7 @@ import {
   Settings,
   Wrench,
 } from 'lucide-react';
-import { dramaApi } from '../lib/api';
+import { dramaApi, musicApi } from '../lib/api';
 import type {
   DramaProject,
   DramaEpisode,
@@ -1125,6 +1125,19 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
   const shotCardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const cleanupRef = useRef<(() => void) | null>(null);
 
+  const [cachedMusic, setCachedMusic] = useState<Array<{ filename: string }>>([]);
+  const [bgMusic, setBgMusic] = useState('');
+  const [voiceVolume, setVoiceVolume] = useState(1.0);
+  const [musicVolume, setMusicVolume] = useState(0.2);
+  const [generatingAudio, setGeneratingAudio] = useState(false);
+  const [audioProgress, setAudioProgress] = useState<string[]>([]);
+  const [generatingSubtitles, setGeneratingSubtitles] = useState(false);
+  const [subtitlesMsg, setSubtitlesMsg] = useState('');
+
+  useEffect(() => {
+    musicApi.cached().then(setCachedMusic).catch(() => {});
+  }, []);
+
   // Check if extension is available (ping/pong like Storyboard)
   useEffect(() => {
     const onPong = () => setFlowAvailable(true);
@@ -1278,6 +1291,45 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
     allShots.filter(sh => sh.prompt && !sh.keyframeUrl && !shotStatuses.has(sh.id)).length;
 
   const pendingGenCount = getShotsForGeneration(false).length;
+
+  const handleGenerateAudio = async () => {
+    setGeneratingAudio(true);
+    setAudioProgress(['Starting audio generation...']);
+    try {
+      const res = await dramaApi.generateAudio(
+        projectId,
+        episodeId,
+        {
+          voiceVolume,
+          musicVolume,
+          bgMusicTrack: bgMusic || undefined,
+        },
+        (step, detail) => {
+          setAudioProgress(prev => [...prev, `${step}: ${detail || ''}`]);
+        }
+      );
+      setAudioProgress(prev => [...prev, `Audio generation complete! Filename: ${res.audioFilename}`]);
+      queryClient.invalidateQueries({ queryKey: ['drama', 'episodes', projectId] });
+    } catch (err: any) {
+      setAudioProgress(prev => [...prev, `Error: ${err.message || err}`]);
+    } finally {
+      setGeneratingAudio(false);
+    }
+  };
+
+  const handleGenerateSubtitles = async () => {
+    setGeneratingSubtitles(true);
+    setSubtitlesMsg('Generating subtitles...');
+    try {
+      const res = await dramaApi.generateSubtitles(projectId, episodeId);
+      setSubtitlesMsg(`Subtitles generated successfully! Filename: ${res.srtFilename}`);
+      queryClient.invalidateQueries({ queryKey: ['drama', 'episodes', projectId] });
+    } catch (err: any) {
+      setSubtitlesMsg(`Error: ${err.message || err}`);
+    } finally {
+      setGeneratingSubtitles(false);
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -1445,18 +1497,115 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
       {/* Audio section */}
       <div>
         <h3 className="text-sm font-medium text-c-text mb-3 flex items-center gap-2"><Music className="w-4 h-4" />{t('drama.audio')}</h3>
-        <div className="card rounded-2xl p-6 text-center">
-          <Music className="w-8 h-8 text-c-dim mx-auto mb-2" />
-          <p className="text-sm text-c-muted">{t('drama.audioComingSoon')}</p>
+        <div className="card rounded-2xl p-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
+            <div>
+              <label className="block text-xs text-c-muted mb-1">Background Music</label>
+              <select value={bgMusic} onChange={e => setBgMusic(e.target.value)} className="input text-xs rounded-lg py-1.5 w-full pr-8">
+                <option value="">No Background Music</option>
+                {cachedMusic.map(m => (
+                  <option key={m.filename} value={m.filename}>{m.filename}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-c-muted mb-1">Voice Volume ({Math.round(voiceVolume * 100)}%)</label>
+              <input type="range" min="0" max="2" step="0.1" value={voiceVolume} onChange={e => setVoiceVolume(parseFloat(e.target.value))} className="w-full mt-2 accent-violet-500" />
+            </div>
+            <div>
+              <label className="block text-xs text-c-muted mb-1">Music Volume ({Math.round(musicVolume * 100)}%)</label>
+              <input type="range" min="0" max="1" step="0.05" value={musicVolume} onChange={e => setMusicVolume(parseFloat(e.target.value))} className="w-full mt-2 accent-violet-500" />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleGenerateAudio}
+              disabled={generatingAudio}
+              className="btn-primary flex items-center gap-2 text-xs rounded-full px-4 py-2 disabled:opacity-50"
+            >
+              {generatingAudio ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Generating Audio...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Generate Audio
+                </>
+              )}
+            </button>
+
+            {episode.audioFilename && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Audio Ready
+                </span>
+                <span className="text-xs text-c-dim">({episode.audioDuration?.toFixed(1)}s)</span>
+              </div>
+            )}
+          </div>
+
+          {audioProgress.length > 0 && (
+            <div className="border border-c-border rounded-xl p-3 bg-c-surface max-h-32 overflow-y-auto text-xs text-c-muted text-left space-y-0.5 font-mono">
+              {audioProgress.map((msg, i) => <div key={i}>{msg}</div>)}
+            </div>
+          )}
+
+          {episode.audioFilename && (
+            <div className="pt-2 border-t border-c-border text-left">
+              <audio controls src={`/api/tts/audio/${episode.audioFilename}`} className="w-full h-10 rounded-lg bg-c-surface" />
+            </div>
+          )}
         </div>
       </div>
 
       {/* Subtitles section */}
       <div>
         <h3 className="text-sm font-medium text-c-text mb-3 flex items-center gap-2"><Type className="w-4 h-4" />{t('drama.subtitles')}</h3>
-        <div className="card rounded-2xl p-6 text-center">
-          <Type className="w-8 h-8 text-c-dim mx-auto mb-2" />
-          <p className="text-sm text-c-muted">{t('drama.subtitlesComingSoon')}</p>
+        <div className="card rounded-2xl p-6 space-y-4 text-left">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleGenerateSubtitles}
+              disabled={generatingSubtitles}
+              className="btn-primary flex items-center gap-2 text-xs rounded-full px-4 py-2 disabled:opacity-50"
+            >
+              {generatingSubtitles ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Generating Subtitles...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Generate Subtitles
+                </>
+              )}
+            </button>
+
+            {episode.srtFilename && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Subtitles Sync Ready
+                </span>
+                <a
+                  href={`/api/tts/transcribe/srt/${episode.srtFilename}`}
+                  download
+                  className="flex items-center gap-1 text-xs text-accent-primary hover:underline animate-fade-in"
+                >
+                  <Download className="w-3 h-3" />
+                  Download SRT
+                </a>
+              </div>
+            )}
+          </div>
+
+          {subtitlesMsg && (
+            <div className="text-xs text-c-muted font-mono">{subtitlesMsg}</div>
+          )}
         </div>
       </div>
     </div>

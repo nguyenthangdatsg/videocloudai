@@ -732,6 +732,28 @@ export const dramaApi = {
   reviewEpisode: (projectId: string, episodeId: string) => api.post<{ score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string; fix?: string }> }>(`/drama/projects/${projectId}/episodes/${episodeId}/review`).then(r => r.data),
   applyReviewFixes: (projectId: string, episodeId: string, issues: Array<{ area: string; severity: string; detail: string; fix?: string }>) => api.post<DramaEpisode>(`/drama/projects/${projectId}/episodes/${episodeId}/apply-fixes`, { issues }).then(r => r.data),
   clearEpisodeImages: (projectId: string, episodeId: string) => api.delete<{ cleared: number }>(`/drama/projects/${projectId}/episodes/${episodeId}/images`).then(r => r.data),
+  generateAudio: async (
+    projectId: string,
+    episodeId: string,
+    data: { voiceVolume?: number; musicVolume?: number; bgMusicTrack?: string },
+    onProgress: (step: string, detail?: string) => void,
+  ): Promise<{ audioFilename: string; audioDuration: number; url: string }> => {
+    const res = await fetch(`/api/drama/projects/${projectId}/episodes/${episodeId}/generate-audio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    let result: any = null;
+    await readNDJSON(res, (parsed) => {
+      if (parsed.error) throw new Error(parsed.error as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+      if (parsed.success) result = parsed;
+    });
+    if (!result) throw new Error('No result from Audio generation');
+    return result;
+  },
+  generateSubtitles: (projectId: string, episodeId: string) =>
+    api.post<{ success: boolean; srtFilename: string; srtContent: string }>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-subtitles`).then(r => r.data),
 
   // Stats
   stats: () => api.get('/drama/stats').then(r => r.data),

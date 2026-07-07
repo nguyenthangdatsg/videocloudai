@@ -88,7 +88,7 @@ export function createApp() {
   app.use('/api/tts', createTtsRouter(narrationService, subtitleService));
   app.use('/api/image', createImageRouter());
   app.use('/api/storyboard', createStoryboardRouter(narrationService, subtitleService));
-  app.use('/api/drama', createDramaRouter(dramaService));
+  app.use('/api/drama', createDramaRouter(dramaService, narrationService, subtitleService));
 
   // Queue WebSocket events endpoint (SSE)
   app.get('/api/events', (req, res) => {
