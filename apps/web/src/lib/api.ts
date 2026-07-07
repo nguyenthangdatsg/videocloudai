@@ -682,7 +682,7 @@ export type { DramaProject, DramaEpisode, DramaCharacter, DramaLocation, DramaSc
 
 export const dramaApi = {
   // Projects
-  listProjects: () => api.get<DramaProject[]>('/drama/projects').then(r => r.data),
+  listProjects: (mode?: 'video' | 'image') => api.get<DramaProject[]>('/drama/projects', { params: { mode } }).then(r => r.data),
   getProject: (id: string) => api.get<DramaProject>(`/drama/projects/${id}`).then(r => r.data),
   createProject: (data: CreateDramaProjectInput) => api.post<DramaProject>('/drama/projects', data).then(r => r.data),
   updateProject: (id: string, data: Partial<DramaProject>) => api.patch<DramaProject>(`/drama/projects/${id}`, data).then(r => r.data),

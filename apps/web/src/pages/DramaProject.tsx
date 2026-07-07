@@ -283,7 +283,7 @@ export function DramaProjectPage() {
       {/* Header */}
       <div className="glass px-6 py-3">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/drama')} className="p-1.5 rounded-lg hover:bg-c-elevated text-c-muted hover:text-c-text transition-colors">
+          <button onClick={() => navigate(project.mode === 'image' ? '/image-drama' : '/drama')} className="p-1.5 rounded-lg hover:bg-c-elevated text-c-muted hover:text-c-text transition-colors">
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div className="min-w-0 flex-1">
@@ -487,8 +487,8 @@ export function DramaProjectPage() {
                 onGenerateStoryboard={() => storyboardMutation.mutate()} isGenerating={storyboardMutation.isPending} hasScript={!!selectedEpisode.script}
               />
             )}
-            {activeTab === 'video' && selectedEpisode && (
-              <VideoAudioTab projectId={id!} episodeId={selectedEpisodeId!} scenes={scenes ?? []} episode={selectedEpisode} />
+            {activeTab === 'video' && selectedEpisode && project && (
+              <VideoAudioTab project={project} projectId={id!} episodeId={selectedEpisodeId!} scenes={scenes ?? []} episode={selectedEpisode} />
             )}
             {activeTab === 'export' && selectedEpisode && (
               <ExportTab project={project} episode={selectedEpisode} scenes={scenes ?? []} />
@@ -1107,7 +1107,7 @@ function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt }: {
 
 // ── Video & Audio Tab ──
 
-function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: string; episodeId: string; scenes: DramaScene[]; episode: DramaEpisode }) {
+function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { project: DramaProject; projectId: string; episodeId: string; scenes: DramaScene[]; episode: DramaEpisode }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const allShots = scenes.flatMap(s => s.shots);
@@ -1512,7 +1512,10 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
                             <button
                               disabled={animatingShots.has(shot.id)}
                               onClick={() => handleAnimateShot(shot.id, 'motion')}
-                              className="flex-1 flex items-center justify-center gap-1 text-[9px] py-1 px-1.5 rounded bg-violet-600/10 text-violet-400 hover:bg-violet-600/20 disabled:opacity-50 transition-colors font-medium"
+                              className={clsx(
+                                "flex items-center justify-center gap-1 text-[9px] py-1 px-1.5 rounded bg-violet-600/10 text-violet-400 hover:bg-violet-600/20 disabled:opacity-50 transition-colors font-medium",
+                                project.mode === 'image' ? "w-full" : "flex-1"
+                              )}
                               title="Instantly animate still image using camera movements (pan, zoom, tilt)"
                             >
                               {animatingShots.has(shot.id) ? (
@@ -1524,21 +1527,23 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
                                 </>
                               )}
                             </button>
-                            <button
-                              disabled={animatingShots.has(shot.id)}
-                              onClick={() => handleAnimateShot(shot.id, 'ai')}
-                              className="flex-1 flex items-center justify-center gap-1 text-[9px] py-1 px-1.5 rounded bg-cyan-600/10 text-cyan-400 hover:bg-cyan-600/20 disabled:opacity-50 transition-colors font-medium"
-                              title="Generate an AI video clip from the shot prompt using Google Gemini Veo"
-                            >
-                              {animatingShots.has(shot.id) ? (
-                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                              ) : (
-                                <>
-                                  <Video className="w-2.5 h-2.5" />
-                                  AI Gen
-                                </>
-                              )}
-                            </button>
+                            {project.mode !== 'image' && (
+                              <button
+                                disabled={animatingShots.has(shot.id)}
+                                onClick={() => handleAnimateShot(shot.id, 'ai')}
+                                className="flex-1 flex items-center justify-center gap-1 text-[9px] py-1 px-1.5 rounded bg-cyan-600/10 text-cyan-400 hover:bg-cyan-600/20 disabled:opacity-50 transition-colors font-medium"
+                                title="Generate an AI video clip from the shot prompt using Google Gemini Veo"
+                              >
+                                {animatingShots.has(shot.id) ? (
+                                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                ) : (
+                                  <>
+                                    <Video className="w-2.5 h-2.5" />
+                                    AI Gen
+                                  </>
+                                )}
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>

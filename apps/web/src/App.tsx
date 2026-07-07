@@ -44,6 +44,8 @@ function AppShell() {
             <Route path="/storyboard/:id" element={<ErrorBoundary><Storyboard /></ErrorBoundary>} />
             <Route path="/drama" element={<DramaList />} />
             <Route path="/drama/:id" element={<DramaProjectPage />} />
+            <Route path="/image-drama" element={<DramaList />} />
+            <Route path="/image-drama/:id" element={<DramaProjectPage />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>

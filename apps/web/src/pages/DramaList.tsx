@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { clsx } from 'clsx';
@@ -12,6 +12,7 @@ import {
   Users,
   Clock,
   Sparkles,
+  FileImage,
 } from 'lucide-react';
 import { dramaApi } from '../lib/api';
 import type { DramaProject, CreateDramaProjectInput, DramaGenre, DramaTone, DramaArtStyle, DramaAspectRatio, EpisodeFormat } from '@videocloudai/shared';
@@ -59,12 +60,15 @@ const STAGES = ['setup', 'story', 'script', 'characters', 'locations', 'storyboa
 export function DramaList() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
 
+  const isImageMode = location.pathname.startsWith('/image-drama');
+
   const { data: projects, isLoading } = useQuery({
-    queryKey: ['drama', 'projects'],
-    queryFn: dramaApi.listProjects,
+    queryKey: ['drama', 'projects', isImageMode ? 'image' : 'video'],
+    queryFn: () => dramaApi.listProjects(isImageMode ? 'image' : 'video'),
   });
 
   const { data: stats } = useQuery({
@@ -85,11 +89,17 @@ export function DramaList() {
           <div>
             <h1 className="text-xl font-bold text-c-text flex items-center gap-3">
               <div className="w-8 h-8 rounded-xl bg-accent-muted flex items-center justify-center">
-                <Film className="w-4.5 h-4.5 text-accent-primary" />
+                {isImageMode ? (
+                  <FileImage className="w-4.5 h-4.5 text-accent-primary" />
+                ) : (
+                  <Film className="w-4.5 h-4.5 text-accent-primary" />
+                )}
               </div>
-              {t('drama.title')}
+              {isImageMode ? t('nav.imageDramaStudio') : t('drama.title')}
             </h1>
-            <p className="text-sm text-c-muted mt-1">{t('drama.subtitle')}</p>
+            <p className="text-sm text-c-muted mt-1">
+              {isImageMode ? "Create vertical short drama stories using still image generation and Ken Burns effects." : t('drama.subtitle')}
+            </p>
           </div>
           <button
             onClick={() => setShowCreate(true)}
@@ -140,7 +150,7 @@ export function DramaList() {
               <ProjectCard
                 key={project.id}
                 project={project}
-                onOpen={() => navigate(`/drama/${project.id}`)}
+                onOpen={() => navigate(`${isImageMode ? '/image-drama' : '/drama'}/${project.id}`)}
                 onDelete={() => {
                   if (confirm(t('drama.deleteConfirm'))) {
                     deleteMutation.mutate(project.id);
@@ -156,7 +166,8 @@ export function DramaList() {
       {showCreate && (
         <CreateProjectModal
           onClose={() => setShowCreate(false)}
-          onCreate={(project) => navigate(`/drama/${project.id}`)}
+          onCreate={(project) => navigate(`${isImageMode ? '/image-drama' : '/drama'}/${project.id}`)}
+          mode={isImageMode ? 'image' : 'video'}
         />
       )}
     </div>
@@ -227,7 +238,7 @@ function ProjectCard({ project, onOpen, onDelete }: { project: DramaProject; onO
   );
 }
 
-function CreateProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p: DramaProject) => void }) {
+function CreateProjectModal({ onClose, onCreate, mode }: { onClose: () => void; onCreate: (p: DramaProject) => void; mode: 'video' | 'image' }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
@@ -244,6 +255,7 @@ function CreateProjectModal({ onClose, onCreate }: { onClose: () => void; onCrea
     episodeCount: 1,
     storyInput: '',
     inputMode: 'idea',
+    mode,
   });
 
   const createMutation = useMutation({

@@ -57,6 +57,7 @@ export interface DramaProject {
   episodeCount: number;
   createdAt: string;
   updatedAt: string;
+  mode?: 'video' | 'image';
 }
 
 export interface DramaBeat {
@@ -190,6 +191,7 @@ export interface CreateDramaProjectInput {
   episodeCount?: number;
   storyInput?: string;
   inputMode?: 'idea' | 'outline' | 'script' | 'novel' | 'generate';
+  mode?: 'video' | 'image';
 }
 
 // Story generation input

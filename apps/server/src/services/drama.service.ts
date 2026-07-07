@@ -41,10 +41,11 @@ export class DramaService {
   createProject(input: CreateDramaProjectInput): DramaProject {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
+    const mode = input.mode || 'video';
     dbRun(
-      `INSERT INTO drama_projects (id, title, description, genre, tone, art_style, aspect_ratio, language, episode_format, duration_target, status, current_stage, episode_count, story_input, input_mode, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 'setup', ?, ?, ?, ?, ?)`,
-      [id, input.title, input.description ?? '', input.genre, input.tone, input.artStyle, input.aspectRatio, input.language, input.episodeFormat, input.durationTarget, input.episodeCount ?? 1, input.storyInput ?? '', input.inputMode ?? 'idea', now, now]
+      `INSERT INTO drama_projects (id, title, description, genre, tone, art_style, aspect_ratio, language, episode_format, duration_target, status, current_stage, episode_count, story_input, input_mode, mode, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 'setup', ?, ?, ?, ?, ?, ?, ?)`,
+      [id, input.title, input.description ?? '', input.genre, input.tone, input.artStyle, input.aspectRatio, input.language, input.episodeFormat, input.durationTarget, input.episodeCount ?? 1, input.storyInput ?? '', input.inputMode ?? 'idea', mode, now, now]
     );
 
     // Create initial episode(s)
@@ -68,11 +69,19 @@ export class DramaService {
     return row ? this.mapProject(row) : undefined;
   }
 
-  listProjects(): DramaProject[] {
-    const rows = dbAll<Record<string, unknown>>(
-      'SELECT * FROM drama_projects ORDER BY updated_at DESC'
-    );
-    return rows.map(r => this.mapProject(r));
+  listProjects(mode?: 'video' | 'image'): DramaProject[] {
+    if (mode) {
+      const rows = dbAll<Record<string, unknown>>(
+        'SELECT * FROM drama_projects WHERE mode = ? ORDER BY updated_at DESC',
+        [mode]
+      );
+      return rows.map(r => this.mapProject(r));
+    } else {
+      const rows = dbAll<Record<string, unknown>>(
+        'SELECT * FROM drama_projects ORDER BY updated_at DESC'
+      );
+      return rows.map(r => this.mapProject(r));
+    }
   }
 
   updateProject(id: string, data: Partial<DramaProject>): DramaProject | undefined {
@@ -121,6 +130,7 @@ export class DramaService {
       episodeCount: row.episode_count as number,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
+      mode: (row.mode || 'video') as 'video' | 'image',
     };
   }
 

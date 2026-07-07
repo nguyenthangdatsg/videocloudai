@@ -108,6 +108,7 @@ export function getDb(): Database.Database {
     `ALTER TABLE drama_episodes ADD COLUMN audio_duration REAL`,
     `ALTER TABLE drama_episodes ADD COLUMN srt_filename TEXT`,
     `ALTER TABLE drama_episodes ADD COLUMN video_filename TEXT`,
+    `ALTER TABLE drama_projects ADD COLUMN mode TEXT NOT NULL DEFAULT 'video'`,
   ];
   for (const sql of columnMigrations) {
     try { db.exec(sql); } catch { /* column already exists or index already exists */ }
