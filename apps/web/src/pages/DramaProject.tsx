@@ -31,6 +31,7 @@ import {
   Clapperboard,
   Settings,
   Wrench,
+  Video,
 } from 'lucide-react';
 import { dramaApi, musicApi } from '../lib/api';
 import type {
@@ -1293,14 +1294,14 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
 
   const pendingGenCount = getShotsForGeneration(false).length;
 
-  const handleAnimateShot = async (shotId: string) => {
+  const handleAnimateShot = async (shotId: string, mode: 'ai' | 'motion' = 'motion') => {
     setAnimatingShots(prev => {
       const next = new Set(prev);
       next.add(shotId);
       return next;
     });
     try {
-      await dramaApi.generateShotVideo(projectId, shotId);
+      await dramaApi.generateShotVideo(projectId, shotId, mode);
       queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
     } catch (err: any) {
       alert(`Animation failed: ${err.message || err}`);
@@ -1507,21 +1508,34 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
                         <p className="text-[10px] text-c-dim truncate mt-0.5">{shot.description}</p>
                         
                         {shot.keyframeUrl && !shot.videoUrl && (
-                          <div className="pt-1">
+                          <div className="pt-1 flex gap-1">
                             <button
                               disabled={animatingShots.has(shot.id)}
-                              onClick={() => handleAnimateShot(shot.id)}
-                              className="w-full flex items-center justify-center gap-1 text-[10px] py-1 px-2 rounded bg-violet-600/10 text-violet-400 hover:bg-violet-600/20 disabled:opacity-50 transition-colors font-medium"
+                              onClick={() => handleAnimateShot(shot.id, 'motion')}
+                              className="flex-1 flex items-center justify-center gap-1 text-[9px] py-1 px-1.5 rounded bg-violet-600/10 text-violet-400 hover:bg-violet-600/20 disabled:opacity-50 transition-colors font-medium"
+                              title="Instantly animate still image using camera movements (pan, zoom, tilt)"
                             >
                               {animatingShots.has(shot.id) ? (
-                                <>
-                                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                                  Animating...
-                                </>
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
                               ) : (
                                 <>
                                   <Sparkles className="w-2.5 h-2.5" />
-                                  Make Video
+                                  Motion
+                                </>
+                              )}
+                            </button>
+                            <button
+                              disabled={animatingShots.has(shot.id)}
+                              onClick={() => handleAnimateShot(shot.id, 'ai')}
+                              className="flex-1 flex items-center justify-center gap-1 text-[9px] py-1 px-1.5 rounded bg-cyan-600/10 text-cyan-400 hover:bg-cyan-600/20 disabled:opacity-50 transition-colors font-medium"
+                              title="Generate an AI video clip from the shot prompt using Google Gemini Veo"
+                            >
+                              {animatingShots.has(shot.id) ? (
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                              ) : (
+                                <>
+                                  <Video className="w-2.5 h-2.5" />
+                                  AI Gen
                                 </>
                               )}
                             </button>

@@ -6,6 +6,33 @@ import { NarrationService } from '../services/narration.service';
 import { SubtitleService } from '../services/subtitle.service';
 import { generateVideoClip } from '../services/image-providers';
 
+function getZoompanFilter(movement: string, w: number, h: number, duration: number): string {
+  const frames = Math.ceil(duration * 24);
+  const size = `${w}x${h}`;
+  const scaleIn = `scale=w=${w * 2}:h=${h * 2}:force_original_aspect_ratio=decrease,pad=w=${w * 2}:h=${h * 2}:x=(ow-iw)/2:y=(oh-ih)/2:color=black`;
+
+  switch (movement) {
+    case 'zoom-in':
+    case 'dolly-in':
+      return `${scaleIn}[sc];[sc]zoompan=z='min(zoom+0.0015,1.5)':d=${frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${size},fps=24,setsar=1/1,format=yuv420p[out]`;
+    case 'zoom-out':
+    case 'dolly-out':
+      return `${scaleIn}[sc];[sc]zoompan=z='max(1.5-0.0015*on,1.0)':d=${frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${size},fps=24,setsar=1/1,format=yuv420p[out]`;
+    case 'pan-left':
+      return `${scaleIn}[sc];[sc]zoompan=z=1.3:d=${frames}:x='(iw-iw/zoom)*(1-on/${frames})':y='ih/2-(ih/zoom/2)':s=${size},fps=24,setsar=1/1,format=yuv420p[out]`;
+    case 'pan-right':
+    case 'tracking':
+      return `${scaleIn}[sc];[sc]zoompan=z=1.3:d=${frames}:x='(iw-iw/zoom)*(on/${frames})':y='ih/2-(ih/zoom/2)':s=${size},fps=24,setsar=1/1,format=yuv420p[out]`;
+    case 'tilt-up':
+      return `${scaleIn}[sc];[sc]zoompan=z=1.3:d=${frames}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(1-on/${frames})':s=${size},fps=24,setsar=1/1,format=yuv420p[out]`;
+    case 'tilt-down':
+      return `${scaleIn}[sc];[sc]zoompan=z=1.3:d=${frames}:x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(on/${frames})':s=${size},fps=24,setsar=1/1,format=yuv420p[out]`;
+    case 'static':
+    default:
+      return `[0:v]scale=w=${w}:h=${h}:force_original_aspect_ratio=decrease[scaled];[scaled]pad=w=${w}:h=${h}:x=(ow-iw)/2:y=(oh-ih)/2:color=black[padded];[padded]fps=24,setsar=1/1,format=yuv420p[out]`;
+  }
+}
+
 export function createDramaRouter(
   dramaService: DramaService,
   narrationService: NarrationService,
@@ -332,24 +359,56 @@ export function createDramaRouter(
 
   router.post('/projects/:projectId/shots/:shotId/generate-video', async (req, res) => {
     const { projectId, shotId } = req.params;
-    const { model } = req.body as { model?: string };
+    const { model, mode = 'motion' } = req.body as { model?: string; mode?: 'ai' | 'motion' };
 
     try {
       const shot = dramaService.getShot(shotId);
       if (!shot) return res.status(404).json({ error: 'Shot not found' });
-      if (!shot.prompt) return res.status(400).json({ error: 'Shot has no prompt generated yet' });
 
       const project = dramaService.getProject(projectId);
       const ar = project?.aspectRatio || '9:16';
+      let w = 720;
+      let h = 1280;
+      if (ar === '16:9') {
+        w = 1280;
+        h = 720;
+      }
 
+      const duration = shot.duration || 4.0;
       const filename = `drama_shot_${shotId}_${Date.now()}.mp4`;
       const videosDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'videos');
       fs.mkdirSync(videosDir, { recursive: true });
       const destPath = path.join(videosDir, filename);
 
-      const duration = shot.duration || 4.0;
+      if (mode === 'ai') {
+        if (!shot.prompt) return res.status(400).json({ error: 'Shot has no prompt generated yet' });
+        await generateVideoClip(shot.prompt, ar, destPath, duration, model);
+      } else {
+        if (!shot.keyframeUrl) return res.status(400).json({ error: 'Shot has no keyframe image generated yet' });
+        const imagesDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'images');
+        const imgPath = path.join(imagesDir, path.basename(shot.keyframeUrl));
+        if (!fs.existsSync(imgPath)) return res.status(400).json({ error: 'Keyframe image file not found on disk' });
 
-      const { providerId } = await generateVideoClip(shot.prompt, ar, destPath, duration, model);
+        const filter = getZoompanFilter(shot.cameraMovement || 'static', w, h, duration);
+
+        await new Promise<void>((resolve, reject) => {
+          const { spawn } = require('child_process');
+          const proc = spawn('ffmpeg', [
+            '-y',
+            '-loop', '1',
+            '-i', imgPath,
+            '-filter_complex', filter,
+            '-map', '[out]',
+            '-t', String(duration),
+            '-an',
+            destPath
+          ]);
+          proc.on('close', (code: number) => {
+            if (code === 0) resolve();
+            else reject(new Error('FFmpeg failed generating zoompan video clip'));
+          });
+        });
+      }
 
       const videoUrl = `/api/image/video/file/${filename}`;
 
@@ -734,7 +793,9 @@ export function createDramaRouter(
           }
         }
 
-        const filter = `[0:v]scale=w=${w}:h=${h}:force_original_aspect_ratio=decrease[scaled];[scaled]pad=w=${w}:h=${h}:x=(ow-iw)/2:y=(oh-ih)/2:color=black[padded];[padded]fps=24,setsar=1/1,format=yuv420p[out]`;
+        const filter = isVideo
+          ? `[0:v]scale=w=${w}:h=${h}:force_original_aspect_ratio=decrease[scaled];[scaled]pad=w=${w}:h=${h}:x=(ow-iw)/2:y=(oh-ih)/2:color=black[padded];[padded]fps=24,setsar=1/1,format=yuv420p[out]`
+          : getZoompanFilter(shot.cameraMovement || 'static', w, h, duration);
 
         if (inputPath) {
           await new Promise<void>((resolve, reject) => {
