@@ -84,6 +84,7 @@ export interface DramaEpisode {
   audioFilename?: string | null;
   audioDuration?: number | null;
   srtFilename?: string | null;
+  videoFilename?: string | null;
   createdAt: string;
   updatedAt: string;
 }

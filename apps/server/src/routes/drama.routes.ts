@@ -629,6 +629,218 @@ export function createDramaRouter(
     }
   });
 
+  router.post('/projects/:projectId/episodes/:episodeId/export', async (req, res) => {
+    const { projectId, episodeId } = req.params;
+    const { preset = 'tiktok', ratio = '9:16' } = req.body as { preset?: string; ratio?: string };
+
+    try {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Transfer-Encoding', 'chunked');
+
+      res.write(JSON.stringify({ progress: true, step: 'start', detail: 'Locating scenes and shots...' }) + '\n');
+      const episode = dramaService.getEpisode(episodeId);
+      if (!episode) throw new Error('Episode not found');
+
+      const scenes = dramaService.listScenes(episodeId);
+      scenes.sort((a, b) => a.sortOrder - b.sortOrder);
+
+      const allShots: any[] = [];
+      for (const scene of scenes) {
+        const sceneShots = dramaService.listShots(scene.id);
+        sceneShots.sort((a, b) => a.sortOrder - b.sortOrder);
+        allShots.push(...sceneShots);
+      }
+
+      if (allShots.length === 0) {
+        throw new Error('No shots found in this episode');
+      }
+
+      let w = 720;
+      let h = 1280;
+      if (preset === 'youtube' || ratio === '16:9') {
+        w = 1280;
+        h = 720;
+      }
+
+      const tempDir = path.join(process.env.CACHE_DIR ?? './cache', 'drama_export', `${episodeId}_${Date.now()}`);
+      fs.mkdirSync(tempDir, { recursive: true });
+
+      const clipPaths: string[] = [];
+
+      const imagesDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'images');
+      const videosDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'videos');
+
+      for (let i = 0; i < allShots.length; i++) {
+        const shot = allShots[i];
+        const shotIndex = i + 1;
+        const duration = shot.duration || 4.0;
+        const clipPath = path.join(tempDir, `clip_${shotIndex}.mp4`);
+        clipPaths.push(clipPath);
+
+        res.write(JSON.stringify({ progress: true, step: 'clip', detail: `Processing clip ${shotIndex}/${allShots.length} (${duration}s)...` }) + '\n');
+
+        let inputPath = '';
+        let isVideo = false;
+
+        if (shot.videoUrl) {
+          const vPath = path.join(videosDir, path.basename(shot.videoUrl));
+          if (fs.existsSync(vPath)) {
+            inputPath = vPath;
+            isVideo = true;
+          }
+        }
+
+        if (!inputPath && shot.keyframeUrl) {
+          const imgPath = path.join(imagesDir, path.basename(shot.keyframeUrl));
+          if (fs.existsSync(imgPath)) {
+            inputPath = imgPath;
+            isVideo = false;
+          }
+        }
+
+        const filter = `[0:v]scale=w=${w}:h=${h}:force_original_aspect_ratio=decrease[scaled];[scaled]pad=w=${w}:h=${h}:x=(ow-iw)/2:y=(oh-ih)/2:color=black[padded];[padded]fps=24,setsar=1/1,format=yuv420p[out]`;
+
+        if (inputPath) {
+          await new Promise<void>((resolve, reject) => {
+            const { spawn } = require('child_process');
+            const args = isVideo ? [
+              '-y',
+              '-i', inputPath,
+              '-filter_complex', filter,
+              '-map', '[out]',
+              '-t', String(duration),
+              '-an',
+              clipPath
+            ] : [
+              '-y',
+              '-loop', '1',
+              '-i', inputPath,
+              '-filter_complex', filter,
+              '-map', '[out]',
+              '-t', String(duration),
+              '-an',
+              clipPath
+            ];
+            const proc = spawn('ffmpeg', args);
+            proc.on('close', (code: number) => {
+              if (code === 0) resolve();
+              else reject(new Error(`FFmpeg failed on clip ${shotIndex}`));
+            });
+          });
+        } else {
+          await new Promise<void>((resolve, reject) => {
+            const { spawn } = require('child_process');
+            const proc = spawn('ffmpeg', [
+              '-y',
+              '-f', 'lavfi',
+              '-i', `color=c=black:s=${w}x${h}:r=24`,
+              '-t', String(duration),
+              '-pix_fmt', 'yuv420p',
+              '-an',
+              clipPath
+            ]);
+            proc.on('close', (code: number) => {
+              if (code === 0) resolve();
+              else reject(new Error(`FFmpeg failed blank clip ${shotIndex}`));
+            });
+          });
+        }
+      }
+
+      res.write(JSON.stringify({ progress: true, step: 'concat', detail: 'Stitching video clips together...' }) + '\n');
+      const concatList = path.join(tempDir, 'concat.txt');
+      const concatContent = clipPaths.map(p => `file '${path.resolve(p).replace(/\\/g, '/')}'`).join('\n');
+      fs.writeFileSync(concatList, concatContent, 'utf-8');
+
+      const mergedVideoOnly = path.join(tempDir, 'merged_video.mp4');
+      await new Promise<void>((resolve, reject) => {
+        const { spawn } = require('child_process');
+        const proc = spawn('ffmpeg', [
+          '-y',
+          '-f', 'concat',
+          '-safe', '0',
+          '-i', concatList,
+          '-c', 'copy',
+          mergedVideoOnly
+        ]);
+        proc.on('close', (code: number) => {
+          if (code === 0) resolve();
+          else reject(new Error('FFmpeg failed concatenating video clips'));
+        });
+      });
+
+      const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders');
+      fs.mkdirSync(rendersDir, { recursive: true });
+
+      const finalFilename = `drama_episode_${episodeId}.mp4`;
+      const finalOutputPath = path.join(rendersDir, finalFilename);
+
+      let finalArgs: string[] = [];
+      const narrationDir = path.join(process.env.CACHE_DIR ?? './cache', 'narration');
+      let audioPath = '';
+
+      if (episode.audioFilename) {
+        audioPath = path.join(narrationDir, episode.audioFilename);
+      }
+
+      if (audioPath && fs.existsSync(audioPath)) {
+        res.write(JSON.stringify({ progress: true, step: 'mux', detail: 'Dubbing dialogue audio and sound effects track...' }) + '\n');
+        finalArgs = [
+          '-y',
+          '-i', mergedVideoOnly,
+          '-i', audioPath,
+          '-c:v', 'copy',
+          '-c:a', 'aac',
+          '-map', '0:v:0',
+          '-map', '1:a:0',
+          '-shortest',
+          finalOutputPath
+        ];
+      } else {
+        res.write(JSON.stringify({ progress: true, step: 'mux', detail: 'No generated audio track found. Exporting silent video...' }) + '\n');
+        finalArgs = [
+          '-y',
+          '-i', mergedVideoOnly,
+          '-f', 'lavfi',
+          '-i', 'anullsrc=r=44100:cl=mono',
+          '-c:v', 'copy',
+          '-c:a', 'aac',
+          '-shortest',
+          finalOutputPath
+        ];
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const { spawn } = require('child_process');
+        const proc = spawn('ffmpeg', finalArgs);
+        proc.on('close', (code: number) => {
+          if (code === 0) resolve();
+          else reject(new Error('FFmpeg failed dubbing audio into video'));
+        });
+      });
+
+      dramaService.updateEpisode(episodeId, {
+        videoFilename: finalFilename
+      });
+
+      res.write(JSON.stringify({
+        success: true,
+        videoFilename: finalFilename,
+        url: `/renders/${finalFilename}`
+      }) + '\n');
+      res.end();
+
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch { /* ignore */ }
+
+    } catch (err) {
+      res.write(JSON.stringify({ error: (err as Error).message }) + '\n');
+      res.end();
+    }
+  });
+
   // ── Stats ──
 
   router.get('/stats', (_req, res) => {

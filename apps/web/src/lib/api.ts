@@ -754,6 +754,26 @@ export const dramaApi = {
   },
   generateSubtitles: (projectId: string, episodeId: string) =>
     api.post<{ success: boolean; srtFilename: string; srtContent: string }>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-subtitles`).then(r => r.data),
+  exportEpisode: async (
+    projectId: string,
+    episodeId: string,
+    data: { preset?: string; ratio?: string },
+    onProgress: (step: string, detail?: string) => void,
+  ): Promise<{ videoFilename: string; url: string }> => {
+    const res = await fetch(`/api/drama/projects/${projectId}/episodes/${episodeId}/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    let result: any = null;
+    await readNDJSON(res, (parsed) => {
+      if (parsed.error) throw new Error(parsed.error as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+      if (parsed.success) result = parsed;
+    });
+    if (!result) throw new Error('No result from video export');
+    return result;
+  },
 
   // Stats
   stats: () => api.get('/drama/stats').then(r => r.data),

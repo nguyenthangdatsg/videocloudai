@@ -148,7 +148,7 @@ export class DramaService {
       scriptVersion: 'script_version', durationEstimate: 'duration_estimate',
       status: 'status', stage: 'stage', reviewScore: 'review_score',
       audioFilename: 'audio_filename', audioDuration: 'audio_duration',
-      srtFilename: 'srt_filename',
+      srtFilename: 'srt_filename', videoFilename: 'video_filename',
     };
     for (const [jsKey, dbCol] of Object.entries(allowed)) {
       if ((data as Record<string, unknown>)[jsKey] !== undefined) {
@@ -185,6 +185,7 @@ export class DramaService {
       audioFilename: row.audio_filename as string | null,
       audioDuration: row.audio_duration as number | null,
       srtFilename: row.srt_filename as string | null,
+      videoFilename: row.video_filename as string | null,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };

@@ -1616,13 +1616,16 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
 
 function ExportTab({ project, episode, scenes }: { project: DramaProject; episode: DramaEpisode; scenes: DramaScene[] }) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [selectedPreset, setSelectedPreset] = useState('tiktok');
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<string[]>([]);
 
   const PRESETS = [
-    { id: 'tiktok', label: t('drama.tiktok'), ratio: '9:16', res: '1080x1920', maxDur: '180s' },
-    { id: 'youtube-shorts', label: t('drama.youtubeShorts'), ratio: '9:16', res: '1080x1920', maxDur: '60s' },
-    { id: 'instagram-reels', label: t('drama.instagramReels'), ratio: '9:16', res: '1080x1920', maxDur: '90s' },
-    { id: 'youtube', label: t('drama.youtube'), ratio: '16:9', res: '1920x1080', maxDur: 'unlimited' },
+    { id: 'tiktok', label: t('drama.tiktok'), ratio: '9:16', res: '720x1280', maxDur: '180s' },
+    { id: 'youtube-shorts', label: t('drama.youtubeShorts'), ratio: '9:16', res: '720x1280', maxDur: '60s' },
+    { id: 'instagram-reels', label: t('drama.instagramReels'), ratio: '9:16', res: '720x1280', maxDur: '90s' },
+    { id: 'youtube', label: t('drama.youtube'), ratio: '16:9', res: '1280x720', maxDur: 'unlimited' },
     { id: 'custom', label: t('drama.customExport'), ratio: project.aspectRatio, res: 'custom', maxDur: 'unlimited' },
   ];
 
@@ -1630,6 +1633,31 @@ function ExportTab({ project, episode, scenes }: { project: DramaProject; episod
   const completedShots = scenes.reduce((sum, s) => sum + s.shots.filter(sh => sh.generationStatus === 'completed').length, 0);
   const totalDuration = scenes.reduce((sum, s) => sum + s.shots.reduce((ss, sh) => ss + sh.duration, 0), 0);
   const readyToExport = completedShots > 0;
+
+  const handleExport = async () => {
+    setExporting(true);
+    setExportProgress(['Starting video rendering & dubbing...']);
+    const activePreset = PRESETS.find(p => p.id === selectedPreset);
+    try {
+      const res = await dramaApi.exportEpisode(
+        project.id,
+        episode.id,
+        {
+          preset: selectedPreset,
+          ratio: activePreset?.ratio || '9:16'
+        },
+        (step, detail) => {
+          setExportProgress(prev => [...prev, `${step}: ${detail || ''}`]);
+        }
+      );
+      setExportProgress(prev => [...prev, `Video exported successfully! Filename: ${res.videoFilename}`]);
+      queryClient.invalidateQueries({ queryKey: ['drama', 'episodes', project.id] });
+    } catch (err: any) {
+      setExportProgress(prev => [...prev, `Error: ${err.message || err}`]);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -1660,9 +1688,57 @@ function ExportTab({ project, episode, scenes }: { project: DramaProject; episod
         </div>
       </div>
 
-      <button disabled={!readyToExport} className="btn-primary flex items-center gap-2 rounded-full disabled:opacity-50">
-        <Download className="w-4 h-4" />{t('drama.exportVideo')}
-      </button>
+      <div className="flex items-center gap-4">
+        <button
+          onClick={handleExport}
+          disabled={!readyToExport || exporting}
+          className="btn-primary flex items-center gap-2 rounded-full px-5 py-2.5 disabled:opacity-50"
+        >
+          {exporting ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Exporting Video...
+            </>
+          ) : (
+            <>
+              <Download className="w-4 h-4" />
+              {t('drama.exportVideo')}
+            </>
+          )}
+        </button>
+
+        {episode.videoFilename && (
+          <span className="text-xs text-emerald-400 flex items-center gap-1">
+            <CheckCircle2 className="w-4 h-4" />
+            Video Export Ready
+          </span>
+        )}
+      </div>
+
+      {exportProgress.length > 0 && (
+        <div className="border border-c-border rounded-xl p-3 bg-c-surface max-h-48 overflow-y-auto text-xs text-c-muted space-y-0.5 font-mono">
+          {exportProgress.map((msg, i) => <div key={i}>{msg}</div>)}
+        </div>
+      )}
+
+      {episode.videoFilename && (
+        <div className="card rounded-2xl p-4 space-y-3">
+          <h4 className="text-xs font-medium text-c-text">Preview Exported Dubbed Video</h4>
+          <div className="aspect-video bg-black rounded-xl overflow-hidden max-w-lg">
+            <video controls src={`/renders/${episode.videoFilename}`} className="w-full h-full" />
+          </div>
+          <div className="flex justify-start">
+            <a
+              href={`/renders/${episode.videoFilename}`}
+              download
+              className="btn-secondary flex items-center gap-1.5 text-xs rounded-full px-4 py-2 hover:bg-c-elevated"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download Dubbed Video
+            </a>
+          </div>
+        </div>
+      )}
 
       {!readyToExport && <p className="text-xs text-c-dim">{t('drama.noScenes')}</p>}
     </div>
