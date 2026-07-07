@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { DramaService } from '../services/drama.service';
 import { NarrationService } from '../services/narration.service';
 import { SubtitleService } from '../services/subtitle.service';
+import { generateVideoClip } from '../services/image-providers';
 
 export function createDramaRouter(
   dramaService: DramaService,
@@ -324,6 +325,40 @@ export function createDramaRouter(
     try {
       const shot = await dramaService.generateShotPrompt(req.params.projectId, req.params.shotId);
       res.json(shot);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/projects/:projectId/shots/:shotId/generate-video', async (req, res) => {
+    const { projectId, shotId } = req.params;
+    const { model } = req.body as { model?: string };
+
+    try {
+      const shot = dramaService.getShot(shotId);
+      if (!shot) return res.status(404).json({ error: 'Shot not found' });
+      if (!shot.prompt) return res.status(400).json({ error: 'Shot has no prompt generated yet' });
+
+      const project = dramaService.getProject(projectId);
+      const ar = project?.aspectRatio || '9:16';
+
+      const filename = `drama_shot_${shotId}_${Date.now()}.mp4`;
+      const videosDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'videos');
+      fs.mkdirSync(videosDir, { recursive: true });
+      const destPath = path.join(videosDir, filename);
+
+      const duration = shot.duration || 4.0;
+
+      const { providerId } = await generateVideoClip(shot.prompt, ar, destPath, duration, model);
+
+      const videoUrl = `/api/image/video/file/${filename}`;
+
+      const updated = dramaService.updateShot(shotId, {
+        videoUrl,
+        generationStatus: 'completed'
+      });
+
+      res.json(updated);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

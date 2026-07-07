@@ -1133,6 +1133,7 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
   const [audioProgress, setAudioProgress] = useState<string[]>([]);
   const [generatingSubtitles, setGeneratingSubtitles] = useState(false);
   const [subtitlesMsg, setSubtitlesMsg] = useState('');
+  const [animatingShots, setAnimatingShots] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     musicApi.cached().then(setCachedMusic).catch(() => {});
@@ -1291,6 +1292,26 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
     allShots.filter(sh => sh.prompt && !sh.keyframeUrl && !shotStatuses.has(sh.id)).length;
 
   const pendingGenCount = getShotsForGeneration(false).length;
+
+  const handleAnimateShot = async (shotId: string) => {
+    setAnimatingShots(prev => {
+      const next = new Set(prev);
+      next.add(shotId);
+      return next;
+    });
+    try {
+      await dramaApi.generateShotVideo(projectId, shotId);
+      queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+    } catch (err: any) {
+      alert(`Animation failed: ${err.message || err}`);
+    } finally {
+      setAnimatingShots(prev => {
+        const next = new Set(prev);
+        next.delete(shotId);
+        return next;
+      });
+    }
+  };
 
   const handleGenerateAudio = async () => {
     setGeneratingAudio(true);
@@ -1461,7 +1482,9 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
                     >
                       {/* Image area */}
                       <div className="aspect-video bg-c-elevated flex items-center justify-center relative">
-                        {(shot.keyframeUrl || (liveStatus === 'done')) ? (
+                        {shot.videoUrl ? (
+                          <video src={shot.videoUrl} controls className="w-full h-full object-cover" />
+                        ) : (shot.keyframeUrl || (liveStatus === 'done')) ? (
                           <img src={shot.keyframeUrl} alt="" className="w-full h-full object-cover" />
                         ) : displayStatus === 'generating' ? (
                           <Loader2 className="w-5 h-5 text-cyan-400 animate-spin" />
@@ -1475,13 +1498,35 @@ function VideoAudioTab({ projectId, episodeId, scenes, episode }: { projectId: s
                         )}
                       </div>
                       {/* Info */}
-                      <div className="px-2 py-1.5">
+                      <div className="px-2 py-1.5 space-y-1">
                         <div className="flex items-center gap-1.5 text-xs">
                           <span className="font-medium text-c-text">{t('drama.shot', { n: shot.shotNumber })}</span>
                           <span className="text-c-dim">{shot.duration}s</span>
                           {shot.prompt && <span title="Has prompt"><Wand2 className="w-2.5 h-2.5 text-violet-400" /></span>}
                         </div>
                         <p className="text-[10px] text-c-dim truncate mt-0.5">{shot.description}</p>
+                        
+                        {shot.keyframeUrl && !shot.videoUrl && (
+                          <div className="pt-1">
+                            <button
+                              disabled={animatingShots.has(shot.id)}
+                              onClick={() => handleAnimateShot(shot.id)}
+                              className="w-full flex items-center justify-center gap-1 text-[10px] py-1 px-2 rounded bg-violet-600/10 text-violet-400 hover:bg-violet-600/20 disabled:opacity-50 transition-colors font-medium"
+                            >
+                              {animatingShots.has(shot.id) ? (
+                                <>
+                                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                  Animating...
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="w-2.5 h-2.5" />
+                                  Make Video
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
