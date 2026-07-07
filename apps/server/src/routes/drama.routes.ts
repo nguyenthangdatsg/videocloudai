@@ -940,9 +940,10 @@ export function createDramaRouter(
 
   // ── Stats ──
 
-  router.get('/stats', (_req, res) => {
+  router.get('/stats', (req, res) => {
     try {
-      res.json(dramaService.getStats());
+      const mode = req.query.mode as 'video' | 'image' | undefined;
+      res.json(dramaService.getStats(mode));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

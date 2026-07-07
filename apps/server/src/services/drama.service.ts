@@ -1095,12 +1095,16 @@ Output ONLY the revised script text, formatted for readability.`,
 
   // ── Stats ──
 
-  getStats(): { totalProjects: number; inProgress: number; completed: number; totalEpisodes: number; totalCharacters: number } {
-    const totalProjects = dbGet<{ c: number }>("SELECT COUNT(*) as c FROM drama_projects")?.c ?? 0;
-    const inProgress = dbGet<{ c: number }>("SELECT COUNT(*) as c FROM drama_projects WHERE status = 'in_progress'")?.c ?? 0;
-    const completed = dbGet<{ c: number }>("SELECT COUNT(*) as c FROM drama_projects WHERE status = 'completed'")?.c ?? 0;
-    const totalEpisodes = dbGet<{ c: number }>("SELECT COUNT(*) as c FROM drama_episodes")?.c ?? 0;
-    const totalCharacters = dbGet<{ c: number }>("SELECT COUNT(*) as c FROM drama_characters")?.c ?? 0;
+  getStats(mode?: 'video' | 'image'): { totalProjects: number; inProgress: number; completed: number; totalEpisodes: number; totalCharacters: number } {
+    const pWhere = mode ? `WHERE mode = '${mode}'` : '';
+    const eWhere = mode ? `WHERE project_id IN (SELECT id FROM drama_projects WHERE mode = '${mode}')` : '';
+    const cWhere = mode ? `WHERE project_id IN (SELECT id FROM drama_projects WHERE mode = '${mode}')` : '';
+
+    const totalProjects = dbGet<{ c: number }>(`SELECT COUNT(*) as c FROM drama_projects ${pWhere}`)?.c ?? 0;
+    const inProgress = dbGet<{ c: number }>(`SELECT COUNT(*) as c FROM drama_projects ${mode ? `WHERE status = 'in_progress' AND mode = '${mode}'` : "WHERE status = 'in_progress'"}`)?.c ?? 0;
+    const completed = dbGet<{ c: number }>(`SELECT COUNT(*) as c FROM drama_projects ${mode ? `WHERE status = 'completed' AND mode = '${mode}'` : "WHERE status = 'completed'"}`)?.c ?? 0;
+    const totalEpisodes = dbGet<{ c: number }>(`SELECT COUNT(*) as c FROM drama_episodes ${eWhere}`)?.c ?? 0;
+    const totalCharacters = dbGet<{ c: number }>(`SELECT COUNT(*) as c FROM drama_characters ${cWhere}`)?.c ?? 0;
     return { totalProjects, inProgress, completed, totalEpisodes, totalCharacters };
   }
 }

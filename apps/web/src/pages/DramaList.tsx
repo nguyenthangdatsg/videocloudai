@@ -72,8 +72,8 @@ export function DramaList() {
   });
 
   const { data: stats } = useQuery({
-    queryKey: ['drama', 'stats'],
-    queryFn: dramaApi.stats,
+    queryKey: ['drama', 'stats', isImageMode ? 'image' : 'video'],
+    queryFn: () => dramaApi.stats(isImageMode ? 'image' : 'video'),
   });
 
   const deleteMutation = useMutation({

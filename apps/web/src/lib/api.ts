@@ -777,7 +777,7 @@ export const dramaApi = {
   },
 
   // Stats
-  stats: () => api.get('/drama/stats').then(r => r.data),
+  stats: (mode?: 'video' | 'image') => api.get<{ totalProjects: number; inProgress: number; completed: number; totalEpisodes: number; totalCharacters: number }>('/drama/stats', { params: { mode } }).then(r => r.data),
 };
 
 export interface ImageLibraryItem {
