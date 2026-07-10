@@ -19,6 +19,7 @@ import type { MotionEffect } from '../../../lib/api';
 import { useStoryboard } from '../StoryboardContext';
 import { fmtTime, parseTimeInput } from '../utils';
 import { MusicPanel } from './MusicPanel';
+import { SubtitlePanel } from './SubtitlePanel';
 
 export function TimelineStep() {
   const {
@@ -84,6 +85,8 @@ export function TimelineStep() {
     setFrameTransition,
     frameHoldTime,
     setFrameHoldTime,
+    subtitleStyle,
+    setSubtitleStyle,
   } = useStoryboard();
 
   // Computed values
@@ -547,6 +550,15 @@ export function TimelineStep() {
             </div>
           )}
         </div>
+
+        {/* Subtitle style controls */}
+        <SubtitlePanel
+          subtitleStyle={subtitleStyle}
+          setSubtitleStyle={setSubtitleStyle}
+          saveProject={saveProject}
+          t={t}
+          sampleText={segments[0]?.text}
+        />
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">

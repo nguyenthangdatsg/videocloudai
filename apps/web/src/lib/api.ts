@@ -473,6 +473,24 @@ export type MotionEffect = 'static' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan
 
 export type MediaType = 'image' | 'video';
 
+export interface SubtitleStyle {
+  enabled: boolean;
+  fontFamily: string;
+  fontSize: number;
+  fontColor: string;
+  fontWeight: 'normal' | 'bold';
+  strokeColor: string;
+  strokeWidth: number;
+  bgColor: string;
+  bgOpacity: number;
+  position: 'top' | 'center' | 'bottom';
+  alignment: 'left' | 'center' | 'right';
+  marginX: number;
+  marginBottom: number;
+  uppercase: boolean;
+  animation: 'none' | 'fade' | 'word-highlight' | 'karaoke';
+}
+
 export interface StoryboardSegment {
   imageUrl: string;
   imageFilename: string;
@@ -532,11 +550,13 @@ export const storyboardApi = {
   generatePrompts: async (
     data: { segments: Array<{ timestamp: string; text: string }>; styleTemplate?: string; visualStyle?: string; aspectRatio?: string },
     onProgress: (step: string, detail?: string) => void,
+    signal?: AbortSignal,
   ): Promise<StoryboardPromptItem[]> => {
     const res = await fetch('/api/storyboard/generate-prompts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
+      signal,
     });
     let result: StoryboardPromptItem[] = [];
     await readNDJSON(res, (parsed) => {
@@ -554,7 +574,7 @@ export const storyboardApi = {
     api.post<{ segments: StoryboardSegment[] }>('/storyboard/match', data).then((r) => r.data.segments),
 
   assemble: async (
-    data: { segments: StoryboardSegment[]; audioFilename: string; aspectRatio?: string; bgMusicFilename?: string; voiceVolume?: number; musicVolume?: number; outputName?: string; speed?: number; bgColor?: string },
+    data: { segments: StoryboardSegment[]; audioFilename: string; aspectRatio?: string; bgMusicFilename?: string; voiceVolume?: number; musicVolume?: number; outputName?: string; speed?: number; bgColor?: string; subtitleStyle?: SubtitleStyle },
     onProgress: (step: string, detail?: string) => void,
     signal?: AbortSignal,
   ): Promise<{ filename: string; url: string; sizeKB: number; duration: number }> => {
@@ -648,6 +668,7 @@ export interface StoryboardProject extends StoryboardProjectSummary {
   topicsPrompt?: string; scriptPrompt?: string; imagePromptPrompt?: string; metadataPrompt?: string;
   thumbnailBgColor?: string;
   bgColor?: string;
+  subtitleStyle?: SubtitleStyle;
   stageParts: Record<string, Array<{ label: string; content: string }>>;
 }
 

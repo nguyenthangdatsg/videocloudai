@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Wand2, ArrowRight, Trash2, Copy, Download, Pencil, Merge, Scissors, RefreshCw } from 'lucide-react';
+import { Wand2, ArrowRight, Trash2, Copy, Download, Pencil, Merge, Scissors, RefreshCw, Square } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
 import { StagePromptEditor } from './StagePromptEditor';
@@ -14,7 +14,7 @@ export function PromptsStep() {
     savingPrompt, savedPromptStage, handleSaveStagePrompt,
     prompts, setPrompts, generatingPrompts, promptProgress,
     editingPromptIdx, setEditingPromptIdx,
-    handleGeneratePrompts, handleRegenPrompt, regenPromptIdx, promptLogRef,
+    handleGeneratePrompts, handleStopPrompts, handleRegenPrompt, regenPromptIdx, promptLogRef,
     transcriptEntries, aspectRatio, setAspectRatio,
     handleMergeEntry, handleSplitAtCursor, handleUpdateEntryText,
     handleSplitEntry,
@@ -250,6 +250,15 @@ export function PromptsStep() {
           {generatingPrompts ? <Spinner size="sm" /> : <Wand2 className="w-3.5 h-3.5" />}
           {generatingPrompts ? t('storyboard.generatingPrompts') : t('storyboard.generatePrompts')}
         </button>
+        {generatingPrompts && (
+          <button
+            onClick={handleStopPrompts}
+            className="btn-secondary text-xs flex items-center gap-1.5 text-red-400 hover:text-red-300 border-red-800/50 hover:border-red-700/50"
+          >
+            <Square className="w-3 h-3 fill-current" />
+            {t('storyboard.stopGeneration')}
+          </button>
+        )}
       </div>
 
       {promptProgress.length > 0 && generatingPrompts && (

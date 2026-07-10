@@ -74,15 +74,10 @@ export function AssembleStep() {
               </select>
               <div className="flex items-center gap-1">
                 <span className="text-[10px] text-c-dim">Speed:</span>
-                <select value={speed} onChange={(e) => { const val = parseFloat(e.target.value); setSpeed(val); saveProject({ speed: val }); }} className="input text-xs py-1">
-                  <option value="0.8">0.8x</option>
-                  <option value="1.0">1.0x (Normal)</option>
-                  <option value="1.1">1.1x</option>
-                  <option value="1.2">1.2x</option>
-                  <option value="1.25">1.25x</option>
-                  <option value="1.5">1.5x</option>
-                  <option value="1.75">1.75x</option>
-                  <option value="2.0">2.0x</option>
+                <select value={String(speed)} onChange={(e) => { const val = parseFloat(e.target.value); setSpeed(val); saveProject({ speed: val }); }} className="input text-xs py-1">
+                  {[0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.5, 1.6, 1.75, 2, 2.5, 3].map(v => (
+                    <option key={v} value={String(v)}>{v === 1 ? '1.0x (Normal)' : `${v}x`}</option>
+                  ))}
                 </select>
               </div>
               <div className="flex items-center gap-1.5">

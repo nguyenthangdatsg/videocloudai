@@ -1,6 +1,7 @@
 export { PromptPartBlock, PART_COLORS } from './PromptPartBlock';
 export { StagePromptEditor } from './StagePromptEditor';
 export { MusicPanel } from './MusicPanel';
+export { SubtitlePanel } from './SubtitlePanel';
 export { TopicsStep } from './TopicsStep';
 export { ScriptStep } from './ScriptStep';
 export { AudioStep } from './AudioStep';

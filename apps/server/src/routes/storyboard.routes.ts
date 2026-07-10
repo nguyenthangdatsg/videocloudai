@@ -1772,7 +1772,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
 
   // Assemble: combine images + audio into a video
   router.post('/assemble', async (req: Request, res: Response) => {
-    const { segments, audioFilename, aspectRatio, bgMusicFilename, voiceVolume, musicVolume, outputName, speed, bgColor } = req.body as {
+    const { segments, audioFilename, aspectRatio, bgMusicFilename, voiceVolume, musicVolume, outputName, speed, bgColor, subtitleStyle } = req.body as {
       segments: StoryboardSegment[];
       audioFilename: string;
       aspectRatio?: string;
@@ -1782,6 +1782,23 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       outputName?: string;
       speed?: number;
       bgColor?: string;
+      subtitleStyle?: {
+        enabled: boolean;
+        fontFamily: string;
+        fontSize: number;
+        fontColor: string;
+        fontWeight: 'normal' | 'bold';
+        strokeColor: string;
+        strokeWidth: number;
+        bgColor: string;
+        bgOpacity: number;
+        position: 'top' | 'center' | 'bottom';
+        alignment: 'left' | 'center' | 'right';
+        marginX: number;
+        marginBottom: number;
+        uppercase: boolean;
+        animation: 'none' | 'fade' | 'word-highlight' | 'karaoke';
+      };
     };
 
     if (!segments?.length || !audioFilename) {
@@ -1818,9 +1835,15 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       if (speedFactor !== 1.0) {
         res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `Adjusting narration speed to ${speedFactor}x...` }) + '\n');
         const speededAudioPath = path.join(concatDir, 'speeded_audio.wav');
+        // FFmpeg atempo only supports 0.5–2.0 per instance; chain multiple filters for values outside that range
+        const atempoFilters: string[] = [];
+        let remaining = speedFactor;
+        while (remaining > 2.0) { atempoFilters.push('atempo=2.0'); remaining /= 2.0; }
+        while (remaining < 0.5) { atempoFilters.push('atempo=0.5'); remaining /= 0.5; }
+        atempoFilters.push(`atempo=${remaining}`);
         await execFileAsync(ffmpeg, [
           '-i', audioPath,
-          '-filter:a', `atempo=${speedFactor}`,
+          '-filter:a', atempoFilters.join(','),
           '-y',
           speededAudioPath,
         ]);
@@ -2019,6 +2042,112 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         videoOnly,
       ], { timeout: 120_000 });
 
+      // Step 3.5: Burn subtitles (if enabled)
+      let videoInput = videoOnly;
+      if (subtitleStyle?.enabled && segments.some(s => s.text?.trim())) {
+        res.write(JSON.stringify({ progress: true, step: 'subtitles', detail: 'Burning subtitles...' }) + '\n');
+
+        // Build ASS subtitle file with custom styling
+        const assAlignMap: Record<string, number> = { 'left': 1, 'center': 2, 'right': 3 };
+        const posVertical = subtitleStyle.position === 'top' ? 8 : subtitleStyle.position === 'center' ? 5 : 2;
+        const assAlign = (assAlignMap[subtitleStyle.alignment] || 2) + (posVertical - 2);
+        // AN values: bottom-left=1, bottom-center=2, bottom-right=3, mid-left=4, mid-center=5, mid-right=6, top-left=7, top-center=8, top-right=9
+
+        // Convert hex color to ASS BGR format: #RRGGBB -> &H00BBGGRR
+        const hexToAssBgr = (hex: string) => {
+          const c = hex.replace('#', '');
+          const r = c.substring(0, 2);
+          const g = c.substring(2, 4);
+          const b = c.substring(4, 6);
+          return `${b}${g}${r}`.toUpperCase();
+        };
+
+        const fontColor = `&H00${hexToAssBgr(subtitleStyle.fontColor)}`;
+        const strokeColor = `&H00${hexToAssBgr(subtitleStyle.strokeColor)}`;
+        const bgAlpha = Math.round((1 - subtitleStyle.bgOpacity) * 255).toString(16).toUpperCase().padStart(2, '0');
+        const backColor = `&H${bgAlpha}${hexToAssBgr(subtitleStyle.bgColor)}`;
+        const borderStyle = subtitleStyle.bgOpacity > 0 ? 3 : 1; // 3 = opaque box, 1 = outline+shadow
+        const bold = subtitleStyle.fontWeight === 'bold' ? -1 : 0;
+        const outline = subtitleStyle.strokeWidth;
+        const marginV = subtitleStyle.position === 'top' ? subtitleStyle.marginBottom : subtitleStyle.marginBottom;
+        const marginL = subtitleStyle.marginX;
+        const marginR = subtitleStyle.marginX;
+
+        const assHeader = [
+          '[Script Info]',
+          'ScriptType: v4.00+',
+          `PlayResX: ${w}`,
+          `PlayResY: ${h}`,
+          'WrapStyle: 0',
+          '',
+          '[V4+ Styles]',
+          'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+          `Style: Default,${subtitleStyle.fontFamily},${subtitleStyle.fontSize},${fontColor},${fontColor},${strokeColor},${backColor},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},0,${posVertical + (assAlignMap[subtitleStyle.alignment] || 2) - 2},${marginL},${marginR},${marginV},1`,
+          '',
+          '[Events]',
+          'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+        ].join('\n');
+
+        // Convert seconds to ASS time format: H:MM:SS.cc
+        const secToAssTime = (sec: number) => {
+          const h = Math.floor(sec / 3600);
+          const m = Math.floor((sec % 3600) / 60);
+          const s = sec % 60;
+          return `${h}:${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
+        };
+
+        const events: string[] = [];
+        for (const seg of segments) {
+          if (!seg.text?.trim()) continue;
+          const start = secToAssTime(seg.startTime / speedFactor);
+          const end = secToAssTime(seg.endTime / speedFactor);
+          let text = seg.text.replace(/\n/g, '\\N');
+          if (subtitleStyle.uppercase) text = text.toUpperCase();
+
+          // Animation effects via ASS override tags
+          let effect = '';
+          if (subtitleStyle.animation === 'fade') {
+            effect = '{\\fad(300,200)}';
+          } else if (subtitleStyle.animation === 'karaoke' || subtitleStyle.animation === 'word-highlight') {
+            // Per-word karaoke timing: split text, distribute duration evenly
+            const words = text.split(/\s+/);
+            const segDur = (seg.endTime - seg.startTime) / speedFactor;
+            const perWord = Math.floor((segDur * 100) / words.length); // centiseconds
+            text = words.map(word => `{\\k${perWord}}${word}`).join(' ');
+            if (subtitleStyle.animation === 'word-highlight') {
+              // Use \kf for smooth fill
+              text = text.replace(/\\k/g, '\\kf');
+            }
+            effect = '';
+          }
+
+          events.push(`Dialogue: 0,${start},${end},Default,,0,0,0,,${effect}${text}`);
+        }
+
+        const assContent = assHeader + '\n' + events.join('\n') + '\n';
+        const assPath = path.join(concatDir, 'subtitles.ass');
+        fs.writeFileSync(assPath, assContent, 'utf-8');
+
+        // Burn subtitles into video using the ass filter
+        const subtitledVideo = path.join(concatDir, 'video_subtitled.mp4');
+        // Escape path for FFmpeg filter (Windows needs special handling)
+        const escapedAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+        await execFileAsync(ffmpeg, [
+          '-i', videoOnly,
+          '-vf', `ass='${escapedAssPath}'`,
+          '-c:v', 'libx264',
+          '-preset', 'fast',
+          '-crf', '23',
+          '-pix_fmt', 'yuv420p',
+          '-an',
+          '-y',
+          subtitledVideo,
+        ], { timeout: 900_000 });
+
+        videoInput = subtitledVideo;
+        res.write(JSON.stringify({ progress: true, step: 'subtitles', detail: 'Subtitles burned successfully' }) + '\n');
+      }
+
       // Step 4: Mux audio (with optional background music mixing)
       const vVol = typeof voiceVolume === 'number' ? Math.max(0, Math.min(2, voiceVolume)) : 1.0;
       const mVol = typeof musicVolume === 'number' ? Math.max(0, Math.min(2, musicVolume)) : 0.3;
@@ -2049,7 +2178,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         ].join(';');
 
         await execFileAsync(ffmpeg, [
-          '-i', videoOnly,
+          '-i', videoInput,
           '-i', audioPath,
           '-i', musicPath,
           '-filter_complex', filterComplex,
@@ -2067,7 +2196,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         res.write(JSON.stringify({ progress: true, step: 'muxing', detail: 'Adding audio track...' }) + '\n');
 
         // Voice only (with optional volume adjustment)
-        const ffArgs = ['-i', videoOnly, '-i', audioPath];
+        const ffArgs = ['-i', videoInput, '-i', audioPath];
         if (vVol !== 1.0) {
           ffArgs.push('-filter:a', `volume=${vVol}`);
         }
@@ -2247,6 +2376,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       thumbnailBgColor: row.thumbnail_bg_color || '',
       bgColor: row.bg_color || 'black',
       speed: typeof row.speed === 'number' ? row.speed : 1.0,
+      subtitleStyle: row.subtitle_style ? JSON.parse(row.subtitle_style as string) : null,
     });
   });
 
@@ -2268,6 +2398,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       transcriptEntries: 'transcript_entries', prompts: 'prompts',
       generatedImages: 'generated_images', segments: 'segments',
       metadataTags: 'metadata_tags', stageParts: 'stage_parts',
+      subtitleStyle: 'subtitle_style',
     };
     const sets: string[] = [];
     const params: unknown[] = [];

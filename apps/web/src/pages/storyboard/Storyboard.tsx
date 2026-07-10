@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { storyboardApi, imageApi, ttsApi, settingsApi, musicApi } from '../../lib/api';
-import type { StoryboardSegment, StoryboardPromptItem, MotionEffect } from '../../lib/api';
+import type { StoryboardSegment, StoryboardPromptItem, MotionEffect, SubtitleStyle } from '../../lib/api';
 import { TopBar } from '../../components/layout/TopBar';
 import { Spinner } from '../../components/ui/Spinner';
 import {
@@ -84,6 +84,7 @@ export function Storyboard() {
   const [prompts, setPrompts] = useState<StoryboardPromptItem[]>([]);
   const [generatingPrompts, setGeneratingPrompts] = useState(false);
   const [promptProgress, setPromptProgress] = useState<string[]>([]);
+  const promptAbortRef = useRef<AbortController | null>(null);
   const [editingPromptIdx, setEditingPromptIdx] = useState<number | null>(null);
 
   // Step 4: Image generation (global store — survives navigation)
@@ -145,6 +146,23 @@ export function Storyboard() {
   const assembleAbortRef = useRef<AbortController | null>(null);
   const [speed, setSpeed] = useState<number>(1.0);
   const [bgColor, setBgColor] = useState<string>('black');
+  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>({
+    enabled: true,
+    fontFamily: 'Arial',
+    fontSize: 48,
+    fontColor: '#FFFFFF',
+    fontWeight: 'bold',
+    strokeColor: '#000000',
+    strokeWidth: 2,
+    bgColor: '#000000',
+    bgOpacity: 0.5,
+    position: 'bottom',
+    alignment: 'center',
+    marginX: 40,
+    marginBottom: 60,
+    uppercase: false,
+    animation: 'none',
+  });
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [assembleProgress, setAssembleProgress] = useState<string[]>([]);
   const audioLogRef = useRef<HTMLDivElement>(null);
@@ -627,7 +645,8 @@ export function Storyboard() {
     }
   }, [savedTemplate, projectTemplateId, projectLoaded, templateLoaded, applySections, linkedTemplateEmpty]);
 
-  // Load project from DB on mount
+  // Load project from DB on mount (with retry on transient failures)
+  const [loadRetries, setLoadRetries] = useState(0);
   useEffect(() => {
     if (!projectId || projectLoaded) return;
     (async () => {
@@ -663,6 +682,7 @@ export function Storyboard() {
         if (p.musicVolume != null) setMusicVolume(p.musicVolume);
         setSpeed(p.speed ?? 1.0);
         setBgColor(p.bgColor ?? 'black');
+        if (p.subtitleStyle) setSubtitleStyle(prev => ({ ...prev, ...p.subtitleStyle }));
         if (p.topicsPrompt) setTopicsPrompt(p.topicsPrompt);
         if (p.scriptPrompt) setScriptPrompt(p.scriptPrompt);
         if (p.imagePromptPrompt) setImagePromptPrompt(p.imagePromptPrompt);
@@ -674,13 +694,23 @@ export function Storyboard() {
           prompts: p.imagePromptPrompt || '',
           metadata: p.metadataPrompt || '',
         };
-      } catch {
-        navigate('/storyboard');
-      } finally {
         setProjectLoaded(true);
+      } catch (err: unknown) {
+        const is404 = err instanceof Error && 'response' in err && (err as { response?: { status?: number } }).response?.status === 404;
+        if (is404) {
+          // Project truly doesn't exist — go back
+          navigate('/storyboard');
+        } else if (loadRetries < 3) {
+          // Transient error (server busy, network hiccup) — retry after delay
+          setTimeout(() => setLoadRetries(r => r + 1), 1500 * (loadRetries + 1));
+        } else {
+          // Exhausted retries — show error instead of silently redirecting
+          setError(`Failed to load project. The server may be busy. Please try again.`);
+          setProjectLoaded(true);
+        }
       }
     })();
-  }, [projectId, projectLoaded, navigate]);
+  }, [projectId, projectLoaded, navigate, loadRetries]);
 
   // Sync background image generation task into local state
   useEffect(() => {
@@ -995,6 +1025,8 @@ export function Storyboard() {
   // ── Step 3: Generate Image Prompts ──
   const handleGeneratePrompts = async () => {
     if (!transcriptEntries.length) return;
+    const abort = new AbortController();
+    promptAbortRef.current = abort;
     setGeneratingPrompts(true);
     setPromptProgress([]);
     setError(null);
@@ -1014,16 +1046,25 @@ export function Storyboard() {
       const result = await storyboardApi.generatePrompts(
         { segments: segs, styleTemplate: imagePromptPrompt.trim() || undefined, visualStyle: linkedTemplate?.visualStyle || undefined, aspectRatio },
         (_step, detail) => { if (detail) setPromptProgress((p) => [...p, detail]); },
+        abort.signal,
       );
       setPrompts(result);
       setGeneratedImages([]);
       setStep('prompts');
       saveProject({ prompts: result, generatedImages: [], currentStep: 'prompts' });
     } catch (err) {
-      setError((err as Error).message);
+      if ((err as Error).name !== 'AbortError') {
+        setError((err as Error).message);
+      }
     } finally {
+      promptAbortRef.current = null;
       setGeneratingPrompts(false);
     }
+  };
+
+  const handleStopPrompts = () => {
+    promptAbortRef.current?.abort();
+    promptAbortRef.current = null;
   };
 
   const [regenPromptIdx, setRegenPromptIdx] = useState<number | null>(null);
@@ -1418,7 +1459,7 @@ export function Storyboard() {
 
     try {
       const res = await storyboardApi.assemble(
-        { segments, audioFilename: audioFile.filename, aspectRatio, bgMusicFilename: bgMusicFilename || undefined, voiceVolume, musicVolume, outputName: scriptTopic.trim() || projectName.trim() || undefined, speed, bgColor },
+        { segments, audioFilename: audioFile.filename, aspectRatio, bgMusicFilename: bgMusicFilename || undefined, voiceVolume, musicVolume, outputName: scriptTopic.trim() || projectName.trim() || undefined, speed, bgColor, subtitleStyle: subtitleStyle.enabled ? subtitleStyle : undefined },
         (step, detail) => {
           if (step) setAssembleStep(step);
           if (detail) {
@@ -1482,7 +1523,7 @@ export function Storyboard() {
     handleAutoSeparate, handleRetranscribe,
     voices, handleVoicePreview, handleGenerateAudio, audioLogRef,
     prompts, setPrompts, generatingPrompts, promptProgress,
-    editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, handleRegenPrompt, regenPromptIdx, promptLogRef,
+    editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, handleStopPrompts, handleRegenPrompt, regenPromptIdx, promptLogRef,
     linkedTemplate: linkedTemplate as { visualStyle?: string } | undefined,
     generatedImages, setGeneratedImages, generatingImages, imageProgress,
     provider, setProvider, imageModel, setImageModel, aspectRatio, setAspectRatio,
@@ -1514,6 +1555,7 @@ export function Storyboard() {
     updateSegmentTimeAutoMerge, handleTrackEdgeDrag, handleCardResizeStart,
     updateSegmentMotion, playSegmentAudio, pauseAudio, resumeAudio, stopAudio,
     skipSegment, seekToTime, handleBuildTimeline,
+    subtitleStyle, setSubtitleStyle,
     generatingMetadata, metadataTitle, setMetadataTitle,
     metadataDesc, setMetadataDesc, metadataTags, setMetadataTags,
     metadataThumbnailPrompt, setMetadataThumbnailPrompt,

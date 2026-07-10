@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { WorkflowStep, TranscriptEntry, StagePart } from './types';
-import type { StoryboardSegment, StoryboardPromptItem, VoiceInfo, MotionEffect } from '../../lib/api';
+import type { StoryboardSegment, StoryboardPromptItem, VoiceInfo, MotionEffect, SubtitleStyle } from '../../lib/api';
 import type { GenImage, GenMediaType } from '../../store/image-generation';
 
 export interface StoryboardContextValue {
@@ -99,6 +99,7 @@ export interface StoryboardContextValue {
   editingPromptIdx: number | null;
   setEditingPromptIdx: (v: number | null) => void;
   handleGeneratePrompts: () => void;
+  handleStopPrompts: () => void;
   handleRegenPrompt: (idx: number) => void;
   regenPromptIdx: number | null;
   promptLogRef: React.RefObject<HTMLDivElement>;
@@ -201,6 +202,10 @@ export interface StoryboardContextValue {
   skipSegment: (dir: -1 | 1) => void;
   seekToTime: (t: number) => void;
   handleBuildTimeline: () => void;
+
+  // Subtitle style
+  subtitleStyle: SubtitleStyle;
+  setSubtitleStyle: React.Dispatch<React.SetStateAction<SubtitleStyle>>;
 
   // Step 6: Metadata
   generatingMetadata: boolean;
