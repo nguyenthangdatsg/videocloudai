@@ -301,7 +301,7 @@ export function AudioStep() {
               const isShort = dur < separateSec;
               const rowBg = isShort ? 'bg-orange-900/15' : '';
               return (
-                <div key={e.index} className={clsx('px-3 py-2 flex gap-3 items-center justify-between hover:bg-c-surface/30 transition-colors', rowBg)}>
+                <div key={`${e.startMs}-${e.endMs}-${idx}`} className={clsx('px-3 py-2 flex gap-3 items-center justify-between hover:bg-c-surface/30 transition-colors', rowBg)}>
                   <div className="flex gap-3 items-start flex-1 min-w-0">
                     <span className="text-[10px] font-mono text-cyan-300/70 shrink-0 w-28 flex items-center gap-1.5">
                       <span>{e.startTime.split(',')[0]} → {e.endTime.split(',')[0]}</span>
