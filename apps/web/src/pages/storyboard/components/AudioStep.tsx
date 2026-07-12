@@ -14,6 +14,8 @@ export function AudioStep() {
     audioFile, transcriptEntries, setTranscriptEntries,
     handleSplitEntry,
     handleMergeEntry,
+    handleSplitAtCursor,
+    handleUpdateEntryText,
     handleAutoSeparate, handleRetranscribe,
     scriptText, setStep, saveProject,
     audioLogRef,
@@ -305,7 +307,30 @@ export function AudioStep() {
                       <span>{e.startTime.split(',')[0]} → {e.endTime.split(',')[0]}</span>
                       <span className={clsx('text-[9px] font-bold', isShort ? 'text-orange-400' : 'text-c-dim')}>({dur.toFixed(1)}s)</span>
                     </span>
-                    <span className="text-xs text-c-muted leading-relaxed break-words flex-1">{e.text}</span>
+                    <input
+                      type="text"
+                      defaultValue={e.text}
+                      onBlur={(ev) => {
+                        const val = ev.target.value.trim();
+                        if (val && val !== e.text) handleUpdateEntryText(e.index, val);
+                      }}
+                      onKeyDown={(ev) => {
+                        const pos = ev.currentTarget.selectionStart ?? 0;
+                        const len = ev.currentTarget.value.length;
+                        if (ev.key === 'Enter') {
+                          ev.preventDefault();
+                          const currentText = ev.currentTarget.value;
+                          if (pos > 0 && pos < len) {
+                            handleSplitAtCursor(e.index, pos, currentText);
+                          }
+                        }
+                        if (ev.key === 'Backspace' && pos === 0 && ev.currentTarget.selectionEnd === 0 && idx > 0) {
+                          ev.preventDefault();
+                          handleMergeEntry(e.index, 'prev');
+                        }
+                      }}
+                      className="flex-1 text-xs text-c-muted bg-transparent border-none outline-none focus:text-c-text px-1 py-0.5 rounded hover:bg-c-elevated/50 focus:bg-c-elevated transition-colors"
+                    />
                   </div>
                   <div className="shrink-0 ml-4 flex items-center gap-1">
                     {/* Merge buttons */}

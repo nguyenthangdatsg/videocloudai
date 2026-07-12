@@ -1,4 +1,5 @@
-import { Tag, Wand2, CheckCircle, X, ExternalLink, Image, Copy, ArrowRight } from 'lucide-react';
+import { useState } from 'react';
+import { Tag, Wand2, CheckCircle, X, ExternalLink, Image, Copy, ArrowRight, Check } from 'lucide-react';
 import { Spinner } from '../../../components/ui/Spinner';
 import { StagePromptEditor } from './StagePromptEditor';
 import { useStoryboard } from '../StoryboardContext';
@@ -37,6 +38,13 @@ export function MetadataStep() {
     setThumbnailBgColor,
     handleGenerateThumbnail,
   } = useStoryboard();
+
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const copyField = (field: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 1500);
+  };
 
   const handleThumbnailPromptChange = (val: string) => {
     setMetadataThumbnailPrompt(val);
@@ -84,7 +92,15 @@ export function MetadataStep() {
         {/* Left Column: Metadata Fields */}
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-c-muted mb-1 block">{t('storyboard.metadataTitle')}</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-c-muted">{t('storyboard.metadataTitle')}</label>
+              {metadataTitle && (
+                <button onClick={() => copyField('title', metadataTitle)} className="text-[10px] text-c-dim hover:text-cyan-400 flex items-center gap-0.5 transition-colors">
+                  {copiedField === 'title' ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                  {copiedField === 'title' ? t('storyboard.copied') : t('storyboard.copy')}
+                </button>
+              )}
+            </div>
             <input
               type="text"
               value={metadataTitle}
@@ -94,7 +110,15 @@ export function MetadataStep() {
             />
           </div>
           <div>
-            <label className="text-xs text-c-muted mb-1 block">{t('storyboard.metadataDescription')}</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-c-muted">{t('storyboard.metadataDescription')}</label>
+              {metadataDesc && (
+                <button onClick={() => copyField('desc', metadataDesc)} className="text-[10px] text-c-dim hover:text-cyan-400 flex items-center gap-0.5 transition-colors">
+                  {copiedField === 'desc' ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                  {copiedField === 'desc' ? t('storyboard.copied') : t('storyboard.copy')}
+                </button>
+              )}
+            </div>
             <textarea
               value={metadataDesc}
               onChange={(e) => { setMetadataDesc(e.target.value); saveProject({ metadataDesc: e.target.value }); }}
@@ -104,7 +128,15 @@ export function MetadataStep() {
             />
           </div>
           <div>
-            <label className="text-xs text-c-muted mb-1 block">{t('storyboard.metadataTags')} ({metadataTags.length})</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-c-muted">{t('storyboard.metadataTags')} ({metadataTags.length})</label>
+              {metadataTags.length > 0 && (
+                <button onClick={() => copyField('tags', metadataTags.join(', '))} className="text-[10px] text-c-dim hover:text-cyan-400 flex items-center gap-0.5 transition-colors">
+                  {copiedField === 'tags' ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                  {copiedField === 'tags' ? t('storyboard.copied') : t('storyboard.copy')}
+                </button>
+              )}
+            </div>
             <div className="flex flex-wrap gap-1.5 mb-2">
               {metadataTags.map((tag, i) => (
                 <span key={i} className="inline-flex items-center gap-1 text-[11px] bg-cyan-900/30 text-cyan-300 px-2 py-0.5 rounded-full">

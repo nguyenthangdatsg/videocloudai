@@ -437,6 +437,8 @@ export const imageApi = {
   },
   uploadSingle: (dataUrl: string, filename?: string) =>
     api.post<{ filename: string; url: string }>('/image/upload', { dataUrl, filename }).then((r) => r.data),
+  importFromUrl: (url: string) =>
+    api.post<{ filename: string; url: string }>('/image/import-url', { url }).then((r) => r.data),
   checkPromptCache: (prompts: Array<{ timestamp: string; prompt: string }>) =>
     api.post<{ cached: Array<{ timestamp: string; filename: string; url: string }> }>('/image/prompt-cache/check', { prompts }).then((r) => r.data),
   savePromptCache: (entries: Array<{ prompt: string; filename: string; url: string }>) =>

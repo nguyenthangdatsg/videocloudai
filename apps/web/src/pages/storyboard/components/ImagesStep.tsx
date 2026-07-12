@@ -1,4 +1,4 @@
-import { Image, Video, RefreshCw, Trash2, ArrowRight, Globe, Film, Square, Wand2, Upload, ZoomIn, X, CheckCircle, Pencil } from 'lucide-react';
+import { Image, Video, RefreshCw, Trash2, ArrowRight, Globe, Film, Square, Wand2, Upload, ZoomIn, X, CheckCircle, Pencil, Link } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
 import { imageApi } from '../../../lib/api';
@@ -15,7 +15,7 @@ export function ImagesStep() {
     imageProviders, selectedProviderInfo,
     handleGenerateImages, handleGenerateVideos, handleStopImages, handleUploadZip,
     handleFlowGenerate, handleFlowRegenerateAll, handleFlowResume,
-    handleRegenSingle, handleDropImage, regenIndex,
+    handleRegenSingle, handleDropImage, handleImportFromUrl, regenIndex,
     failedImageCount,
     editingImageIdx, setEditingImageIdx, editingImagePrompt, setEditingImagePrompt,
     prompts, setPrompts, setStep, saveProject, setLightboxUrl,
@@ -550,6 +550,13 @@ export function ImagesStep() {
                         </>
                       )}
                       <button
+                        onClick={(e) => { e.stopPropagation(); handleImportFromUrl(i); }}
+                        className="p-1 rounded-md bg-black/60 text-cyan-300 hover:text-white hover:bg-cyan-600/80"
+                        title={t('storyboard.importFromUrl')}
+                      >
+                        <Link className="w-3 h-3" />
+                      </button>
+                      <button
                         onClick={(e) => { e.stopPropagation(); handleDropImage(i); }}
                         className="p-1 rounded-md bg-black/60 text-white/80 hover:text-white hover:bg-red-600/80"
                         title="Remove image"
@@ -592,12 +599,21 @@ export function ImagesStep() {
                           </button>
                         </div>
                       )}
-                      <button
-                        onClick={() => handleDropImage(i)}
-                        className="text-[9px] px-2 py-0.5 rounded bg-red-800/60 hover:bg-red-700 text-white flex items-center gap-1 transition-colors"
-                      >
-                        <Trash2 className="w-2.5 h-2.5" /> Drop
-                      </button>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => handleImportFromUrl(i)}
+                          className="text-[9px] px-2 py-0.5 rounded bg-cyan-800/60 hover:bg-cyan-700 text-white flex items-center gap-1 transition-colors"
+                          title={t('storyboard.importFromUrl')}
+                        >
+                          <Link className="w-2.5 h-2.5" /> URL
+                        </button>
+                        <button
+                          onClick={() => handleDropImage(i)}
+                          className="text-[9px] px-2 py-0.5 rounded bg-red-800/60 hover:bg-red-700 text-white flex items-center gap-1 transition-colors"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" /> Drop
+                        </button>
+                      </div>
                     </>
                   ) : (
                     <>
@@ -627,6 +643,13 @@ export function ImagesStep() {
                           </button>
                         </div>
                       )}
+                      <button
+                        onClick={() => handleImportFromUrl(i)}
+                        className="text-[9px] px-2 py-0.5 rounded bg-cyan-800/60 hover:bg-cyan-700 text-white flex items-center gap-1 transition-colors"
+                        title={t('storyboard.importFromUrl')}
+                      >
+                        <Link className="w-2.5 h-2.5" /> URL
+                      </button>
                     </>
                   )}
                 </div>

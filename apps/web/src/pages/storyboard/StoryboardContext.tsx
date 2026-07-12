@@ -102,6 +102,7 @@ export interface StoryboardContextValue {
   handleStopPrompts: () => void;
   handleRegenPrompt: (idx: number) => void;
   regenPromptIdx: number | null;
+  regenQueueRef: React.MutableRefObject<number[]>;
   promptLogRef: React.RefObject<HTMLDivElement>;
   linkedTemplate: { visualStyle?: string } | undefined;
 
@@ -139,6 +140,7 @@ export interface StoryboardContextValue {
   handleFlowResume: () => void;
   handleRegenSingle: (idx: number, overrideProvider?: 'google-flow' | 'grok' | 'chatgpt') => void;
   handleDropImage: (idx: number) => void;
+  handleImportFromUrl: (idx: number) => void;
   regenIndex: number | null;
   failedImageCount: number;
   editingImageIdx: number | null;

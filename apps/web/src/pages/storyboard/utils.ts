@@ -33,31 +33,30 @@ export function splitSegment(seg: TranscriptEntry, maxMs: number): TranscriptEnt
     return [seg];
   }
 
-  const result: TranscriptEntry[] = [];
-  let currentStart = seg.startMs;
-  const totalDuration = duration;
   const words = seg.text.trim().split(/\s+/).filter(Boolean);
 
+  // Can't meaningfully split a single word or empty text — just return as-is
   if (words.length <= 1) {
-    const mid = Math.round((seg.startMs + seg.endMs) / 2);
-    const part1 = { ...seg, endMs: mid, text: seg.text };
-    const part2 = { ...seg, startMs: mid, text: '' };
-    return [...splitSegment(part1, maxMs), ...splitSegment(part2, maxMs)];
+    return [seg];
   }
 
-  let remainingDuration = totalDuration;
+  const result: TranscriptEntry[] = [];
+  const numChunks = Math.max(2, Math.ceil(duration / maxMs));
+  const wordsPerChunk = Math.max(1, Math.floor(words.length / numChunks));
   let wordIdx = 0;
+  let currentStart = seg.startMs;
 
-  while (remainingDuration > 0) {
-    const chunkDur = Math.min(maxMs, remainingDuration);
-    const chunkEnd = currentStart + chunkDur;
+  for (let c = 0; c < numChunks; c++) {
+    const isLast = c === numChunks - 1;
+    const chunkWordCount = isLast ? words.length - wordIdx : wordsPerChunk;
+    if (chunkWordCount <= 0) break;
 
-    const ratio = chunkDur / remainingDuration;
-    const remainingWordsCount = words.length - wordIdx;
-    const chunkWordsCount = Math.max(1, Math.round(ratio * remainingWordsCount));
+    const chunkWords = words.slice(wordIdx, wordIdx + chunkWordCount);
+    wordIdx += chunkWordCount;
 
-    const chunkWords = words.slice(wordIdx, Math.min(words.length, wordIdx + chunkWordsCount));
-    wordIdx += chunkWordsCount;
+    const charsSoFar = words.slice(0, wordIdx).join(' ').length;
+    const totalChars = words.join(' ').length;
+    const chunkEnd = isLast ? seg.endMs : seg.startMs + Math.round((charsSoFar / totalChars) * duration);
 
     result.push({
       index: 0,
@@ -69,7 +68,6 @@ export function splitSegment(seg: TranscriptEntry, maxMs: number): TranscriptEnt
     });
 
     currentStart = chunkEnd;
-    remainingDuration -= chunkDur;
   }
 
   return result;
@@ -145,14 +143,16 @@ function findBestSplitPoint(text: string, idealPos: number, minPos: number, maxP
  *  Step 2: Split long segments at natural boundaries (sentences, commas, transitions),
  *          distributing time proportionally by character count. */
 export function mergeToSentences(entries: TranscriptEntry[]): TranscriptEntry[] {
-  if (entries.length <= 1) return entries;
+  // Filter out empty/whitespace-only entries
+  const valid = entries.filter(e => e.text.trim().length > 0);
+  if (valid.length <= 1) return valid.length ? valid : entries;
 
   // Step 1: Merge fragments into natural clauses (minimum 3 seconds)
   const MIN_SEGMENT_MS = 3000;
   const IDEAL_SEGMENT_MS = 6000;
   const merged: TranscriptEntry[] = [];
   let acc: TranscriptEntry | null = null;
-  for (const e of entries) {
+  for (const e of valid) {
     if (!acc) {
       acc = { ...e };
     } else {
@@ -258,9 +258,36 @@ export function mergeToSentences(entries: TranscriptEntry[]): TranscriptEntry[] 
     }
   }
 
-  for (const r of result) {
-    r.startTime = msToTimeStr(r.startMs);
-    r.endTime = msToTimeStr(r.endMs);
+  // Step 3: Merge any segments shorter than MIN_SEGMENT_MS into neighbors
+  const cleaned: TranscriptEntry[] = [];
+  for (const seg of result) {
+    const dur = seg.endMs - seg.startMs;
+    if (dur < MIN_SEGMENT_MS && cleaned.length > 0) {
+      // Merge into previous segment
+      const prev = cleaned[cleaned.length - 1];
+      prev.text = prev.text + ' ' + seg.text;
+      prev.endMs = seg.endMs;
+    } else if (dur < MIN_SEGMENT_MS && cleaned.length === 0) {
+      // First segment is too short — push it, will try to merge forward later
+      cleaned.push(seg);
+    } else {
+      // Check if previous segment is too short and merge it into this one
+      if (cleaned.length > 0) {
+        const prev = cleaned[cleaned.length - 1];
+        if ((prev.endMs - prev.startMs) < MIN_SEGMENT_MS) {
+          prev.text = prev.text + ' ' + seg.text;
+          prev.endMs = seg.endMs;
+          continue;
+        }
+      }
+      cleaned.push(seg);
+    }
   }
-  return result;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    cleaned[i].index = i + 1;
+    cleaned[i].startTime = msToTimeStr(cleaned[i].startMs);
+    cleaned[i].endTime = msToTimeStr(cleaned[i].endMs);
+  }
+  return cleaned;
 }

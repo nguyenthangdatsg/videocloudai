@@ -14,7 +14,7 @@ export function PromptsStep() {
     savingPrompt, savedPromptStage, handleSaveStagePrompt,
     prompts, setPrompts, generatingPrompts, promptProgress,
     editingPromptIdx, setEditingPromptIdx,
-    handleGeneratePrompts, handleStopPrompts, handleRegenPrompt, regenPromptIdx, promptLogRef,
+    handleGeneratePrompts, handleStopPrompts, handleRegenPrompt, regenPromptIdx, regenQueueRef, promptLogRef,
     transcriptEntries, aspectRatio, setAspectRatio,
     handleMergeEntry, handleSplitAtCursor, handleUpdateEntryText,
     handleSplitEntry,
@@ -290,10 +290,13 @@ export function PromptsStep() {
                   <button
                     onClick={() => handleRegenPrompt(i)}
                     disabled={regenPromptIdx === i}
-                    className="p-1 text-c-muted hover:text-amber-400 disabled:opacity-50 shrink-0"
-                    title={t('storyboard.regenPrompt')}
+                    className={clsx(
+                      'p-1 shrink-0 transition-colors',
+                      regenPromptIdx === i ? 'text-amber-400' : regenQueueRef.current.includes(i) ? 'text-amber-300/50' : 'text-c-muted hover:text-amber-400',
+                    )}
+                    title={regenPromptIdx === i ? t('storyboard.regenerating') : regenQueueRef.current.includes(i) ? t('storyboard.queued') : t('storyboard.regenPrompt')}
                   >
-                    {regenPromptIdx === i ? <Spinner size="sm" /> : <RefreshCw className="w-3 h-3" />}
+                    {regenPromptIdx === i ? <Spinner size="sm" /> : <RefreshCw className={clsx('w-3 h-3', regenQueueRef.current.includes(i) && 'animate-pulse')} />}
                   </button>
                   <button
                     onClick={() => {

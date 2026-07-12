@@ -1068,25 +1068,44 @@ export function Storyboard() {
   };
 
   const [regenPromptIdx, setRegenPromptIdx] = useState<number | null>(null);
-  const handleRegenPrompt = async (idx: number) => {
-    const p = prompts[idx];
-    if (!p) return;
-    setRegenPromptIdx(idx);
-    try {
-      const result = await storyboardApi.generatePrompts(
-        { segments: [{ timestamp: p.timestamp, text: p.text }], styleTemplate: imagePromptPrompt.trim() || undefined, visualStyle: linkedTemplate?.visualStyle || undefined, aspectRatio },
-        () => {},
-      );
-      if (result.length > 0 && result[0].prompt) {
-        const updated = prompts.map((pp, j) => j === idx ? { ...pp, prompt: result[0].prompt } : pp);
-        setPrompts(updated);
-        saveProject({ prompts: updated });
+  const regenQueueRef = useRef<number[]>([]);
+  const regenProcessingRef = useRef(false);
+
+  const processRegenQueue = async () => {
+    if (regenProcessingRef.current) return;
+    regenProcessingRef.current = true;
+    while (regenQueueRef.current.length > 0) {
+      const idx = regenQueueRef.current.shift()!;
+      setRegenPromptIdx(idx);
+      try {
+        // Read latest prompts from state via updater pattern
+        let currentPrompt: { timestamp: string; text: string; prompt: string } | null = null;
+        setPrompts(prev => { currentPrompt = prev[idx] || null; return prev; });
+        if (!currentPrompt) continue;
+        const p = currentPrompt as { timestamp: string; text: string; prompt: string };
+        const result = await storyboardApi.generatePrompts(
+          { segments: [{ timestamp: p.timestamp, text: p.text }], styleTemplate: imagePromptPrompt.trim() || undefined, visualStyle: linkedTemplate?.visualStyle || undefined, aspectRatio },
+          () => {},
+        );
+        if (result.length > 0 && result[0].prompt) {
+          setPrompts(prev => {
+            const updated = prev.map((pp, j) => j === idx ? { ...pp, prompt: result[0].prompt } : pp);
+            saveProject({ prompts: updated });
+            return updated;
+          });
+        }
+      } catch (err) {
+        setError((err as Error).message);
       }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setRegenPromptIdx(null);
     }
+    setRegenPromptIdx(null);
+    regenProcessingRef.current = false;
+  };
+
+  const handleRegenPrompt = (idx: number) => {
+    if (regenQueueRef.current.includes(idx)) return;
+    regenQueueRef.current.push(idx);
+    processRegenQueue();
   };
 
   // ── Step 4: Batch Generate Images ──
@@ -1274,6 +1293,36 @@ export function Storyboard() {
       saveProject({ generatedImages: updated });
       return updated;
     });
+  };
+
+  const handleImportFromUrl = (idx: number) => {
+    const url = prompt(t('storyboard.importFromUrlPrompt'));
+    if (!url || !/^https?:\/\//i.test(url)) return;
+    setGeneratedImages((prev) => {
+      const updated = prev.map((img, i) =>
+        i === idx ? { ...img, status: 'generating' as const } : img,
+      );
+      return updated;
+    });
+    imageApi.importFromUrl(url)
+      .then((result) => {
+        setGeneratedImages((prev) => {
+          const updated = prev.map((img, i) =>
+            i === idx ? { ...img, filename: result.filename, url: result.url, status: 'done' as const } : img,
+          );
+          saveProject({ generatedImages: updated });
+          return updated;
+        });
+      })
+      .catch((err) => {
+        setGeneratedImages((prev) => {
+          const updated = prev.map((img, i) =>
+            i === idx ? { ...img, status: 'error' as const } : img,
+          );
+          return updated;
+        });
+        alert(t('storyboard.importFromUrlError') + ': ' + (err?.response?.data?.error || err.message));
+      });
   };
 
   // ── Step 5: Auto-match to timeline ──
@@ -1523,7 +1572,7 @@ export function Storyboard() {
     handleAutoSeparate, handleRetranscribe,
     voices, handleVoicePreview, handleGenerateAudio, audioLogRef,
     prompts, setPrompts, generatingPrompts, promptProgress,
-    editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, handleStopPrompts, handleRegenPrompt, regenPromptIdx, promptLogRef,
+    editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, handleStopPrompts, handleRegenPrompt, regenPromptIdx, regenQueueRef, promptLogRef,
     linkedTemplate: linkedTemplate as { visualStyle?: string } | undefined,
     generatedImages, setGeneratedImages, generatingImages, imageProgress,
     provider, setProvider, imageModel, setImageModel, aspectRatio, setAspectRatio,
@@ -1533,7 +1582,7 @@ export function Storyboard() {
     imageProviders, selectedProviderInfo,
     handleGenerateImages, handleGenerateVideos, handleStopImages, handleUploadZip,
     handleFlowGenerate, handleFlowRegenerateAll, handleFlowResume,
-    handleRegenSingle, handleDropImage, regenIndex,
+    handleRegenSingle, handleDropImage, handleImportFromUrl, regenIndex,
     failedImageCount,
     editingImageIdx, setEditingImageIdx, editingImagePrompt, setEditingImagePrompt,
     segments, setSegments,

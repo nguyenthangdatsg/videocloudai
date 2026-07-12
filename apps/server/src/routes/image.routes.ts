@@ -73,6 +73,41 @@ export function createImageRouter(): Router {
     res.json({ filename, url: `/api/image/file/${filename}` });
   });
 
+  // Import image from external URL — fetch and save locally
+  router.post('/import-url', async (req: Request, res: Response) => {
+    const { url } = req.body as { url?: string };
+    if (!url || !/^https?:\/\//i.test(url)) {
+      res.status(400).json({ error: 'Invalid URL' });
+      return;
+    }
+    try {
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) {
+        res.status(400).json({ error: `Failed to fetch: HTTP ${response.status}` });
+        return;
+      }
+      const contentType = response.headers.get('content-type') || 'image/png';
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length < 100) {
+        res.status(400).json({ error: 'Fetched content too small — not a valid image' });
+        return;
+      }
+      const mimeExt = contentType.split('/')[1]?.split(';')[0] || 'png';
+      const ext = mimeExt === 'jpeg' ? 'jpg' : mimeExt;
+      const filename = `import_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
+      const destPath = path.join(outputDir, filename);
+      fs.writeFileSync(destPath, buffer);
+      console.log(`[image/import-url] saved ${filename} (${Math.round(buffer.length / 1024)}KB) from ${url.slice(0, 80)}`);
+      res.json({ filename, url: `/api/image/file/${filename}` });
+    } catch (err: any) {
+      console.error('[image/import-url] error:', err.message);
+      res.status(500).json({ error: err.message || 'Failed to import image' });
+    }
+  });
+
   // Upload zip of timeline images (JFIF numbered 001-xxx)
   router.post('/upload-zip', upload.single('file'), (req: Request, res: Response) => {
     const file = (req as any).file as Express.Multer.File | undefined;

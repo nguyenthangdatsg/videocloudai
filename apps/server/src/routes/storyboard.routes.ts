@@ -1268,8 +1268,14 @@ Rules:
 
     res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `${expandedSegments.length} segments to process (expanded from ${segments.length} transcript blocks)` }) + '\n');
 
-    // Process expanded segments in batches of 20
-    const batchSize = 20;
+    // Convert timestamps to seconds so "01:05" matches "1:05" or "00:01:05"
+    const tsToSec = (ts: string) => {
+      const parts = ts.split(':').map(Number);
+      return parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
+    };
+
+    // Process expanded segments in batches of 40
+    const batchSize = 40;
     const allPrompts: Array<{ timestamp: string; prompt: string }> = [];
     const modelBySec = new Map<number, string>();
 
@@ -1323,19 +1329,19 @@ Rules:
             systemPrompt,
             userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder}`,
             temperature: 0.7,
-            maxTokens: 8000,
+            maxTokens: 16000,
           });
         } catch (retryErr) {
-          // Retry once after longer delay (rate limit recovery)
-          console.warn(`[storyboard] Batch ${batchNum} failed, retrying after 5s...`, (retryErr as Error).message);
-          res.write(JSON.stringify({ progress: true, step: 'retrying', detail: `Batch ${batchNum} rate limited, retrying in 5s...` }) + '\n');
-          await new Promise((r) => setTimeout(r, 5000));
+          // Retry once after short delay (rate limit recovery)
+          console.warn(`[storyboard] Batch ${batchNum} failed, retrying after 3s...`, (retryErr as Error).message);
+          res.write(JSON.stringify({ progress: true, step: 'retrying', detail: `Batch ${batchNum} rate limited, retrying in 3s...` }) + '\n');
+          await new Promise((r) => setTimeout(r, 3000));
           const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
           raw = await llmComplete({
             systemPrompt,
             userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder}`,
             temperature: 0.7,
-            maxTokens: 8000,
+            maxTokens: 16000,
           });
         }
 
@@ -1343,9 +1349,9 @@ Rules:
         console.log(`[storyboard] Batch ${batchNum}: parsed ${allPrompts.length} prompts from ${lineCount} lines`);
         res.write(JSON.stringify({ progress: true, step: 'batch-done', detail: `Batch ${batchNum} done (${allPrompts.length} prompts so far)` }) + '\n');
 
-        // Delay between batches to avoid rate limiting
+        // Short delay between batches to avoid rate limiting
         if (i + batchSize < expandedSegments.length) {
-          await new Promise((r) => setTimeout(r, 3000));
+          await new Promise((r) => setTimeout(r, 1000));
         }
       } catch (err) {
         res.write(JSON.stringify({ progress: true, step: 'error', detail: `Batch ${batchNum} error: ${(err as Error).message}` }) + '\n');
@@ -1362,12 +1368,7 @@ Rules:
       }
     }
 
-    // Build prompt map with fuzzy timestamp matching:
-    // Convert timestamps to seconds so "01:05" matches "1:05" or "00:01:05"
-    const tsToSec = (ts: string) => {
-      const parts = ts.split(':').map(Number);
-      return parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
-    };
+    // Build prompt map with fuzzy timestamp matching
     const promptBySec = new Map<number, string>();
     for (const p of allPrompts) {
       promptBySec.set(tsToSec(p.timestamp), p.prompt);
@@ -1403,11 +1404,11 @@ Rules:
     let finalPrompts = matchPrompts();
     let missingSegments = finalPrompts.filter(p => !p.prompt);
 
-    // Retry missing segments up to 3 times with random 10-20s delay
+    // Retry missing segments up to 3 times with short delay
     const MAX_RETRIES = 3;
     for (let retry = 1; retry <= MAX_RETRIES && missingSegments.length > 0; retry++) {
-      const delay = Math.floor(Math.random() * 11 + 10) * 1000; // 10-20s
-      res.write(JSON.stringify({ progress: true, step: 'retrying', detail: `${missingSegments.length} segments missing prompts, retry ${retry}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s...` }) + '\n');
+      const delay = 2000; // 2s
+      res.write(JSON.stringify({ progress: true, step: 'retrying', detail: `${missingSegments.length} segments missing prompts, retry ${retry}/${MAX_RETRIES}...` }) + '\n');
       await new Promise((r) => setTimeout(r, delay));
 
       const retryText = missingSegments.map(s => `[${s.timestamp}] ${s.text}`).join('\n');
@@ -2134,7 +2135,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         const escapedAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
         await execFileAsync(ffmpeg, [
           '-i', videoOnly,
-          '-vf', `ass='${escapedAssPath}'`,
+          '-vf', `ass=${escapedAssPath}`,
           '-c:v', 'libx264',
           '-preset', 'fast',
           '-crf', '23',
@@ -2142,7 +2143,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
           '-an',
           '-y',
           subtitledVideo,
-        ], { timeout: 900_000 });
+        ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
 
         videoInput = subtitledVideo;
         res.write(JSON.stringify({ progress: true, step: 'subtitles', detail: 'Subtitles burned successfully' }) + '\n');
@@ -2191,7 +2192,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
           '-movflags', '+faststart',
           '-y',
           outputFile,
-        ], { timeout: 300_000 });
+        ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
       } else {
         res.write(JSON.stringify({ progress: true, step: 'muxing', detail: 'Adding audio track...' }) + '\n');
 
