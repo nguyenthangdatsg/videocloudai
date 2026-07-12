@@ -1075,6 +1075,10 @@ export function Storyboard() {
   const regenQueueRef = useRef<number[]>([]);
   const regenProcessingRef = useRef(false);
 
+  // Keep a ref to latest prompts so processRegenQueue can read synchronously
+  const promptsRef = useRef(prompts);
+  promptsRef.current = prompts;
+
   const processRegenQueue = async () => {
     if (regenProcessingRef.current) return;
     regenProcessingRef.current = true;
@@ -1082,13 +1086,10 @@ export function Storyboard() {
       const idx = regenQueueRef.current.shift()!;
       setRegenPromptIdx(idx);
       try {
-        // Read latest prompts from state via updater pattern
-        let currentPrompt: { timestamp: string; text: string; prompt: string } | null = null;
-        setPrompts(prev => { currentPrompt = prev[idx] || null; return prev; });
+        const currentPrompt = promptsRef.current[idx];
         if (!currentPrompt) continue;
-        const p = currentPrompt as { timestamp: string; text: string; prompt: string };
         const result = await storyboardApi.generatePrompts(
-          { segments: [{ timestamp: p.timestamp, text: p.text }], styleTemplate: imagePromptPrompt.trim() || undefined, visualStyle: linkedTemplate?.visualStyle || undefined, aspectRatio },
+          { segments: [{ timestamp: currentPrompt.timestamp, text: currentPrompt.text }], styleTemplate: imagePromptPrompt.trim() || undefined, visualStyle: linkedTemplate?.visualStyle || undefined, aspectRatio },
           () => {},
         );
         if (result.length > 0 && result[0].prompt) {
