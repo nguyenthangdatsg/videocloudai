@@ -73,37 +73,37 @@ export function AssembleStep() {
                 <option value="1:1">1:1</option>
               </select>
               <div className="flex items-center gap-1">
-                <span className="text-[10px] text-c-dim">Speed:</span>
+                <span className="text-[10px] text-c-dim">{t('storyboard.speed')}:</span>
                 <select value={String(speed)} onChange={(e) => { const val = parseFloat(e.target.value); setSpeed(val); saveProject({ speed: val }); }} className="input text-xs py-1">
                   {[0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.5, 1.6, 1.75, 2, 2.5, 3].map(v => (
-                    <option key={v} value={String(v)}>{v === 1 ? '1.0x (Normal)' : `${v}x`}</option>
+                    <option key={v} value={String(v)}>{v === 1 ? t('storyboard.speedNormal') : `${v}x`}</option>
                   ))}
                 </select>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-c-dim">Background:</span>
+                <span className="text-[10px] text-c-dim">{t('storyboard.background')}:</span>
                 <div className="flex items-center gap-1">
                   <input
                     type="color"
                     value={bgColor.startsWith('#') && bgColor.length <= 7 ? bgColor : '#000000'}
                     onChange={(e) => { setBgColor(e.target.value); saveProject({ bgColor: e.target.value }); }}
                     className="w-5 h-5 rounded cursor-pointer border border-c-border bg-transparent p-0 overflow-hidden shrink-0"
-                    title="Choose custom color"
+                    title={t('storyboard.chooseCustomColor')}
                   />
                   <select
                     value={bgColor}
                     onChange={(e) => { setBgColor(e.target.value); saveProject({ bgColor: e.target.value }); }}
                     className="input text-xs py-1 pr-7"
                   >
-                    <option value="black">Black</option>
-                    <option value="white">White</option>
-                    <option value="#1e1e2e">Catppuccin Crust</option>
-                    <option value="#0f172a">Slate</option>
-                    <option value="#1c1917">Stone</option>
-                    <option value="#022c22">Emerald</option>
-                    <option value="#1e1b4b">Indigo</option>
+                    <option value="black">{t('storyboard.colorBlack')}</option>
+                    <option value="white">{t('storyboard.colorWhite')}</option>
+                    <option value="#1e1e2e">{t('storyboard.colorCatppuccin')}</option>
+                    <option value="#0f172a">{t('storyboard.colorSlate')}</option>
+                    <option value="#1c1917">{t('storyboard.colorStone')}</option>
+                    <option value="#022c22">{t('storyboard.colorEmerald')}</option>
+                    <option value="#1e1b4b">{t('storyboard.colorIndigo')}</option>
                     {bgColor !== 'black' && bgColor !== 'white' && !['#1e1e2e', '#0f172a', '#1c1917', '#022c22', '#1e1b4b'].includes(bgColor) && (
-                      <option value={bgColor}>Custom ({bgColor})</option>
+                      <option value={bgColor}>{t('storyboard.customColor', { color: bgColor })}</option>
                     )}
                   </select>
                 </div>
@@ -142,7 +142,7 @@ export function AssembleStep() {
                       )}
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors" />
                       <div className="absolute top-0 left-0 bg-black/60 rounded-br px-1 text-[8px] font-mono text-white">{i + 1}</div>
-                      {segIsVid && <div className="absolute bottom-0 right-0 bg-violet-600/80 rounded-tl px-1 text-[7px] text-white">VID</div>}
+                      {segIsVid && <div className="absolute bottom-0 right-0 bg-violet-600/80 rounded-tl px-1 text-[7px] text-white">{t('storyboard.videoAbbr')}</div>}
                     </div>
                   );
                 })()}

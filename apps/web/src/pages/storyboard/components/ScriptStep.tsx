@@ -55,7 +55,7 @@ export function ScriptStep() {
                 min={30}
                 max={1800}
               />
-              <span className="text-xs text-c-dim">sec</span>
+              <span className="text-xs text-c-dim">{t('storyboard.secondsAbbr')}</span>
               {scriptDuration > 120 && (
                 <span className="text-[10px] text-amber-400/80 ml-1">
                   {Math.ceil(scriptDuration / 90)} {t('storyboard.scriptChunks')}

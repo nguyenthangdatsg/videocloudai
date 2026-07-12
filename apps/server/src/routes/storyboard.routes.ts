@@ -1152,41 +1152,45 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
       return;
     }
 
-    // If segments are too coarse (e.g. Whisper tiny produced few big blocks),
-    // split multi-sentence segments into one-sentence-per-segment with interpolated timestamps
-    const expandedSegments: Array<{ timestamp: string; text: string }> = [];
-    for (const seg of segments) {
-      const sentences = seg.text.split(/(?<=[.!?])\s+/).filter(x => x.trim());
-      if (sentences.length <= 1) {
-        expandedSegments.push(seg);
-      } else {
-        // Parse base timestamp to seconds
-        const tsParts = seg.timestamp.split(':').map(Number);
-        const baseSec = tsParts.length === 3
-          ? tsParts[0] * 3600 + tsParts[1] * 60 + tsParts[2]
-          : tsParts[0] * 60 + tsParts[1];
-        // Find next segment's timestamp to calculate duration, default 5s per sentence
-        const segIdx = segments.indexOf(seg);
-        let nextSec = baseSec + sentences.length * 5;
-        if (segIdx + 1 < segments.length) {
-          const nParts = segments[segIdx + 1].timestamp.split(':').map(Number);
-          nextSec = nParts.length === 3
-            ? nParts[0] * 3600 + nParts[1] * 60 + nParts[2]
-            : nParts[0] * 60 + nParts[1];
-        }
-        const stepDur = (nextSec - baseSec) / sentences.length;
-        for (let j = 0; j < sentences.length; j++) {
-          const sec = Math.round(baseSec + j * stepDur);
-          const mm = Math.floor(sec / 60);
-          const ss = sec % 60;
-          expandedSegments.push({
-            timestamp: `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`,
-            text: sentences[j].trim(),
-          });
+    // Only expand multi-sentence segments when input is very coarse (< 30 segments).
+    // If user already has fine-grained segments, use them as-is (1 prompt per segment).
+    let expandedSegments: Array<{ timestamp: string; text: string }>;
+    if (segments.length < 30) {
+      expandedSegments = [];
+      for (const seg of segments) {
+        const sentences = seg.text.split(/(?<=[.!?])\s+/).filter(x => x.trim());
+        if (sentences.length <= 1) {
+          expandedSegments.push(seg);
+        } else {
+          const tsParts = seg.timestamp.split(':').map(Number);
+          const baseSec = tsParts.length === 3
+            ? tsParts[0] * 3600 + tsParts[1] * 60 + tsParts[2]
+            : tsParts[0] * 60 + tsParts[1];
+          const segIdx = segments.indexOf(seg);
+          let nextSec = baseSec + sentences.length * 5;
+          if (segIdx + 1 < segments.length) {
+            const nParts = segments[segIdx + 1].timestamp.split(':').map(Number);
+            nextSec = nParts.length === 3
+              ? nParts[0] * 3600 + nParts[1] * 60 + nParts[2]
+              : nParts[0] * 60 + nParts[1];
+          }
+          const stepDur = (nextSec - baseSec) / sentences.length;
+          for (let j = 0; j < sentences.length; j++) {
+            const sec = Math.round(baseSec + j * stepDur);
+            const mm = Math.floor(sec / 60);
+            const ss = sec % 60;
+            expandedSegments.push({
+              timestamp: `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`,
+              text: sentences[j].trim(),
+            });
+          }
         }
       }
+      console.log(`[storyboard] Segments: ${segments.length} input → ${expandedSegments.length} expanded (coarse mode)`);
+    } else {
+      expandedSegments = segments;
+      console.log(`[storyboard] Segments: ${segments.length} (fine-grained, no expansion)`);
     }
-    console.log(`[storyboard] Segments: ${segments.length} input → ${expandedSegments.length} expanded`);
 
     const s = getSettings();
 

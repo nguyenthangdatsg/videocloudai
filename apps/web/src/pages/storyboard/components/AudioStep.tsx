@@ -365,9 +365,9 @@ export function AudioStep() {
                         className="input text-[10px] py-0.5 px-1 bg-c-bg border-c-border h-6 pr-6"
                         defaultValue=""
                       >
-                        <option value="" disabled>Split...</option>
+                        <option value="" disabled>{t('storyboard.splitOption')}</option>
                         {[3, 4, 5, 6, 7].map((s) => (
-                          <option key={s} value={s}>{s}s limit</option>
+                          <option key={s} value={s}>{t('storyboard.splitLimit', { s })}</option>
                         ))}
                       </select>
                     )}

@@ -171,10 +171,10 @@ export function MetadataStep() {
         <div className="border border-c-border rounded-xl bg-c-surface p-4 flex flex-col justify-between space-y-3">
           <div>
             <h4 className="text-xs font-semibold text-c-text mb-1 uppercase tracking-wider text-cyan-400">
-              YouTube Thumbnail (High CTR)
+              {t('storyboard.youtubeThumbnailTitle')}
             </h4>
             <p className="text-[10px] text-c-dim mb-3">
-              Generate an eye-catching, high-clickability 16:9 thumbnail image optimized for YouTube.
+              {t('storyboard.youtubeThumbnailDesc')}
             </p>
 
             {/* Preview Image */}
@@ -189,7 +189,7 @@ export function MetadataStep() {
                       rel="noreferrer"
                       className="btn-secondary text-[10px] py-1 px-2 flex items-center gap-1"
                     >
-                      <ExternalLink className="w-3 h-3" /> View Full
+                      <ExternalLink className="w-3 h-3" /> {t('storyboard.viewFull')}
                     </a>
                     <button
                       onClick={() => {
@@ -198,14 +198,14 @@ export function MetadataStep() {
                       }}
                       className="btn-secondary hover:bg-red-900/35 hover:text-red-400 text-[10px] py-1 px-2"
                     >
-                      Reset
+                      {t('storyboard.reset')}
                     </button>
                   </div>
                 </>
               ) : (
                 <div className="text-center p-4">
                   <Image className="w-8 h-8 text-c-dim mx-auto mb-2 opacity-50" />
-                  <span className="text-xs text-c-dim block">No thumbnail generated yet</span>
+                  <span className="text-xs text-c-dim block">{t('storyboard.noThumbnailGenerated')}</span>
                 </div>
               )}
               {generatingThumbnail && (
@@ -219,15 +219,15 @@ export function MetadataStep() {
             {/* Thumbnail Prompt Input */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-[11px] text-c-muted font-medium">CTR Image Prompt</label>
+                <label className="text-[11px] text-c-muted font-medium">{t('storyboard.ctrImagePrompt')}</label>
                 <button
                   onClick={handleAutoGenerateThumbnailPrompt}
                   disabled={generatingThumbnailPrompt || (!metadataTitle && !scriptTopic)}
                   className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-0.5 transition-colors disabled:opacity-50"
-                  title="Generate CTR prompt based on style & topic"
+                  title={t('storyboard.autoGenerateTitle')}
                 >
                   {generatingThumbnailPrompt ? <Spinner size="sm" /> : <Wand2 className="w-2.5 h-2.5" />}
-                  Auto-Generate
+                  {t('storyboard.autoGenerate')}
                 </button>
               </div>
               <textarea
@@ -235,7 +235,7 @@ export function MetadataStep() {
                 onChange={(e) => handleThumbnailPromptChange(e.target.value)}
                 rows={4}
                 className="input text-xs w-full resize-none bg-c-bg"
-                placeholder="Describe a dramatic, click-enticing thumbnail image..."
+                placeholder={t('storyboard.thumbnailPromptPlaceholder')}
                 disabled={generatingThumbnail}
               />
             </div>
@@ -243,28 +243,28 @@ export function MetadataStep() {
             {/* Background Color */}
             <div className="mt-2">
               <div className="flex items-center justify-between mb-1">
-                <label className="text-[11px] text-c-muted font-medium">Background</label>
+                <label className="text-[11px] text-c-muted font-medium">{t('storyboard.background')}</label>
                 {thumbnailBgColor && (
                   <button
                     onClick={() => { setThumbnailBgColor(''); saveProject({ thumbnailBgColor: '' }); }}
                     className="text-[10px] text-c-dim hover:text-red-400 transition-colors"
                   >
-                    Clear
+                    {t('storyboard.clear')}
                   </button>
                 )}
               </div>
               {/* Preset options */}
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {[
-                  { label: 'None', value: '', icon: '—' },
-                  { label: 'Transparent', value: 'transparent', icon: '🏁' },
-                  { label: 'White', value: '#FFFFFF', swatch: '#FFFFFF' },
-                  { label: 'Black', value: '#000000', swatch: '#000000' },
-                  { label: 'Red', value: '#FF0000', swatch: '#FF0000' },
-                  { label: 'Blue', value: '#0066FF', swatch: '#0066FF' },
-                  { label: 'Yellow', value: '#FFD600', swatch: '#FFD600' },
-                  { label: 'Green', value: '#00C853', swatch: '#00C853' },
-                  { label: 'Gradient', value: 'cinematic gradient background' },
+                  { label: t('storyboard.colorNone'), value: '', icon: '—' },
+                  { label: t('storyboard.colorTransparent'), value: 'transparent', icon: '🏁' },
+                  { label: t('storyboard.colorWhite'), value: '#FFFFFF', swatch: '#FFFFFF' },
+                  { label: t('storyboard.colorBlack'), value: '#000000', swatch: '#000000' },
+                  { label: t('storyboard.colorRed'), value: '#FF0000', swatch: '#FF0000' },
+                  { label: t('storyboard.colorBlue'), value: '#0066FF', swatch: '#0066FF' },
+                  { label: t('storyboard.colorYellow'), value: '#FFD600', swatch: '#FFD600' },
+                  { label: t('storyboard.colorGreen'), value: '#00C853', swatch: '#00C853' },
+                  { label: t('storyboard.colorGradient'), value: 'cinematic gradient background' },
                 ].map((opt) => (
                   <button
                     key={opt.value}
@@ -297,7 +297,7 @@ export function MetadataStep() {
                   value={thumbnailBgColor}
                   onChange={(e) => { setThumbnailBgColor(e.target.value); saveProject({ thumbnailBgColor: e.target.value }); }}
                   className="input text-xs flex-1 bg-c-bg"
-                  placeholder="Custom: hex, color name, or description..."
+                  placeholder={t('storyboard.customColorPlaceholder')}
                 />
               </div>
             </div>
@@ -310,7 +310,7 @@ export function MetadataStep() {
               className="btn-primary text-xs flex items-center gap-1.5 flex-1 justify-center disabled:opacity-50 py-2"
             >
               {generatingThumbnail ? <Spinner className="w-3.5 h-3.5" /> : <Wand2 className="w-3.5 h-3.5" />}
-              Generate Thumbnail
+              {t('storyboard.generateThumbnail')}
             </button>
             {thumbnailUrl && (
               <button

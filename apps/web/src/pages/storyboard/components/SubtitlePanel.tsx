@@ -101,7 +101,7 @@ export function SubtitlePanel({ subtitleStyle, setSubtitleStyle, saveProject, t,
     });
   };
 
-  const previewText = sampleText || 'The quick brown fox jumps over the lazy dog';
+  const previewText = sampleText || t('storyboard.subtitleSampleText');
   const displayText = subtitleStyle.uppercase ? previewText.toUpperCase() : previewText;
 
   return (
