@@ -908,15 +908,17 @@ export function Storyboard() {
       if (idx === -1) return prev;
       const target = prev[idx];
       const splits = splitSegment(target, maxSec * 1000);
+      if (splits.length <= 1) return prev;
       const next = [...prev];
       next.splice(idx, 1, ...splits);
-      for (let i = 0; i < next.length; i++) {
-        next[i].index = i + 1;
-        next[i].startTime = msToTimeStr(next[i].startMs);
-        next[i].endTime = msToTimeStr(next[i].endMs);
-      }
-      saveProject({ transcriptEntries: next });
-      return next;
+      const result = next.map((e, i) => ({
+        ...e,
+        index: i + 1,
+        startTime: msToTimeStr(e.startMs),
+        endTime: msToTimeStr(e.endMs),
+      }));
+      saveProject({ transcriptEntries: result });
+      return result;
     });
   };
 
@@ -936,13 +938,14 @@ export function Storyboard() {
       };
       const next = prev.filter((_, i) => i !== removedIdx);
       next[keptIdx] = merged;
-      for (let i = 0; i < next.length; i++) {
-        next[i] = { ...next[i], index: i + 1 };
-        next[i].startTime = msToTimeStr(next[i].startMs);
-        next[i].endTime = msToTimeStr(next[i].endMs);
-      }
-      saveProject({ transcriptEntries: next });
-      return next;
+      const result = next.map((e, i) => ({
+        ...e,
+        index: i + 1,
+        startTime: msToTimeStr(e.startMs),
+        endTime: msToTimeStr(e.endMs),
+      }));
+      saveProject({ transcriptEntries: result });
+      return result;
     });
   };
 
@@ -964,13 +967,14 @@ export function Storyboard() {
       }, {
         ...target, text: textAfter, startMs: splitMs,
       });
-      for (let i = 0; i < next.length; i++) {
-        next[i].index = i + 1;
-        next[i].startTime = msToTimeStr(next[i].startMs);
-        next[i].endTime = msToTimeStr(next[i].endMs);
-      }
-      saveProject({ transcriptEntries: next });
-      return next;
+      const result = next.map((e, i) => ({
+        ...e,
+        index: i + 1,
+        startTime: msToTimeStr(e.startMs),
+        endTime: msToTimeStr(e.endMs),
+      }));
+      saveProject({ transcriptEntries: result });
+      return result;
     });
   };
 
