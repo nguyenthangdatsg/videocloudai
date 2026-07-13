@@ -2135,11 +2135,12 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
 
         // Burn subtitles into video using the ass filter
         const subtitledVideo = path.join(concatDir, 'video_subtitled.mp4');
-        // Escape path for FFmpeg filter (Windows needs special handling)
-        const escapedAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+        // FFmpeg filter uses ':' as option separator — Windows drive letters break it.
+        // Use relative path to avoid the colon entirely.
+        const relAssPath = path.relative(process.cwd(), assPath).replace(/\\/g, '/');
         await execFileAsync(ffmpeg, [
           '-i', videoOnly,
-          '-vf', `ass=${escapedAssPath}`,
+          '-vf', `ass=${relAssPath}`,
           '-c:v', 'libx264',
           '-preset', 'fast',
           '-crf', '23',
