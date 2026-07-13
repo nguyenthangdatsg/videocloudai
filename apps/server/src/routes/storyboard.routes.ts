@@ -1236,7 +1236,7 @@ Rules:
     const arSuffix = ar === '9:16' ? 'vertical portrait layout, 9:16' : ar === '1:1' ? 'square layout, 1:1' : 'landscape layout, 16:9';
 
     // Append output format instruction
-    systemPrompt += `\n\nIMPORTANT: Output ONLY the image prompts. Each prompt starts with its timestamp [MM:SS]. One prompt per timestamp. Separate prompts with a blank line. No commentary, no numbering, no markdown.${visualStyle ? ` Every prompt MUST include "${visualStyle}" as the art style.` : ''}${isSimpleStyle ? ' Every prompt MUST include "white background".' : ''} MANDATORY: Every prompt MUST end with ", ${arSuffix}". This suffix is required on every single prompt — do not omit it.`;
+    systemPrompt += `\n\nIMPORTANT: Output ONLY the image prompts. Each prompt starts with its timestamp [MM:SS]. One prompt per timestamp. Separate prompts with a blank line. No commentary, no numbering, no markdown. Do NOT write "we need to generate" or any meta-commentary — just output the image description directly.${visualStyle ? ` Every prompt MUST include "${visualStyle}" as the art style.` : ''}${isSimpleStyle ? ' Every prompt MUST include "white background".' : ''} MANDATORY: Every prompt MUST end with ", ${arSuffix}". This suffix is required on every single prompt — do not omit it.`;
 
     // Extract format template from styleTemplate (e.g. "Simple stick figure doodle of [subject doing action] in ancient style, ...")
     // so we can build proper fallback prompts and remind the LLM of the format per batch
@@ -1252,6 +1252,10 @@ Rules:
     // Build a validator: reject prompts that are just raw narration text or missing required elements
     const validatePrompt = (prompt: string, narrationText: string): boolean => {
       if (!prompt || prompt.length < 15) return false;
+      // Reject meta-commentary / AI self-talk instead of actual image prompts
+      const lower = prompt.toLowerCase();
+      if (/^(we need to|let me|i will|i'll|here is|here are|sure|okay|of course|certainly|for this|the prompt|this prompt)/i.test(prompt.trim())) return false;
+      if (/generate\s+(a|an|the)\s+(image|prompt|visual)/i.test(lower) && lower.length < 100) return false;
       // Reject if the prompt is basically the raw narration text (±minor suffix)
       const cleanPrompt = prompt.replace(/,\s*(high quality|detailed|landscape layout|vertical portrait layout|square layout|16:9|9:16|1:1)\s*/gi, '').trim();
       const cleanNarration = narrationText.trim();
@@ -1294,12 +1298,13 @@ Rules:
 
       const parseBatch = (raw: string, usedModel: string) => {
         const lines = raw.split('\n');
-        let currentTs = '';
+        // For single-segment batches, default to the segment's timestamp
+        let currentTs = batch.length === 1 ? batch[0].timestamp : '';
         let currentPrompt = '';
+        let foundTimestamp = false;
         const pushIfValid = () => {
           if (!currentTs || !currentPrompt.trim()) return;
           const sec = tsToSec(currentTs);
-          // Find matching segment narration text for validation
           const seg = batch.find(s => tsToSec(s.timestamp) === sec) ||
             batch.find(s => Math.abs(tsToSec(s.timestamp) - sec) <= 5);
           const narration = seg?.text || '';
@@ -1317,8 +1322,11 @@ Rules:
             pushIfValid();
             currentTs = match[1];
             currentPrompt = match[2];
+            foundTimestamp = true;
           } else if (line.trim() && !line.match(/^---+$/) && !line.match(/^#{1,3}\s/)) {
-            currentPrompt += ' ' + line.trim();
+            // Skip meta-commentary lines before the first timestamp
+            if (!foundTimestamp && batch.length > 1) continue;
+            currentPrompt += (currentPrompt ? ' ' : '') + line.trim();
           }
         }
         pushIfValid();
