@@ -983,18 +983,20 @@ IMPORTANT:
       prompt = parsed.scriptSystemPrompt || `You are a scriptwriter. Write a narration script for a video about: ${topic}\n\nRules:\n- Pure narration only — no headers, no bullet points, no stage directions\n- Write in short, powerful sentences\n- Each sentence should be 10-20 words\n- Output ONLY the script text`;
     }
 
-    const FORMAT_RULE = `\n\nIMPORTANT: Output ONLY the narration script as plain text. No markdown, no headers (#), no bullet points, no stage directions, no file formatting instructions, no download instructions, no "next steps", no blockquotes. Do NOT include any instructions to the user about what to do with the script. Just output the pure narration text, nothing else.`;
+    const FORMAT_RULE = `\n\nIMPORTANT: Output ONLY the narration script as plain text. No markdown, no headers (#), no bullet points, no stage directions, no file formatting instructions, no download instructions, no "next steps", no blockquotes. Do NOT include any instructions to the user about what to do with the script. Do NOT echo back the prompt, part numbers, word counts, or meta-commentary like "We need to write..." or "Here is part...". Just output the pure narration text that will be read aloud, nothing else.`;
 
     // For short videos (≤ 200s), single call is fine
     const CHUNK_THRESHOLD = 200;
     if (totalDuration <= CHUNK_THRESHOLD) {
       try {
-        const script = await llmComplete({
+        let script = await llmComplete({
           systemPrompt: prompt + FORMAT_RULE,
           userMessage: `The user selected this topic: "${topic}"\n\nGenerate the full narration script for a ${totalDuration}-second video about this topic. Follow the script rules in the system prompt exactly.`,
           temperature: 0.8,
           maxTokens: 4000,
         });
+        // Strip meta-commentary the AI may prepend
+        script = script.replace(/^(we need to|let me|here is|here are|here's|okay|sure|certainly|of course|alright)[^\n]*\n+/gim, '').trim();
         res.json({ script });
       } catch (err) {
         console.error('[generate-script] error:', (err as Error).message);
@@ -1068,8 +1070,13 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
             maxTokens: 3000,
           });
         }
-        chunks.push(chunk.trim());
-        console.log(`[generate-script] Chunk ${i + 1}/${numChunks} done (${chunk.trim().split(/\s+/).length} words)`);
+        // Strip meta-commentary lines the AI may echo (e.g. "We need to write part 1...", "Here is part 2...")
+        let cleaned = chunk.trim();
+        cleaned = cleaned.replace(/^(we need to|let me|here is|here are|here's|okay|sure|certainly|of course|alright|now,?\s*(let's|we)|part\s+\d+\s*(of\s+\d+)?[\s:—\-]*(\(~?\d+\s*words?\))?[\s:—\-]*)/gim, '').trim();
+        // Strip leading blank lines after cleanup
+        cleaned = cleaned.replace(/^\s*\n+/, '');
+        chunks.push(cleaned);
+        console.log(`[generate-script] Chunk ${i + 1}/${numChunks} done (${cleaned.split(/\s+/).length} words)`);
       }
 
       const script = chunks.join('\n\n');
