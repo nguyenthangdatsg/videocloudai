@@ -30,20 +30,9 @@ export function StagePromptEditor({
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState<'parts' | 'full'>('parts');
 
-  const allParts = stageParts || [];
-
-  const recompose = (parts: StagePart[]) => {
-    const composed = parts
-      .filter(p => p.content.trim())
-      .map(p => `--- ${p.label} ---\n${p.content}`)
-      .join('\n\n');
-    onChange(composed);
-  };
-
   const decompose = (text: string): StagePart[] => {
     const parts: StagePart[] = [];
     const sections = text.split(/^---\s*(.+?)\s*---$/m);
-    // sections[0] = text before first header (if any), then alternating [label, content, label, content, ...]
     if (sections[0]?.trim()) {
       parts.push({ label: 'Intro', content: sections[0].trim() });
     }
@@ -55,31 +44,35 @@ export function StagePromptEditor({
     return parts;
   };
 
+  const recompose = (parts: StagePart[]) => {
+    const composed = parts
+      .filter(p => p.content.trim())
+      .map(p => `--- ${p.label} ---\n${p.content}`)
+      .join('\n\n');
+    onChange(composed);
+  };
+
+  // Single source of truth: derive parts from full prompt text
+  const allParts = value ? decompose(value) : [];
+
   const handlePartEdit = (idx: number, newContent: string) => {
-    if (!onPartsChange) return;
     const updated = allParts.map((p, i) => i === idx ? { ...p, content: newContent } : p);
-    onPartsChange(updated);
     recompose(updated);
   };
 
   const handlePartDelete = (idx: number) => {
-    if (!onPartsChange) return;
     const updated = allParts.filter((_, i) => i !== idx);
-    onPartsChange(updated);
     recompose(updated);
   };
 
   const handlePartRename = (idx: number, newLabel: string) => {
-    if (!onPartsChange) return;
     const updated = allParts.map((p, i) => i === idx ? { ...p, label: newLabel } : p);
-    onPartsChange(updated);
     recompose(updated);
   };
 
   const handleAddPart = () => {
-    if (!onPartsChange) return;
     const updated = [...allParts, { label: `Custom Part ${allParts.length + 1}`, content: '' }];
-    onPartsChange(updated);
+    recompose(updated);
   };
 
   const partsWithContent = allParts.filter(p => p.content.trim());
@@ -171,14 +164,12 @@ export function StagePromptEditor({
               ) : (
                 <div className="text-[11px] text-c-dim italic p-3">{t('storyboard.noPromptSection')}</div>
               )}
-              {onPartsChange && (
-                <button
-                  onClick={handleAddPart}
-                  className="w-full text-[10px] py-1.5 rounded-lg border border-dashed border-purple-700/40 text-purple-400 hover:bg-purple-900/20 hover:text-purple-300 transition-colors flex items-center justify-center gap-1"
-                >
-                  + {t('storyboard.addPart')}
-                </button>
-              )}
+              <button
+                onClick={handleAddPart}
+                className="w-full text-[10px] py-1.5 rounded-lg border border-dashed border-purple-700/40 text-purple-400 hover:bg-purple-900/20 hover:text-purple-300 transition-colors flex items-center justify-center gap-1"
+              >
+                + {t('storyboard.addPart')}
+              </button>
             </div>
           )}
 
@@ -187,13 +178,7 @@ export function StagePromptEditor({
               <div className="text-[10px] text-purple-300/60 mb-1">{t('storyboard.fullPromptHint')}</div>
               <textarea
                 value={value}
-                onChange={(e) => {
-                  const text = e.target.value;
-                  onChange(text);
-                  if (onPartsChange) {
-                    onPartsChange(decompose(text));
-                  }
-                }}
+                onChange={(e) => onChange(e.target.value)}
                 placeholder={placeholder || t('storyboard.noPromptSection')}
                 rows={12}
                 className="input text-[11px] w-full font-mono resize-y min-h-[150px] bg-purple-950/20 border-purple-800/30 focus:border-purple-600/50"
