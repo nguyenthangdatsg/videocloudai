@@ -17,7 +17,7 @@ import { useImageGenStore } from '../../store/image-generation';
 import type { GenImage, GenMediaType } from '../../store/image-generation';
 
 import type { WorkflowStep, TranscriptEntry, StagePart } from './types';
-import { mergeToSentences, splitSegment, msToTimeStr } from './utils';
+import { mergeToSentences, splitSegment, msToTimeStr, buildSideMap } from './utils';
 import { StoryboardProvider } from './StoryboardContext';
 import {
   TopicsStep,
@@ -28,7 +28,12 @@ import {
   TimelineStep,
   MetadataStep,
   AssembleStep,
+  ComparisonLayoutPanel,
+  ComparisonSetup,
+  StepAccordion,
+  CompletedStepsSummary,
 } from './components';
+import { ComparisonScriptStep, ComparisonPromptsStep } from './flows/comparison';
 
 export function Storyboard() {
   const { t } = useTranslation();
@@ -141,13 +146,36 @@ export function Storyboard() {
   const [generatingThumbnailPrompt, setGeneratingThumbnailPrompt] = useState(false);
   const [thumbnailBgColor, setThumbnailBgColor] = useState('');
 
+  // Comparison mode
+  const [videoMode, setVideoMode] = useState<'standard' | 'comparison'>('standard');
+  const [mascotPrompt, setMascotPrompt] = useState('');
+  const [mascotAngle, setMascotAngle] = useState('70-75');
+  const [mascotImage, setMascotImage] = useState('');
+  const [mascotImageLeft, setMascotImageLeft] = useState('');
+  const [mascotImageRight, setMascotImageRight] = useState('');
+  const [mascotImageBoth, setMascotImageBoth] = useState('');
+  const [mascotImageWin, setMascotImageWin] = useState('');
+  const [comparisonItems, setComparisonItems] = useState<{ type?: 'difference' | 'winner'; layout?: { left: { x: number; y: number; w: number; h: number }; mascot: { x: number; y: number; w: number; h: number }; right: { x: number; y: number; w: number; h: number } }; left: { name: string; description?: string }; right: { name: string; description?: string } }>({
+    left: { name: '' }, right: { name: '' },
+  });
+  const [generatingMascot, setGeneratingMascot] = useState(false);
+  const [generatingMascotKey, setGeneratingMascotKey] = useState<string | null>(null);
+  const [compMediaSource, setCompMediaSource] = useState<'flow' | 'pexels'>('flow');
+  const [compRoundPanels, setCompRoundPanels] = useState(true);
+  const [compBgSource, setCompBgSource] = useState<'color' | 'pexels'>('pexels');
+  const [compBgQuery, setCompBgQuery] = useState('');
+  const [frameTemplateId, setFrameTemplateId] = useState('');
+  const [pexelsLoading, setPexelsLoading] = useState(false);
+  const [pexelsProgress, setPexelsProgress] = useState<string[]>([]);
+  const pexelsAbortRef = useRef<AbortController | null>(null);
+
   // Step 7: Assemble
   const [assembling, setAssembling] = useState(false);
   const assembleAbortRef = useRef<AbortController | null>(null);
   const [speed, setSpeed] = useState<number>(1.0);
-  const [bgColor, setBgColor] = useState<string>('black');
+  const [bgColor, setBgColor] = useState<string>('white');
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>({
-    enabled: true,
+    enabled: false,
     fontFamily: 'Arial',
     fontSize: 48,
     fontColor: '#FFFFFF',
@@ -629,6 +657,43 @@ export function Storyboard() {
     if (!pp.metadata) setMetadataPrompt(sp?.metadata || linkedTemplate.sections.metadataSystemPrompt || '');
   }, [linkedTemplate, linkedTemplateApplied, projectLoaded]);
 
+  // Sync mascot between project and template:
+  // - If project has no mascot but template does → inherit from template
+  // - If project has mascot but template doesn't → backfill to template (for sharing)
+  useEffect(() => {
+    if (!linkedTemplate || !projectLoaded || !projectTemplateId) return;
+    const tpl = linkedTemplate as unknown as Record<string, unknown>;
+    if (!mascotImage && tpl.mascotImage) {
+      // Inherit from template
+      setMascotImage(tpl.mascotImage as string);
+      if (tpl.mascotPrompt && !mascotPrompt) setMascotPrompt(tpl.mascotPrompt as string);
+      if (tpl.mascotImageLeft) setMascotImageLeft(tpl.mascotImageLeft as string);
+      if (tpl.mascotImageRight) setMascotImageRight(tpl.mascotImageRight as string);
+      if (tpl.mascotImageBoth) setMascotImageBoth(tpl.mascotImageBoth as string);
+      if (tpl.mascotImageWin) setMascotImageWin(tpl.mascotImageWin as string);
+    } else if (mascotImage && !tpl.mascotImage) {
+      // Backfill: project has mascot but template doesn't — share it
+      const backfill: Record<string, string> = { mascotImage };
+      if (mascotPrompt) backfill.mascotPrompt = mascotPrompt;
+      if (mascotImageLeft) backfill.mascotImageLeft = mascotImageLeft;
+      if (mascotImageRight) backfill.mascotImageRight = mascotImageRight;
+      if (mascotImageBoth) backfill.mascotImageBoth = mascotImageBoth;
+      if (mascotImageWin) backfill.mascotImageWin = mascotImageWin;
+      storyboardApi.updateTemplate(projectTemplateId, backfill as never).catch(() => {});
+    }
+  }, [linkedTemplate, projectLoaded]);
+
+  // Auto-set comparison mode when template niche is "Comparison"
+  const isComparisonTemplate = linkedTemplate?.niche?.toLowerCase().includes('comparison') ?? false;
+  useEffect(() => {
+    if (!linkedTemplate || !projectLoaded) return;
+    if (isComparisonTemplate && videoMode !== 'comparison') {
+      setVideoMode('comparison');
+    } else if (!isComparisonTemplate && videoMode === 'comparison') {
+      setVideoMode('standard');
+    }
+  }, [isComparisonTemplate, projectLoaded]);
+
   // Fallback: apply global template if linked template is empty or absent
   const linkedTemplateEmpty = linkedTemplate && !linkedTemplate.templateText
     && !linkedTemplate.stagePrompts?.topics && !linkedTemplate.stagePrompts?.script
@@ -666,7 +731,7 @@ export function Storyboard() {
           if (p.prompts?.length && p.generatedImages.length !== p.prompts.length) {
             setGeneratedImages([]);
           } else {
-            setGeneratedImages(p.generatedImages.map((img) => ({ ...img, status: img.status === 'generating' ? 'pending' : (img.status as 'done' | 'pending' | 'error') })));
+            setGeneratedImages(p.generatedImages.map((img) => ({ ...img, status: img.status === 'generating' ? 'pending' : (img.status || (img.url ? 'done' : 'pending')) as 'done' | 'pending' | 'error' })));
           }
         }
         if (p.segments?.length) setSegments(p.segments.map((s) => ({ ...s, motion: s.motion || 'static' })));
@@ -681,8 +746,21 @@ export function Storyboard() {
         if (p.voiceVolume != null) setVoiceVolume(p.voiceVolume);
         if (p.musicVolume != null) setMusicVolume(p.musicVolume);
         setSpeed(p.speed ?? 1.0);
-        setBgColor(p.bgColor ?? 'black');
+        setBgColor(p.bgColor ?? 'white');
         if (p.subtitleStyle) setSubtitleStyle(prev => ({ ...prev, ...p.subtitleStyle }));
+        if (p.videoMode) setVideoMode(p.videoMode);
+        if (p.compMediaSource) setCompMediaSource(p.compMediaSource);
+        if (p.compRoundPanels !== undefined) setCompRoundPanels(p.compRoundPanels);
+        if (p.compBgSource) setCompBgSource(p.compBgSource);
+        if (p.compBgQuery) setCompBgQuery(p.compBgQuery);
+        if (p.frameTemplateId) setFrameTemplateId(p.frameTemplateId);
+        if (p.mascotPrompt) setMascotPrompt(p.mascotPrompt);
+        if (p.mascotImage) setMascotImage(p.mascotImage);
+        if (p.mascotImageLeft) setMascotImageLeft(p.mascotImageLeft);
+        if (p.mascotImageRight) setMascotImageRight(p.mascotImageRight);
+        if (p.mascotImageBoth) setMascotImageBoth(p.mascotImageBoth);
+        if (p.mascotImageWin) setMascotImageWin(p.mascotImageWin);
+        if (p.comparisonItems?.left?.name) setComparisonItems(p.comparisonItems);
         if (p.topicsPrompt) setTopicsPrompt(p.topicsPrompt);
         if (p.scriptPrompt) setScriptPrompt(p.scriptPrompt);
         if (p.imagePromptPrompt) setImagePromptPrompt(p.imagePromptPrompt);
@@ -807,10 +885,70 @@ export function Storyboard() {
     setGeneratingScript(true);
     setError(null);
     try {
+      let finalSystemPrompt = scriptPrompt.trim() || '';
+      if (videoMode === 'comparison') {
+        const comparisonInstructions = `
+COMPARISON VIDEO FORMAT:
+This is a comparison video between "${comparisonItems.left.name}" (LEFT) and "${comparisonItems.right.name}" (RIGHT).
+${comparisonItems.type === 'winner' ? 'Format: Compare to Win — compare round by round, declare a round winner each time, then announce the overall winner.' : 'Format: Compare Differences — explore key differences neutrally, round by round.'}
+
+HOOK (CRITICAL — first 2-3 sentences MUST grab attention):
+- Open with a bold claim, surprising fact, or curiosity gap
+- Examples: "One of these is 3x better than the other..." or "Most people get this wrong..." or "After testing both, the winner shocked me..."
+- Do NOT start with "Today we're comparing..." — that's boring
+- The hook should make viewers NEED to keep watching
+
+ROUND-BY-ROUND STRUCTURE:
+The script follows a referee-style format. The referee (mascot character) announces each criterion, then presents each side, then gives a verdict.
+
+For EACH round (3-5 rounds total):
+1. [Points both] — Referee announces the criterion/category being compared (e.g. "Round one: Cost!")
+2. [Points left] — Present "${comparisonItems.left.name}"'s argument for this criterion (1-2 sentences)
+3. [Points right] — Present "${comparisonItems.right.name}"'s argument for this criterion (1-2 sentences)
+4. ${comparisonItems.type === 'winner' ? '[Winner left] or [Winner right] — Referee declares the round winner' : '[Points both] — Referee summarizes the key difference'}
+
+After all rounds:
+- [Points both] — Referee gives final conclusion${comparisonItems.type === 'winner' ? ' and declares overall winner' : ''}
+${comparisonItems.type === 'winner' ? '- [Winner left] or [Winner right] — Final overall winner announcement' : ''}
+
+DIRECTION CUES:
+- [Points both] for referee speaking (hook, announcing criteria, conclusion)
+- [Points left] when presenting "${comparisonItems.left.name}"'s side
+- [Points right] when presenting "${comparisonItems.right.name}"'s side
+${comparisonItems.type === 'winner' ? '- [Winner left] or [Winner right] for round winners AND final winner' : ''}
+
+PACING RULES:
+- Keep sentences SHORT (under 12 words each)
+- Use dramatic pauses before revealing round winners
+- Build tension toward the final verdict
+${comparisonItems.type === 'winner' ? '- Final verdict: dramatic buildup then clear winner announcement' : '- End with balanced, thoughtful summary'}
+
+Example:
+[Points both] Most people think they know the answer to this one. But they are dead wrong. Let us settle this once and for all.
+[Points both] Round one. Cost!
+[Points left] ${comparisonItems.left.name} barely costs anything. Budget friendly all the way.
+[Points right] ${comparisonItems.right.name}? Expensive. Very expensive. Your wallet will cry.
+${comparisonItems.type === 'winner' ? '[Winner left] Round one goes to ' + comparisonItems.left.name + '!' : '[Points both] Clear advantage for ' + comparisonItems.left.name + ' on cost.'}
+[Points both] Round two. Fun factor!
+[Points left] ${comparisonItems.left.name} is nice. Relaxing. But not exactly thrilling.
+[Points right] ${comparisonItems.right.name}? Non-stop entertainment. Every single day.
+${comparisonItems.type === 'winner' ? '[Winner right] Round two goes to ' + comparisonItems.right.name + '!' : '[Points both] ' + comparisonItems.right.name + ' wins on fun, no question.'}
+[Points both] And after all the rounds... the ${comparisonItems.type === 'winner' ? 'overall winner is...' : 'real difference comes down to this...'}
+${comparisonItems.type === 'winner' ? '[Winner right]' : ''}
+
+ENDING (CRITICAL — last 2-3 sentences):
+- After the winner/conclusion, add ONE surprising or thought-provoking final thought
+- Something viewers will want to comment on or share: a hot take, unexpected fact, or provocative question
+- End with: "What do you think? Drop your pick in the comments!"
+- This drives engagement (comments + shares = algorithm boost)`;
+        finalSystemPrompt = finalSystemPrompt
+          ? finalSystemPrompt + '\n\n' + comparisonInstructions
+          : comparisonInstructions;
+      }
       const script = await storyboardApi.generateScript({
         topic: scriptTopic.trim(),
         duration: scriptDuration,
-        systemPrompt: scriptPrompt.trim() || undefined,
+        systemPrompt: finalSystemPrompt || undefined,
       });
       setScriptText(script);
       saveProject({ script, scriptDuration });
@@ -900,6 +1038,14 @@ export function Storyboard() {
     } finally {
       setGeneratingAudio(false);
     }
+  };
+
+  const handleClearAudio = () => {
+    setAudioFile(null);
+    setAudioProgress([]);
+    setTranscriptEntries([]);
+    setSegments([]);
+    saveProject({ audioFilename: '', audioDuration: 0, transcriptEntries: [], segments: [] });
   };
 
   const handleSplitEntry = (entryIndex: number, maxSec: number) => {
@@ -1035,7 +1181,12 @@ export function Storyboard() {
     setPromptProgress([]);
     setError(null);
 
-    const segs = transcriptEntries.map((e) => {
+    // For comparison mode, pre-tag segments with side from original script direction markers
+    const sideMap = (videoMode === 'comparison' && scriptText)
+      ? buildSideMap(scriptText, transcriptEntries)
+      : [];
+
+    const segs = transcriptEntries.map((e, i) => {
       const ms = e.startMs;
       const totalSec = Math.floor(ms / 1000);
       const m = Math.floor(totalSec / 60);
@@ -1043,13 +1194,25 @@ export function Storyboard() {
       return {
         timestamp: `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`,
         text: e.text,
+        ...(sideMap[i] ? { side: sideMap[i] } : {}),
       };
     });
 
     try {
       const result = await storyboardApi.generatePrompts(
-        { segments: segs, styleTemplate: imagePromptPrompt.trim() || undefined, visualStyle: linkedTemplate?.visualStyle || undefined, aspectRatio },
-        (_step, detail) => { if (detail) setPromptProgress((p) => [...p, detail]); },
+        {
+          segments: segs,
+          styleTemplate: imagePromptPrompt.trim() || undefined,
+          visualStyle: linkedTemplate?.visualStyle || undefined,
+          aspectRatio,
+          ...(videoMode === 'comparison' && comparisonItems.left.name && comparisonItems.right.name
+            ? { videoMode, comparisonItems, bgColor, compMediaSource }
+            : {}),
+        },
+        (_step, detail, partialPrompts) => {
+          if (detail) setPromptProgress((p) => [...p, detail]);
+          if (partialPrompts?.length) setPrompts(partialPrompts);
+        },
         abort.signal,
       );
       setPrompts(result);
@@ -1222,14 +1385,102 @@ export function Storyboard() {
     }
   };
 
+  // Pexels batch: fetch stock video clips
+  const handlePexelsBatch = async () => {
+    if (!prompts.length || !projectId) {
+      setError(!prompts.length ? 'No prompts to fetch videos for' : 'No project loaded');
+      return;
+    }
+    setPexelsLoading(true);
+    setError(null);
+    setPexelsProgress([]);
+    const abortCtrl = new AbortController();
+    pexelsAbortRef.current = abortCtrl;
+    try {
+      // Build search queries from prompts — use the narration text or prompt as search query
+      const isStdMode = videoMode !== 'comparison';
+      const queries = prompts
+        .filter(p => isStdMode || !p.side || p.side === 'left' || p.side === 'right' || p.side === 'both' || p.side === 'win-left' || p.side === 'win-right')
+        .map(p => ({
+          timestamp: p.timestamp,
+          query: (p.text || p.prompt).replace(/\[.*?\]/g, '').replace(/points (left|right|both),?\s*/gi, '').trim(),
+          side: p.side,
+        }))
+        .filter(q => q.query.length > 0);
+      if (!queries.length) {
+        setError('No segments with text to search Pexels for');
+        setPexelsLoading(false);
+        return;
+      }
+      setPexelsProgress([`Searching ${queries.length} clips...`]);
+      const videos = await storyboardApi.pexelsBatch(queries, (step, detail) => {
+        setPexelsProgress(prev => [...prev, detail || step]);
+      }, abortCtrl.signal);
+      // Merge video results into generatedImages
+      const updatedImages = [...generatedImages];
+      // Ensure array is large enough for all prompts
+      while (updatedImages.length < prompts.length) {
+        updatedImages.push({ index: updatedImages.length, timestamp: prompts[updatedImages.length]?.timestamp || '', prompt: prompts[updatedImages.length]?.prompt || '', filename: '', url: '', status: 'pending' as const } as any);
+      }
+      const successTimestamps = new Set(videos.map(v => v.timestamp));
+      for (const q of queries) {
+        const idx = prompts.findIndex(p => p.timestamp === q.timestamp);
+        if (idx >= 0) {
+          if (successTimestamps.has(q.timestamp)) {
+            const vid = videos.find(v => v.timestamp === q.timestamp)!;
+            updatedImages[idx] = {
+              ...updatedImages[idx],
+              filename: vid.filename,
+              url: vid.url,
+              status: 'done' as const,
+              mediaType: 'video',
+              videoFilename: vid.filename,
+            };
+          } else {
+            updatedImages[idx] = {
+              ...updatedImages[idx],
+              status: 'error' as const,
+            };
+          }
+        }
+      }
+      setGeneratedImages(updatedImages);
+      saveProject({ generatedImages: updatedImages });
+      const doneCount = videos.length;
+      setPexelsProgress(prev => [...prev, `Done — ${doneCount}/${queries.length} clips fetched`]);
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        setPexelsProgress(prev => [...prev, 'Stopped by user']);
+      } else {
+        const msg = (err as Error).message;
+        setError(msg);
+        setPexelsProgress(prev => [...prev, `Error: ${msg}`]);
+      }
+    } finally {
+      pexelsAbortRef.current = null;
+      setPexelsLoading(false);
+    }
+  };
+
+  const cancelPexels = () => {
+    pexelsAbortRef.current?.abort();
+  };
+
   // Regenerate single image
   const [regenIndex, setRegenIndex] = useState<number | null>(null);
   const [editingImageIdx, setEditingImageIdx] = useState<number | null>(null);
   const [editingImagePrompt, setEditingImagePrompt] = useState('');
+  const singleRegenCleanupRef = useRef<(() => void) | null>(null);
 
   const handleRegenSingle = (idx: number, overrideProvider?: 'google-flow' | 'grok' | 'chatgpt') => {
     if (!projectId || !prompts[idx]) return;
     const useProvider = overrideProvider ?? flowProvider;
+
+    // Clean up any previous single-regen listeners
+    if (singleRegenCleanupRef.current) singleRegenCleanupRef.current();
+    // Also stop any batch flow generation to avoid listener conflicts
+    if (projectId) imageGenStore.stopGeneration(projectId);
+
     if (regenIndex !== null) {
       setGeneratedImages((prev) =>
         prev.map((img, i) => i === regenIndex && img.status === 'generating' ? { ...img, status: 'error' as const } : img),
@@ -1265,6 +1516,7 @@ export function Storyboard() {
       window.removeEventListener('Han2YT_flow_done', onDone);
       window.removeEventListener('Han2YT_flow_error', onError);
       setRegenIndex(null);
+      singleRegenCleanupRef.current = null;
     };
     const onDone = () => { cleanup(); };
     const onError = () => {
@@ -1278,6 +1530,7 @@ export function Storyboard() {
     window.addEventListener('Han2YT_flow_image', onImage);
     window.addEventListener('Han2YT_flow_done', onDone);
     window.addEventListener('Han2YT_flow_error', onError);
+    singleRegenCleanupRef.current = cleanup;
 
     window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
       detail: {
@@ -1394,6 +1647,18 @@ export function Storyboard() {
           };
         }),
       });
+      // Carry over side tags from prompts to segments (comparison mode)
+      if (videoMode === 'comparison' && prompts.some(p => p.side)) {
+        const toSec = (ts: string) => { const p = ts.split(':').map(Number); return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1]; };
+        for (const seg of matched) {
+          const segStartSec = seg.startTime;
+          const match = prompts.find(p => {
+            const pSec = toSec(p.timestamp);
+            return Math.abs(pSec - segStartSec) < 2;
+          });
+          if (match?.side) seg.side = match.side;
+        }
+      }
       setSegments(matched);
       setStep('timeline');
       saveProject({ segments: matched, currentStep: 'timeline' });
@@ -1499,6 +1764,235 @@ export function Storyboard() {
     }
   };
 
+  // ── Mascot Generation (comparison mode) — generates 5 variants ──
+  const handleGenerateMascot = async () => {
+    if (!mascotPrompt.trim()) return;
+    setGeneratingMascot(true);
+    setError(null);
+
+    const isWhiteBg = !bgColor || bgColor === 'white' || bgColor === '#ffffff' || bgColor === '#FFFFFF';
+    const bgSuffix = isWhiteBg
+      ? ', plain white background, isolated character, no scenery, clean cutout style'
+      : ', solid color background, isolated character, no scenery, clean cutout style';
+    const variants: Array<{ key: string; suffix: string; setter: (v: string) => void }> = [
+      { key: 'none', suffix: ' — Character standing in neutral idle pose, arms at sides, facing forward' + bgSuffix, setter: setMascotImage },
+      { key: 'left', suffix: ` — Character facing LEFT at ${mascotAngle} degree angle, pointing diagonally up-left with one arm fully extended at ${mascotAngle} degrees, body rotated ${mascotAngle} degrees to the left` + bgSuffix, setter: setMascotImageLeft },
+      { key: 'right', suffix: ` — Character facing RIGHT at ${mascotAngle} degree angle, pointing diagonally up-right with one arm fully extended at ${mascotAngle} degrees, body rotated ${mascotAngle} degrees to the right` + bgSuffix, setter: setMascotImageRight },
+      { key: 'both', suffix: ' — Character with both arms spread wide open, presenting both sides equally, facing forward' + bgSuffix, setter: setMascotImageBoth },
+      { key: 'win', suffix: ' — Character celebrating excitedly, raising a trophy or gold medal overhead, happy winner pose' + bgSuffix, setter: setMascotImageWin },
+    ];
+
+    if (flowAvailable) {
+      // Generate via Flow extension — one prompt at a time, sequentially
+      const results: Record<string, string> = {};
+      let variantIdx = 0;
+
+      const generateNextVariant = (): Promise<void> => {
+        return new Promise((resolve, reject) => {
+          if (variantIdx >= variants.length) { resolve(); return; }
+          const variant = variants[variantIdx];
+          const prompt = mascotPrompt.trim() + variant.suffix;
+
+          const onImage = (e: Event) => {
+            const d = (e as CustomEvent).detail;
+            if (d.index !== 0) return;
+            cleanup();
+            if (d.status === 'done' && d.filename) {
+              variant.setter(d.filename);
+              results[variant.key] = d.filename;
+            }
+            variantIdx++;
+            generateNextVariant().then(resolve, reject);
+          };
+          const onDone = () => { /* handled by onImage */ };
+          const onError = (e: Event) => {
+            cleanup();
+            variantIdx++;
+            generateNextVariant().then(resolve, reject);
+          };
+          const cleanup = () => {
+            window.removeEventListener('Han2YT_flow_image', onImage);
+            window.removeEventListener('Han2YT_flow_done', onDone);
+            window.removeEventListener('Han2YT_flow_error', onError);
+          };
+          window.addEventListener('Han2YT_flow_image', onImage);
+          window.addEventListener('Han2YT_flow_done', onDone);
+          window.addEventListener('Han2YT_flow_error', onError);
+
+          window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
+            detail: {
+              prompts: [{ timestamp: '0:00', prompt }],
+              delayMin: 0, delayMax: 0,
+              mediaType: 'image',
+              provider: flowProvider,
+            },
+          }));
+        });
+      };
+
+      try {
+        await generateNextVariant();
+        if (Object.keys(results).length > 0) {
+          const mascotData = {
+            mascotPrompt,
+            ...(results.none ? { mascotImage: results.none } : {}),
+            ...(results.left ? { mascotImageLeft: results.left } : {}),
+            ...(results.right ? { mascotImageRight: results.right } : {}),
+            ...(results.both ? { mascotImageBoth: results.both } : {}),
+            ...(results.win ? { mascotImageWin: results.win } : {}),
+          };
+          saveProject(mascotData);
+          // Share mascot with template so other projects can reuse it
+          if (projectTemplateId) {
+            storyboardApi.updateTemplate(projectTemplateId, mascotData as never).catch(() => {});
+          }
+        } else {
+          setError('Mascot generation failed — no images returned from Flow');
+        }
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setGeneratingMascot(false);
+      }
+      return;
+    }
+
+    // Fallback: generate via API
+    const generateSingleMascot = async (prompt: string): Promise<{ filename: string; url: string } | null> => {
+      const res = await fetch('/api/image/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, aspectRatio: '9:16', count: 1 }),
+      });
+      let imageResult: { filename: string; url: string } | null = null;
+      let lastError = '';
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed.images?.[0]) imageResult = parsed.images[0];
+              if (parsed.error) lastError = parsed.error;
+            } catch { /* skip non-JSON lines */ }
+          }
+        }
+      }
+      if (!imageResult && lastError) throw new Error(lastError);
+      return imageResult;
+    };
+
+    try {
+      const results: Record<string, { filename: string }> = {};
+      for (const v of variants) {
+        const result = await generateSingleMascot(mascotPrompt + v.suffix);
+        if (result) { v.setter(result.filename); results[v.key] = result; }
+      }
+      if (Object.keys(results).length > 0) {
+        const mascotData = {
+          mascotPrompt,
+          ...(results.none ? { mascotImage: results.none.filename } : {}),
+          ...(results.left ? { mascotImageLeft: results.left.filename } : {}),
+          ...(results.right ? { mascotImageRight: results.right.filename } : {}),
+          ...(results.both ? { mascotImageBoth: results.both.filename } : {}),
+          ...(results.win ? { mascotImageWin: results.win.filename } : {}),
+        };
+        saveProject(mascotData);
+        // Share mascot with template so other projects can reuse it
+        if (projectTemplateId) {
+          storyboardApi.updateTemplate(projectTemplateId, mascotData as never).catch(() => {});
+        }
+      } else {
+        setError('Mascot generation failed — no images returned');
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setGeneratingMascot(false);
+    }
+  };
+
+  // ── Mascot variant config (reusable) ──
+  const getMascotVariants = useCallback(() => {
+    const isWhiteBg = !bgColor || bgColor === 'white' || bgColor === '#ffffff' || bgColor === '#FFFFFF';
+    const bgSuffix = isWhiteBg
+      ? ', plain white background, isolated character, no scenery, clean cutout style'
+      : ', solid color background, isolated character, no scenery, clean cutout style';
+    return [
+      { key: 'none', label: 'Neutral', suffix: ' — Character standing in neutral idle pose, arms at sides, facing forward' + bgSuffix, setter: setMascotImage, image: mascotImage },
+      { key: 'left', label: 'Left', suffix: ` — Character facing LEFT at ${mascotAngle} degree angle, pointing diagonally up-left with one arm fully extended at ${mascotAngle} degrees, body rotated ${mascotAngle} degrees to the left` + bgSuffix, setter: setMascotImageLeft, image: mascotImageLeft },
+      { key: 'right', label: 'Right', suffix: ` — Character facing RIGHT at ${mascotAngle} degree angle, pointing diagonally up-right with one arm fully extended at ${mascotAngle} degrees, body rotated ${mascotAngle} degrees to the right` + bgSuffix, setter: setMascotImageRight, image: mascotImageRight },
+      { key: 'both', label: 'Both', suffix: ' — Character with both arms spread wide open, presenting both sides equally, facing forward' + bgSuffix, setter: setMascotImageBoth, image: mascotImageBoth },
+      { key: 'win', label: 'Win', suffix: ' — Character celebrating excitedly, raising a trophy or gold medal overhead, happy winner pose' + bgSuffix, setter: setMascotImageWin, image: mascotImageWin },
+    ];
+  }, [bgColor, mascotAngle, mascotImage, mascotImageLeft, mascotImageRight, mascotImageBoth, mascotImageWin]);
+
+  // ── Regenerate a single mascot variant ──
+  const handleGenerateSingleMascotVariant = async (variantKey: string, customPrompt: string) => {
+    setGeneratingMascotKey(variantKey);
+    setError(null);
+    const variants = getMascotVariants();
+    const variant = variants.find(v => v.key === variantKey);
+    if (!variant) { setGeneratingMascotKey(null); return; }
+
+    const generateSingle = async (prompt: string): Promise<{ filename: string; url: string } | null> => {
+      const res = await fetch('/api/image/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, aspectRatio: '9:16', count: 1 }),
+      });
+      let imageResult: { filename: string; url: string } | null = null;
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed.images?.[0]) imageResult = parsed.images[0];
+            } catch { /* skip */ }
+          }
+        }
+      }
+      return imageResult;
+    };
+
+    try {
+      const result = await generateSingle(customPrompt);
+      if (result) {
+        variant.setter(result.filename);
+        const fieldMap: Record<string, string> = {
+          none: 'mascotImage', left: 'mascotImageLeft', right: 'mascotImageRight',
+          both: 'mascotImageBoth', win: 'mascotImageWin',
+        };
+        const saveData = { [fieldMap[variantKey]]: result.filename };
+        saveProject(saveData);
+        if (projectTemplateId) {
+          storyboardApi.updateTemplate(projectTemplateId, saveData as never).catch(() => {});
+        }
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setGeneratingMascotKey(null);
+    }
+  };
+
   // ── Step 7: Assemble ──
   const handleAssemble = async () => {
     if (!segments.length || !audioFile) return;
@@ -1513,7 +2007,7 @@ export function Storyboard() {
 
     try {
       const res = await storyboardApi.assemble(
-        { segments, audioFilename: audioFile.filename, aspectRatio, bgMusicFilename: bgMusicFilename || undefined, voiceVolume, musicVolume, outputName: scriptTopic.trim() || projectName.trim() || undefined, speed, bgColor, subtitleStyle: subtitleStyle.enabled ? subtitleStyle : undefined },
+        { segments, audioFilename: audioFile.filename, aspectRatio, bgMusicFilename: bgMusicFilename || undefined, voiceVolume, musicVolume, outputName: scriptTopic.trim() || projectName.trim() || undefined, speed, bgColor, subtitleStyle: subtitleStyle.enabled ? subtitleStyle : undefined, ...(videoMode === 'comparison' ? { videoMode, mascotImage, mascotImageLeft, mascotImageRight, mascotImageBoth, mascotImageWin, comparisonLayout: comparisonItems.layout, comparisonItems: { type: comparisonItems.type, left: comparisonItems.left, right: comparisonItems.right }, compRoundPanels, compBgSource, compBgQuery: compBgQuery || undefined, frameTemplateId: frameTemplateId || undefined } : {}) },
         (step, detail) => {
           if (step) setAssembleStep(step);
           if (detail) {
@@ -1569,7 +2063,7 @@ export function Storyboard() {
     ttsRate, setTtsRate, ttsPitch, setTtsPitch, ttsVolume, setTtsVolume,
     ttsStyle, setTtsStyle,
     voicePreviewLoading, voicePreviewPlaying, generatingAudio,
-    audioProgress, audioFile, transcriptEntries, setTranscriptEntries,
+    audioProgress, audioFile, handleClearAudio, transcriptEntries, setTranscriptEntries,
     handleSplitEntry,
     handleMergeEntry,
     handleSplitAtCursor,
@@ -1616,6 +2110,16 @@ export function Storyboard() {
     thumbnailUrl, setThumbnailUrl, generatingThumbnail, thumbnailProgress,
     generatingThumbnailPrompt, thumbnailBgColor, setThumbnailBgColor,
     handleGenerateMetadata, handleGenerateThumbnail, handleAutoGenerateThumbnailPrompt,
+    isComparisonTemplate,
+    videoMode, setVideoMode, mascotPrompt, setMascotPrompt, mascotAngle, setMascotAngle,
+    getMascotVariants, handleGenerateSingleMascotVariant, generatingMascotKey,
+    mascotImage, setMascotImage,
+    mascotImageLeft, setMascotImageLeft, mascotImageRight, setMascotImageRight,
+    mascotImageBoth, setMascotImageBoth, mascotImageWin, setMascotImageWin,
+    comparisonItems, setComparisonItems, generatingMascot, handleGenerateMascot,
+    compMediaSource, setCompMediaSource, handlePexelsBatch, cancelPexels, pexelsLoading, pexelsProgress,
+    compRoundPanels, setCompRoundPanels,
+    compBgSource, setCompBgSource, compBgQuery, setCompBgQuery, frameTemplateId, setFrameTemplateId,
     assembling, assembleAbortRef, speed, setSpeed, bgColor, setBgColor,
     lightboxUrl, setLightboxUrl,
     assembleProgress, assembleLogRef, assembleStep, assembleClipProgress,
@@ -1692,6 +2196,9 @@ export function Storyboard() {
           </div>
         </nav>
 
+        {/* Completed steps summary strip */}
+        <CompletedStepsSummary />
+
         <div className="flex-1 overflow-auto">
           <div className="max-w-7xl mx-auto p-6 space-y-5">
 
@@ -1755,15 +2262,43 @@ export function Storyboard() {
               )}
             </div>
 
-            {/* Step content */}
-            {step === 'topics' && <TopicsStep />}
-            {step === 'script' && <ScriptStep />}
-            {step === 'audio' && <AudioStep />}
-            {step === 'prompts' && <PromptsStep />}
-            {step === 'images' && <ImagesStep />}
-            {step === 'timeline' && <TimelineStep />}
-            {step === 'metadata' && <MetadataStep />}
-            {step === 'assemble' && <AssembleStep />}
+            {/* Comparison setup — visible on script/prompts/images steps */}
+            {videoMode === 'comparison' && ['topics', 'script', 'prompts', 'images', 'timeline'].includes(step) && <ComparisonSetup />}
+
+            {/* Comparison layout panel — visible on all steps except audio/metadata */}
+            {videoMode === 'comparison' && !['audio', 'metadata'].includes(step) && <ComparisonLayoutPanel />}
+
+            {/* Progressive step accordion — completed steps show summaries, current step is expanded */}
+            {allSteps.map((s, i) => {
+              const isActive = step === s.key;
+              const isFuture = i > currentIdx && !s.done;
+              return (
+                <StepAccordion
+                  key={s.key}
+                  stepKey={s.key}
+                  label={s.label}
+                  icon={s.icon}
+                  done={s.done}
+                  isActive={isActive}
+                  isFuture={isFuture}
+                  onActivate={() => setStep(s.key)}
+                >
+                  {isActive && (() => {
+                    switch (s.key) {
+                      case 'topics': return <TopicsStep />;
+                      case 'script': return videoMode === 'comparison' ? <ComparisonScriptStep /> : <ScriptStep />;
+                      case 'audio': return <AudioStep />;
+                      case 'prompts': return videoMode === 'comparison' ? <ComparisonPromptsStep /> : <PromptsStep />;
+                      case 'images': return <ImagesStep />;
+                      case 'timeline': return <TimelineStep />;
+                      case 'metadata': return <MetadataStep />;
+                      case 'assemble': return <AssembleStep />;
+                      default: return null;
+                    }
+                  })()}
+                </StepAccordion>
+              );
+            })}
 
             {/* Error */}
             {error && (

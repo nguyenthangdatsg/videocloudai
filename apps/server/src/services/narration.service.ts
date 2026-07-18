@@ -151,9 +151,25 @@ export class NarrationService {
     options: TtsOptions = {}
   ): Promise<NarrationResult> {
     const voice = options.voice || this.getDefaultVoice();
-    const rate = options.rate ?? '+0%';
-    const pitch = options.pitch ?? '+0Hz';
-    const volume = options.volume ?? '+0%';
+    const fmtPct = (v: string | number | undefined, def: string): string => {
+      if (v === undefined || v === null || v === '') return def;
+      const s = String(v);
+      if (/^[+-]\d+%$/.test(s)) return s;
+      const n = Number(s);
+      if (isNaN(n)) return def;
+      return `${n >= 0 ? '+' : ''}${n}%`;
+    };
+    const fmtHz = (v: string | number | undefined, def: string): string => {
+      if (v === undefined || v === null || v === '') return def;
+      const s = String(v);
+      if (/^[+-]\d+Hz$/.test(s)) return s;
+      const n = Number(s);
+      if (isNaN(n)) return def;
+      return `${n >= 0 ? '+' : ''}${n}Hz`;
+    };
+    const rate = fmtPct(options.rate, '+0%');
+    const pitch = fmtHz(options.pitch, '+0Hz');
+    const volume = fmtPct(options.volume, '+0%');
     const style = options.style ?? '';
     const progress = options.onProgress ?? (() => {});
     const checksum = crypto.createHash('md5').update(`${script}|${voice}|${rate}|${pitch}|${volume}|${style}`).digest('hex');
@@ -288,14 +304,16 @@ export class NarrationService {
       const args = ['--voice', v, '--rate', rate, '--pitch', pitch, '--volume', volume, '--file', tmpText, '--write-media', outputPath];
       try {
         await execFileAsync('edge-tts', args, { timeout });
-      } catch {
+      } catch (cliErr) {
+        console.warn(`[tts] edge-tts CLI failed, trying python -m edge_tts...`, cliErr);
         await execFileAsync('python', ['-m', 'edge_tts', ...args], { timeout });
       }
     };
 
     try {
       await tryRun(voice);
-    } catch {
+    } catch (primaryErr) {
+      console.error(`[tts] Primary voice "${voice}" failed:`, primaryErr);
       // Voice may be deprecated — retry with default voice
       const fallback = 'en-US-GuyNeural';
       if (voice !== fallback) {
@@ -308,7 +326,7 @@ export class NarrationService {
         }
       } else {
         fs.unlinkSync(tmpText);
-        throw new Error(`edge-tts failed. Install with: pip install edge-tts`);
+        throw new Error(`edge-tts failed: ${primaryErr}`);
       }
     }
     fs.unlinkSync(tmpText);

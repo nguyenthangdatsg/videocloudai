@@ -18,6 +18,7 @@ import {
   Film,
   Loader2,
   FileImage,
+  Sparkles,
 } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { useImageGenStore } from '../../store/image-generation';
@@ -41,6 +42,8 @@ export function Sidebar() {
     { path: '/', icon: LayoutDashboard, label: t('nav.dashboard') },
     { path: '/script', icon: FileText, label: t('nav.scriptEditor') },
     { path: '/library', icon: Library, label: t('nav.sceneLibrary') },
+    { path: '/media-library', icon: Sparkles, label: t('nav.mediaLibrary') },
+    { path: '/frame-video-library', icon: Film, label: t('nav.frameVideoLibrary') },
     { path: '/editor', icon: Video, label: t('nav.videoEditor') },
     { path: '/batch', icon: Layers, label: t('nav.batchGenerator') },
     { path: '/queue', icon: ListChecks, label: t('nav.queue') },

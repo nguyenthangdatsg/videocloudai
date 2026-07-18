@@ -381,7 +381,7 @@ function getCompletedImages() {
   return [...document.querySelectorAll("img")].filter((img) => {
     if (!isVisible(img)) return false;
     const src = srcKey(img);
-    if (!/^https?:|^blob:/.test(src)) return false;
+    if (!/^https?:|^blob:|^data:/.test(src)) return false;
     // bỏ qua icon/avatar nhỏ
     const w = img.naturalWidth || img.width;
     const h = img.naturalHeight || img.height;
@@ -614,6 +614,9 @@ async function runOne(prompt) {
 
 // ---------- 7. Đổi ảnh sang dataURL (dùng cho blob:) ----------
 async function toDataUrl(url) {
+  // If already a data URL, return as-is
+  if (/^data:/.test(url)) return url;
+
   // Method 1: fetch + FileReader (works for same-origin and CORS-allowed)
   try {
     const res = await fetch(url, { mode: "cors" });

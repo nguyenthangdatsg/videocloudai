@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Tag, Wand2, CheckCircle, X, ExternalLink, Image, Copy, ArrowRight, Check } from 'lucide-react';
 import { Spinner } from '../../../components/ui/Spinner';
 import { StagePromptEditor } from './StagePromptEditor';
+import { AdvancedToggle } from './AdvancedToggle';
 import { useStoryboard } from '../StoryboardContext';
 
 export function MetadataStep() {
@@ -52,30 +53,13 @@ export function MetadataStep() {
   };
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-medium text-c-text flex items-center gap-2">
-        <Tag className="w-4 h-4 text-cyan-400" />
-        {t('storyboard.stepMetadata')}
-      </h3>
-
-      {/* Stage prompt editor */}
-      <StagePromptEditor
-        label={`Stage 4: ${t('storyboard.stepMetadata')} — ${t('storyboard.stagePrompt')}`}
-        stageParts={templateStageParts.metadata}
-        value={metadataPrompt}
-        onChange={setMetadataPrompt}
-        onPartsChange={(parts) => setTemplateStageParts(p => ({ ...p, metadata: parts }))}
-        onSave={() => handleSaveStagePrompt('metadata', metadataPrompt)}
-        saving={savingPrompt === 'metadata'}
-        saved={savedPromptStage === 'metadata'}
-        t={t}
-      />
-
+    <div className="space-y-3">
+      {/* Generate button */}
       <div className="flex items-center gap-3">
         <button
           onClick={handleGenerateMetadata}
           disabled={!scriptText.trim() || generatingMetadata}
-          className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
+          className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50 py-2 px-4"
         >
           {generatingMetadata ? <Spinner size="sm" /> : <Wand2 className="w-3.5 h-3.5" />}
           {generatingMetadata ? t('storyboard.generatingMetadata') : t('storyboard.generateMetadata')}
@@ -325,26 +309,34 @@ export function MetadataStep() {
         </div>
       </div>
 
-      {/* Copy all metadata */}
+      {/* Copy all + Next */}
       {metadataTitle && (
         <div className="flex gap-2 pt-2 border-t border-c-border">
-          <button
-            onClick={() => {
-              const text = `Title: ${metadataTitle}\n\nDescription:\n${metadataDesc}\n\nTags: ${metadataTags.join(', ')}`;
-              navigator.clipboard.writeText(text);
-            }}
-            className="btn-secondary text-xs flex items-center gap-1.5"
-          >
+          <button onClick={() => navigator.clipboard.writeText(`Title: ${metadataTitle}\n\nDescription:\n${metadataDesc}\n\nTags: ${metadataTags.join(', ')}`)}
+            className="btn-secondary text-xs flex items-center gap-1.5">
             <Copy className="w-3 h-3" /> {t('storyboard.copyAll')}
           </button>
-          <button
-            onClick={() => { setStep('assemble'); saveProject({ currentStep: 'assemble' }); }}
-            className="btn-primary text-xs flex items-center gap-1"
-          >
+          <button onClick={() => { setStep('assemble'); saveProject({ currentStep: 'assemble' }); }}
+            className="btn-primary text-xs flex items-center gap-1 py-2 px-4">
             {t('storyboard.assemble')} <ArrowRight className="w-3 h-3" />
           </button>
         </div>
       )}
+
+      {/* Advanced: Stage prompt */}
+      <AdvancedToggle label={t('storyboard.stagePrompt')}>
+        <StagePromptEditor
+          label={`Stage 4: ${t('storyboard.stepMetadata')} — ${t('storyboard.stagePrompt')}`}
+          stageParts={templateStageParts.metadata}
+          value={metadataPrompt}
+          onChange={setMetadataPrompt}
+          onPartsChange={(parts) => setTemplateStageParts(p => ({ ...p, metadata: parts }))}
+          onSave={() => handleSaveStagePrompt('metadata', metadataPrompt)}
+          saving={savingPrompt === 'metadata'}
+          saved={savedPromptStage === 'metadata'}
+          t={t}
+        />
+      </AdvancedToggle>
     </div>
   );
 }

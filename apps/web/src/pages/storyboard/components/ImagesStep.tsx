@@ -1,4 +1,5 @@
-import { Image, Video, RefreshCw, Trash2, ArrowRight, Globe, Film, Square, Wand2, Upload, ZoomIn, X, CheckCircle, Pencil, Link } from 'lucide-react';
+import { Image, Video, RefreshCw, Trash2, ArrowRight, Globe, Film, Square, Wand2, Upload, ZoomIn, X, CheckCircle, Pencil, Link, Filter } from 'lucide-react';
+import { useState } from 'react';
 import { clsx } from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
 import { imageApi } from '../../../lib/api';
@@ -20,7 +21,10 @@ export function ImagesStep() {
     editingImageIdx, setEditingImageIdx, editingImagePrompt, setEditingImagePrompt,
     prompts, setPrompts, setStep, saveProject, setLightboxUrl,
     segments, setSegments, handleBuildTimeline,
+    compMediaSource, handlePexelsBatch, cancelPexels, pexelsLoading, pexelsProgress, videoMode,
   } = useStoryboard();
+
+  const [statusFilter, setStatusFilter] = useState<'all' | 'done' | 'error' | 'pending'>('all');
 
   const doneImageCount = generatedImages.filter((i) => i.status === 'done').length;
   const errorImageCount = generatedImages.filter((i) => i.status === 'error').length;
@@ -42,36 +46,53 @@ export function ImagesStep() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-c-text flex items-center gap-2">
-          {mediaType === 'video' ? <Video className="w-4 h-4 text-violet-400" /> : <Image className="w-4 h-4 text-cyan-400" />}
-          {mediaType === 'video' ? t('storyboard.stepVideos') : t('storyboard.stepImages')}
-          <span className="text-xs font-normal text-c-muted">
-            {generatedImages.length > 0 ? (
-              <>
-                <span className="text-emerald-400">{doneImageCount} {t('storyboard.imgDone')}</span>
-                {errorImageCount > 0 && <> · <span className="text-red-400">{errorImageCount} {t('storyboard.imgFailed')}</span></>}
-                {pendingImageCount > 0 && <> · <span className="text-yellow-400">{pendingImageCount} {t('storyboard.imgPending')}</span></>}
-                <span className="text-c-dim"> / {prompts.length} {t('storyboard.total')}</span>
-              </>
-            ) : (
-              <>({prompts.length} {t('storyboard.stepPrompts').toLowerCase()})</>
-            )}
-          </span>
-        </h3>
-        {!generatingImages && generatedImages.length > 0 && (
-          <div className="flex items-center gap-2">
-            {/* Resume failed */}
-            {flowAvailable && failedImageCount > 0 && regenIndex === null && (
+    <div className="space-y-3">
+      {/* Status + Actions row */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {generatedImages.length > 0 ? (
+          <div className="inline-flex rounded-lg border border-c-border overflow-hidden shrink-0">
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={clsx('text-[10px] px-2.5 py-1 font-medium transition-colors whitespace-nowrap', statusFilter === 'all' ? 'bg-c-elevated text-c-text' : 'text-c-dim hover:text-c-text')}
+            >
+              {t('storyboard.all')} {generatedImages.length}
+            </button>
+            {doneImageCount > 0 && (
               <button
-                onClick={handleFlowResume}
-                className="text-xs py-1.5 px-3 rounded-lg font-medium flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white transition-colors"
+                onClick={() => setStatusFilter(statusFilter === 'done' ? 'all' : 'done')}
+                className={clsx('text-[10px] px-2.5 py-1 font-medium transition-colors border-l border-c-border whitespace-nowrap', statusFilter === 'done' ? 'bg-emerald-600/20 text-emerald-400' : 'text-emerald-400/60 hover:text-emerald-400')}
               >
+                {doneImageCount} {t('storyboard.imgDone')}
+              </button>
+            )}
+            {errorImageCount > 0 && (
+              <button
+                onClick={() => setStatusFilter(statusFilter === 'error' ? 'all' : 'error')}
+                className={clsx('text-[10px] px-2.5 py-1 font-medium transition-colors border-l border-c-border whitespace-nowrap', statusFilter === 'error' ? 'bg-red-600/20 text-red-400' : 'text-red-400/60 hover:text-red-400')}
+              >
+                {errorImageCount} {t('storyboard.imgFailed')}
+              </button>
+            )}
+            {pendingImageCount > 0 && (
+              <button
+                onClick={() => setStatusFilter(statusFilter === 'pending' ? 'all' : 'pending')}
+                className={clsx('text-[10px] px-2.5 py-1 font-medium transition-colors border-l border-c-border whitespace-nowrap', statusFilter === 'pending' ? 'bg-yellow-600/20 text-yellow-400' : 'text-yellow-400/60 hover:text-yellow-400')}
+              >
+                {pendingImageCount} {t('storyboard.imgPending')}
+              </button>
+            )}
+          </div>
+        ) : (
+          <span className="text-xs text-c-muted">{prompts.length} {t('storyboard.stepPrompts').toLowerCase()}</span>
+        )}
+        <div className="flex-1" />
+        {!generatingImages && generatedImages.length > 0 && (
+          <>
+            {flowAvailable && failedImageCount > 0 && regenIndex === null && (
+              <button onClick={handleFlowResume} className="text-xs py-1 px-2.5 rounded-lg font-medium flex items-center gap-1 bg-amber-600 hover:bg-amber-700 text-white transition-colors">
                 <RefreshCw className="w-3 h-3" /> {t('storyboard.resumeFailed', { count: failedImageCount })}
               </button>
             )}
-            {/* Clear all */}
             {doneImageCount > 0 && (
               <button
                 onClick={() => {
@@ -84,18 +105,17 @@ export function ImagesStep() {
                   const promptTexts = prompts.map(p => p.prompt).filter(Boolean);
                   if (promptTexts.length) imageApi.clearPromptCache(promptTexts);
                 }}
-                className="text-xs py-1.5 px-3 rounded-lg font-medium flex items-center gap-1.5 bg-red-600/10 text-red-400 hover:bg-red-600/20 transition-colors"
+                className="text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1"
               >
-                <Trash2 className="w-3 h-3" /> {t('storyboard.clearAllImages')} ({doneImageCount})
+                <Trash2 className="w-3 h-3" /> {t('storyboard.clearAllImages')}
               </button>
             )}
-            {/* Build timeline */}
             {doneImageCount > 0 && (
-              <button onClick={handleBuildTimeline} className="btn-primary text-xs flex items-center gap-1">
+              <button onClick={handleBuildTimeline} className="btn-primary text-xs flex items-center gap-1 py-1.5 px-3">
                 {t('storyboard.buildTimeline')} <ArrowRight className="w-3 h-3" />
               </button>
             )}
-          </div>
+          </>
         )}
       </div>
 
@@ -108,15 +128,15 @@ export function ImagesStep() {
         </div>
       )}
 
-      {/* Media Type Toggle: Image / Video */}
+      {/* Media Type Toggle: Image / Video Clip / Pexels Stock */}
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-c-muted">{t('storyboard.mediaType')}:</span>
         <div className="flex rounded-lg border border-c-border overflow-hidden">
           <button
             onClick={() => setMediaType('image')}
             className={clsx(
-              'px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors',
-              mediaType === 'image' ? 'bg-cyan-600/20 text-cyan-400 border-r border-c-border' : 'text-c-muted hover:text-c-text border-r border-c-border',
+              'px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors border-r border-c-border',
+              mediaType === 'image' ? 'bg-cyan-600/20 text-cyan-400' : 'text-c-muted hover:text-c-text',
             )}
           >
             <Image className="w-3.5 h-3.5" /> {t('storyboard.imageMode')}
@@ -124,17 +144,70 @@ export function ImagesStep() {
           <button
             onClick={() => { setMediaType('video'); setImageTab('generate'); }}
             className={clsx(
-              'px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors',
+              'px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors border-r border-c-border',
               mediaType === 'video' ? 'bg-violet-600/20 text-violet-400' : 'text-c-muted hover:text-c-text',
             )}
           >
             <Video className="w-3.5 h-3.5" /> {t('storyboard.videoMode')}
           </button>
+          <button
+            onClick={() => { setMediaType('pexels'); }}
+            className={clsx(
+              'px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors',
+              mediaType === 'pexels' ? 'bg-green-600/20 text-green-400' : 'text-c-muted hover:text-c-text',
+            )}
+          >
+            <Film className="w-3.5 h-3.5" /> Pexels Stock
+          </button>
         </div>
       </div>
 
-      {/* Video mode: generate via Extension */}
-      {mediaType === 'video' ? (
+      {/* Pexels Stock Video mode */}
+      {mediaType === 'pexels' ? (
+        <div className="space-y-3">
+          <div className="border border-green-800/30 rounded-xl p-4 bg-green-900/10 space-y-3">
+            <div className="flex items-center gap-2">
+              <Film className="w-4 h-4 text-green-400" />
+              <span className="text-xs font-medium text-green-300">{t('storyboard.compMediaSourcePexels')}</span>
+            </div>
+            <p className="text-[10px] text-c-dim">{t('storyboard.compMediaSourcePexelsDesc')}</p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handlePexelsBatch}
+                disabled={pexelsLoading || !prompts.length}
+                className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+              >
+                {pexelsLoading ? <Spinner size="sm" /> : <Film className="w-3.5 h-3.5" />}
+                {t('storyboard.pexelsGenerateVideos')}
+              </button>
+              {pexelsLoading && (
+                <button
+                  onClick={cancelPexels}
+                  className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white"
+                >
+                  {t('storyboard.stop')}
+                </button>
+              )}
+            </div>
+            {pexelsProgress.length > 0 && (
+              <div className="font-mono text-[10px] text-c-dim space-y-0.5 max-h-[120px] overflow-auto">
+                {pexelsProgress.slice(-10).map((line, i) => (
+                  <div key={i} className={line.includes('Error') || line.includes('error') || line.includes('Failed') ? 'text-red-400' : line.includes('Done') ? 'text-green-400' : ''}>{line}</div>
+                ))}
+              </div>
+            )}
+          </div>
+          {doneImageCount > 0 && !generatingImages && (
+            <div className="flex justify-end">
+              <button onClick={handleBuildTimeline} className="btn-primary text-xs flex items-center gap-1 py-1.5 px-3">
+                {t('storyboard.buildTimeline')} <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+        </div>
+      ) :
+      /* Video mode: generate via Extension */
+      mediaType === 'video' ? (
         <div className="space-y-3">
           {!flowAvailable ? (
             <div className="border-2 border-dashed border-violet-700/30 rounded-xl p-8 flex flex-col items-center justify-center gap-3">
@@ -409,6 +482,7 @@ export function ImagesStep() {
               )}
             </>
           )}
+
         </div>
       )}
 
@@ -495,6 +569,7 @@ export function ImagesStep() {
       {generatedImages.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {generatedImages.map((img, i) => {
+            if (statusFilter !== 'all' && img.status !== statusFilter) return null;
             const isEditing = editingImageIdx === i;
             const prompt = prompts[i];
             return (

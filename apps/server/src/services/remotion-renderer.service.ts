@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import type { IntroConfig, OutroConfig, SceneClipConfig } from '../remotion/types';
+import type { IntroConfig, OutroConfig, SceneClipConfig, ComparisonSceneConfig } from '../remotion/types';
 import { getSettings } from './settings.service';
 
 let cachedBundleUrl: string | null = null;
@@ -27,9 +27,9 @@ export function invalidateBundle(): void {
 const MAX_RENDER_RETRIES = 2;
 
 async function renderComposition(
-  compositionId: 'Intro' | 'Outro' | 'SceneClip',
+  compositionId: 'Intro' | 'Outro' | 'SceneClip' | 'ComparisonScene',
   outputPath: string,
-  props: IntroConfig | OutroConfig | SceneClipConfig,
+  props: IntroConfig | OutroConfig | SceneClipConfig | ComparisonSceneConfig,
   overrides?: { width?: number; height?: number },
 ): Promise<void> {
   const { renderMedia, getCompositions } = await import('@remotion/renderer');
@@ -97,4 +97,13 @@ export async function renderSceneClip(
   height: number,
 ): Promise<void> {
   await renderComposition('SceneClip', outputPath, config, { width, height });
+}
+
+export async function renderComparisonScene(
+  outputPath: string,
+  config: ComparisonSceneConfig,
+  width: number,
+  height: number,
+): Promise<void> {
+  await renderComposition('ComparisonScene', outputPath, config, { width, height });
 }

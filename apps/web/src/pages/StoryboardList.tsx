@@ -1073,6 +1073,7 @@ export function StoryboardList() {
                                   key={p.id}
                                   src={`${p.thumbnailUrl}#t=0.1`}
                                   muted
+                                  playsInline
                                   preload="metadata"
                                   className="w-9 h-6 rounded object-cover bg-c-bg shrink-0"
                                 />
@@ -1253,10 +1254,10 @@ export function StoryboardList() {
                                     >
                                       <div className="aspect-video relative">
                                         {resultVideoUrl ? (
-                                          <video src={`${resultVideoUrl}#t=0.5`} muted preload="metadata" className="w-full h-full object-cover" />
+                                          <video src={`${resultVideoUrl}#t=0.5`} muted playsInline preload="metadata" className="w-full h-full object-cover" />
                                         ) : p.thumbnailUrl ? (
                                           thumbIsVid ? (
-                                            <video src={`${p.thumbnailUrl}#t=0.1`} muted preload="metadata" className="w-full h-full object-cover" />
+                                            <video src={`${p.thumbnailUrl}#t=0.1`} muted playsInline preload="metadata" className="w-full h-full object-cover" />
                                           ) : (
                                             <img src={p.thumbnailUrl} alt="" className="w-full h-full object-cover" />
                                           )
@@ -1310,10 +1311,10 @@ export function StoryboardList() {
                                     >
                                       <div className="w-20 h-12 rounded overflow-hidden bg-c-bg shrink-0 relative">
                                         {resultVideoUrl ? (
-                                          <video src={`${resultVideoUrl}#t=0.5`} muted preload="metadata" className="w-full h-full object-cover" />
+                                          <video src={`${resultVideoUrl}#t=0.5`} muted playsInline preload="metadata" className="w-full h-full object-cover" />
                                         ) : p.thumbnailUrl ? (
                                           thumbIsVid ? (
-                                            <video src={`${p.thumbnailUrl}#t=0.1`} muted preload="metadata" className="w-full h-full object-cover" />
+                                            <video src={`${p.thumbnailUrl}#t=0.1`} muted playsInline preload="metadata" className="w-full h-full object-cover" />
                                           ) : (
                                             <img src={p.thumbnailUrl} alt="" className="w-full h-full object-cover" />
                                           )
@@ -1365,10 +1366,10 @@ export function StoryboardList() {
                                     >
                                       <div className="w-48 aspect-video rounded-lg overflow-hidden bg-c-surface shrink-0 relative">
                                         {resultVideoUrl ? (
-                                          <video src={`${resultVideoUrl}#t=0.5`} muted preload="metadata" className="w-full h-full object-cover" />
+                                          <video src={`${resultVideoUrl}#t=0.5`} muted playsInline preload="metadata" className="w-full h-full object-cover" />
                                         ) : p.thumbnailUrl ? (
                                           thumbIsVid ? (
-                                            <video src={`${p.thumbnailUrl}#t=0.1`} muted preload="metadata" className="w-full h-full object-cover" />
+                                            <video src={`${p.thumbnailUrl}#t=0.1`} muted playsInline preload="metadata" className="w-full h-full object-cover" />
                                           ) : (
                                             <img src={p.thumbnailUrl} alt="" className="w-full h-full object-cover" />
                                           )
@@ -1440,7 +1441,7 @@ export function StoryboardList() {
                                       thumbIsVid ? (
                                         <video
                                           src={`${p.thumbnailUrl}#t=0.1`}
-                                          muted preload="metadata"
+                                          muted playsInline preload="metadata"
                                           className="w-16 h-10 rounded-lg object-cover bg-c-bg shrink-0"
                                         />
                                       ) : (

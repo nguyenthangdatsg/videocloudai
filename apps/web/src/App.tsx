@@ -15,6 +15,8 @@ import { Storyboard } from './pages/storyboard';
 import { StoryboardList } from './pages/StoryboardList';
 import { DramaList } from './pages/DramaList';
 import { DramaProjectPage } from './pages/DramaProject';
+import { MediaLibrary } from './pages/MediaLibrary';
+import { FrameVideoLibrary } from './pages/FrameVideoLibrary';
 import { useSSE } from './hooks/useSSE';
 import { ToastContainer } from './components/ui/ToastContainer';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
@@ -31,6 +33,8 @@ function AppShell() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/script" element={<ScriptEditor />} />
             <Route path="/library" element={<SceneLibrary />} />
+            <Route path="/media-library" element={<MediaLibrary />} />
+            <Route path="/frame-video-library" element={<FrameVideoLibrary />} />
             <Route path="/editor" element={<VideoEditor />} />
             <Route path="/batch" element={<BatchGenerator />} />
             <Route path="/queue" element={<QueueManager />} />

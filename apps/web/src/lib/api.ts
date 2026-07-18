@@ -503,6 +503,7 @@ export interface StoryboardSegment {
   text?: string;
   motion?: MotionEffect;
   mediaType?: MediaType;
+  side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right';
 }
 
 export interface StoryboardPromptItem {
@@ -510,6 +511,7 @@ export interface StoryboardPromptItem {
   text: string;
   prompt: string;
   model?: string;
+  side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right';
 }
 
 export const storyboardApi = {
@@ -550,8 +552,8 @@ export const storyboardApi = {
   },
 
   generatePrompts: async (
-    data: { segments: Array<{ timestamp: string; text: string }>; styleTemplate?: string; visualStyle?: string; aspectRatio?: string },
-    onProgress: (step: string, detail?: string) => void,
+    data: { segments: Array<{ timestamp: string; text: string; side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right' }>; styleTemplate?: string; visualStyle?: string; aspectRatio?: string; videoMode?: 'standard' | 'comparison'; comparisonItems?: { type?: 'difference' | 'winner'; left: { name: string; description?: string }; right: { name: string; description?: string } }; compMediaSource?: 'flow' | 'pexels' },
+    onProgress: (step: string, detail?: string, partialPrompts?: StoryboardPromptItem[]) => void,
     signal?: AbortSignal,
   ): Promise<StoryboardPromptItem[]> => {
     const res = await fetch('/api/storyboard/generate-prompts', {
@@ -563,7 +565,7 @@ export const storyboardApi = {
     let result: StoryboardPromptItem[] = [];
     await readNDJSON(res, (parsed) => {
       if (parsed.error) throw new Error(parsed.error as string);
-      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string, parsed.partialPrompts as StoryboardPromptItem[] | undefined);
       if (parsed.done) result = parsed.prompts as StoryboardPromptItem[];
     });
     return result;
@@ -576,7 +578,7 @@ export const storyboardApi = {
     api.post<{ segments: StoryboardSegment[] }>('/storyboard/match', data).then((r) => r.data.segments),
 
   assemble: async (
-    data: { segments: StoryboardSegment[]; audioFilename: string; aspectRatio?: string; bgMusicFilename?: string; voiceVolume?: number; musicVolume?: number; outputName?: string; speed?: number; bgColor?: string; subtitleStyle?: SubtitleStyle },
+    data: { segments: StoryboardSegment[]; audioFilename: string; aspectRatio?: string; bgMusicFilename?: string; voiceVolume?: number; musicVolume?: number; outputName?: string; speed?: number; bgColor?: string; subtitleStyle?: SubtitleStyle; videoMode?: 'standard' | 'comparison'; mascotImage?: string; mascotImageLeft?: string; mascotImageRight?: string; mascotImageBoth?: string; mascotImageWin?: string; comparisonLayout?: Record<string, unknown>; frameTemplateId?: string },
     onProgress: (step: string, detail?: string) => void,
     signal?: AbortSignal,
   ): Promise<{ filename: string; url: string; sizeKB: number; duration: number }> => {
@@ -619,6 +621,26 @@ export const storyboardApi = {
     api.put(`/storyboard/projects/${id}`, data).then((r) => r.data),
   deleteProject: (id: string) =>
     api.delete(`/storyboard/projects/${id}`).then((r) => r.data),
+
+  pexelsBatch: async (
+    queries: Array<{ timestamp: string; query: string; side?: string }>,
+    onProgress: (step: string, detail?: string) => void,
+    signal?: AbortSignal,
+  ): Promise<Array<{ timestamp: string; filename: string; url: string; query: string; side?: string }>> => {
+    const res = await fetch('/api/storyboard/pexels-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queries }),
+      signal,
+    });
+    let result: Array<{ timestamp: string; filename: string; url: string; query: string; side?: string }> = [];
+    await readNDJSON(res, (parsed) => {
+      if (parsed.error) throw new Error(parsed.error as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+      if (parsed.done) result = (parsed as any).videos ?? [];
+    });
+    return result;
+  },
 
   // Template CRUD
   createTemplate: (data: { name: string; niche?: string; description?: string; templateText?: string; color?: string; youtubeUrl?: string; memo?: string; visualStyle?: string; customPrompts?: Record<string, string> }) =>
@@ -672,6 +694,18 @@ export interface StoryboardProject extends StoryboardProjectSummary {
   bgColor?: string;
   subtitleStyle?: SubtitleStyle;
   stageParts: Record<string, Array<{ label: string; content: string }>>;
+  videoMode?: 'standard' | 'comparison';
+  mascotPrompt?: string;
+  mascotImage?: string;
+  mascotImageLeft?: string;
+  mascotImageRight?: string;
+  mascotImageBoth?: string;
+  mascotImageWin?: string;
+  comparisonItems?: { left: { name: string; description?: string }; right: { name: string; description?: string } };
+  compMediaSource?: 'flow' | 'pexels';
+  compRoundPanels?: boolean;
+  compBgSource?: 'color' | 'pexels';
+  compBgQuery?: string;
 }
 
 export interface StoryboardTemplateSummary {
@@ -824,3 +858,136 @@ export interface ImageLibraryItem {
   created_at: string;
   updated_at: string;
 }
+
+// ── Media Library ──────────────────────────────────────────────
+
+export interface MediaItem {
+  id: string;
+  name: string;
+  type: 'sticker' | 'icon' | 'animation' | 'sfx';
+  tags: string[];
+  category: string;
+  filename: string;
+  url: string;
+  mimeType: string;
+  filesize: number;
+  duration?: number;
+  width?: number;
+  height?: number;
+  usageCount: number;
+  triggerTags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const mediaLibraryApi = {
+  list: async (params?: { type?: string; category?: string; search?: string; tags?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.type) qs.set('type', params.type);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.search) qs.set('search', params.search);
+    if (params?.tags) qs.set('tags', params.tags);
+    const res = await api.get(`/media-library?${qs}`);
+    return (res.data as { items: MediaItem[] }).items;
+  },
+  get: async (id: string) => {
+    const res = await api.get(`/media-library/${id}`);
+    return (res.data as { item: MediaItem }).item;
+  },
+  upload: async (file: File, meta: { name: string; type: string; category: string; tags: string; triggerTags: string }) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    Object.entries(meta).forEach(([k, v]) => fd.append(k, v));
+    const res = await api.post('/media-library/upload', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return (res.data as { item: MediaItem }).item;
+  },
+  bulkUpload: async (files: File[], meta: { type: string; category: string; tags: string; triggerTags: string }) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append('files', f));
+    Object.entries(meta).forEach(([k, v]) => fd.append(k, v));
+    const res = await api.post('/media-library/bulk-upload', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return (res.data as { items: MediaItem[] }).items;
+  },
+  update: async (id: string, data: Partial<{ name: string; tags: string[]; category: string; triggerTags: string[] }>) => {
+    const res = await api.put(`/media-library/${id}`, data);
+    return (res.data as { item: MediaItem }).item;
+  },
+  delete: async (id: string) => {
+    await api.delete(`/media-library/${id}`);
+  },
+  categories: async () => {
+    const res = await api.get('/media-library/categories');
+    return (res.data as { categories: Array<{ category: string; count: number }> }).categories as Array<{ category: string; count: number }>;
+  },
+  suggest: async (context: string[]) => {
+    const qs = new URLSearchParams({ context: context.join(',') });
+    const res = await api.get(`/media-library/suggest?${qs}`);
+    return (res.data as { items: MediaItem[] }).items;
+  },
+};
+
+// ── Frame Video Library ──────────────────────────────────────────
+
+export interface FrameVideoItem {
+  id: string;
+  name: string;
+  category: string;
+  filename: string;
+  url: string;
+  mimeType: string;
+  filesize: number;
+  duration?: number;
+  width?: number;
+  height?: number;
+  usageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const frameVideoLibraryApi = {
+  list: async (params?: { category?: string; search?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.category) qs.set('category', params.category);
+    if (params?.search) qs.set('search', params.search);
+    const res = await api.get(`/frame-video-library?${qs}`);
+    return (res.data as { items: FrameVideoItem[] }).items;
+  },
+  get: async (id: string) => {
+    const res = await api.get(`/frame-video-library/${id}`);
+    return (res.data as { item: FrameVideoItem }).item;
+  },
+  upload: async (file: File, meta: { name: string; category: string }) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    Object.entries(meta).forEach(([k, v]) => fd.append(k, v));
+    const res = await api.post('/frame-video-library/upload', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return (res.data as { item: FrameVideoItem }).item;
+  },
+  bulkUpload: async (files: File[], meta: { category: string }) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append('files', f));
+    Object.entries(meta).forEach(([k, v]) => fd.append(k, v));
+    const res = await api.post('/frame-video-library/bulk-upload', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return (res.data as { items: FrameVideoItem[] }).items;
+  },
+  update: async (id: string, data: Partial<{ name: string; category: string }>) => {
+    const res = await api.put(`/frame-video-library/${id}`, data);
+    return (res.data as { item: FrameVideoItem }).item;
+  },
+  delete: async (id: string) => {
+    await api.delete(`/frame-video-library/${id}`);
+  },
+  categories: async () => {
+    const res = await api.get('/frame-video-library/categories');
+    return (res.data as { categories: Array<{ category: string; count: number }> }).categories;
+  },
+};
+

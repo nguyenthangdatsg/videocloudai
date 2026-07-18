@@ -65,7 +65,7 @@ export function Settings() {
   const queryClient = useQueryClient();
 
   const DEFAULT_MENU_PATHS = [
-    '/', '/script', '/library', '/editor', '/batch', '/queue',
+    '/', '/script', '/library', '/media-library', '/frame-video-library', '/editor', '/batch', '/queue',
     '/tts', '/transcribe', '/storyboard', '/drama', '/image-drama',
     '/channels', '/distributions', '/settings',
   ];

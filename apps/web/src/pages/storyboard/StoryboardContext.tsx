@@ -78,6 +78,7 @@ export interface StoryboardContextValue {
   generatingAudio: boolean;
   audioProgress: string[];
   audioFile: { filename: string; url: string; duration: number } | null;
+  handleClearAudio: () => void;
   transcriptEntries: TranscriptEntry[];
   setTranscriptEntries: React.Dispatch<React.SetStateAction<TranscriptEntry[]>>;
   handleSplitEntry: (entryIndex: number, maxSec: number) => void;
@@ -229,6 +230,46 @@ export interface StoryboardContextValue {
   handleGenerateMetadata: () => void;
   handleGenerateThumbnail: () => void;
   handleAutoGenerateThumbnailPrompt: () => void;
+
+  // Comparison mode
+  isComparisonTemplate: boolean;
+  videoMode: 'standard' | 'comparison';
+  setVideoMode: (v: 'standard' | 'comparison') => void;
+  compMediaSource: 'flow' | 'pexels';
+  setCompMediaSource: (v: 'flow' | 'pexels') => void;
+  handlePexelsBatch: () => void;
+  cancelPexels: () => void;
+  pexelsLoading: boolean;
+  pexelsProgress: string[];
+  compRoundPanels: boolean;
+  setCompRoundPanels: (v: boolean) => void;
+  compBgSource: 'color' | 'pexels';
+  setCompBgSource: (v: 'color' | 'pexels') => void;
+  compBgQuery: string;
+  setCompBgQuery: (v: string) => void;
+  frameTemplateId: string;
+  setFrameTemplateId: (v: string) => void;
+  mascotPrompt: string;
+  setMascotPrompt: (v: string) => void;
+  mascotAngle: string;
+  setMascotAngle: (v: string) => void;
+  getMascotVariants: () => Array<{ key: string; label: string; suffix: string; image: string }>;
+  handleGenerateSingleMascotVariant: (variantKey: string, customPrompt: string) => Promise<void>;
+  generatingMascotKey: string | null;
+  mascotImage: string;
+  setMascotImage: (v: string) => void;
+  mascotImageLeft: string;
+  setMascotImageLeft: (v: string) => void;
+  mascotImageRight: string;
+  setMascotImageRight: (v: string) => void;
+  mascotImageBoth: string;
+  setMascotImageBoth: (v: string) => void;
+  mascotImageWin: string;
+  setMascotImageWin: (v: string) => void;
+  comparisonItems: { type?: 'difference' | 'winner'; layout?: { left: { x: number; y: number; w: number; h: number }; mascot: { x: number; y: number; w: number; h: number }; right: { x: number; y: number; w: number; h: number } }; left: { name: string; description?: string }; right: { name: string; description?: string } };
+  setComparisonItems: React.Dispatch<React.SetStateAction<{ type?: 'difference' | 'winner'; layout?: { left: { x: number; y: number; w: number; h: number }; mascot: { x: number; y: number; w: number; h: number }; right: { x: number; y: number; w: number; h: number } }; left: { name: string; description?: string }; right: { name: string; description?: string } }>>;
+  generatingMascot: boolean;
+  handleGenerateMascot: () => void;
 
   // Step 7: Assemble
   assembling: boolean;

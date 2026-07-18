@@ -22,6 +22,8 @@ import { createTtsRouter } from './routes/tts.routes';
 import { createImageRouter } from './routes/image.routes';
 import { createStoryboardRouter } from './routes/storyboard.routes';
 import { createDramaRouter } from './routes/drama.routes';
+import { createMediaLibraryRouter } from './routes/media-library.routes';
+import { createFrameVideoLibraryRouter } from './routes/frame-video-library.routes';
 import { DramaService } from './services/drama.service';
 import { ChannelService } from './services/channel.service';
 import { DistributionService } from './services/distribution.service';
@@ -44,14 +46,17 @@ export function createApp() {
   app.use(express.json({ limit: '50mb' }));
   app.use(morgan('dev'));
 
-  // Static file serving for assets and renders
+  // Static file serving for assets, renders and cache
   const assetsDir = path.resolve(process.env.ASSETS_DIR ?? './assets');
   const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders');
+  const cacheDir = path.resolve(process.env.CACHE_DIR ?? './cache');
   fs.mkdirSync(assetsDir, { recursive: true });
   fs.mkdirSync(rendersDir, { recursive: true });
+  fs.mkdirSync(cacheDir, { recursive: true });
 
   app.use('/assets', express.static(assetsDir));
   app.use('/renders', express.static(rendersDir));
+  app.use('/cache', express.static(cacheDir));
 
   // Initialize services
   const dramaService = new DramaService();
@@ -89,6 +94,8 @@ export function createApp() {
   app.use('/api/image', createImageRouter());
   app.use('/api/storyboard', createStoryboardRouter(narrationService, subtitleService));
   app.use('/api/drama', createDramaRouter(dramaService, narrationService, subtitleService));
+  app.use('/api/media-library', createMediaLibraryRouter());
+  app.use('/api/frame-video-library', createFrameVideoLibraryRouter());
 
   // Queue WebSocket events endpoint (SSE)
   app.get('/api/events', (req, res) => {

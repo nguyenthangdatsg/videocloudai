@@ -51,7 +51,7 @@ export async function llmComplete(req: LlmRequest): Promise<string> {
 
   const getModel = (p: Provider) => {
     const modelKeys: Record<Provider, string> = { gemini: 'gemini_model', groq: 'groq_model', anthropic: 'anthropic_model', openrouter: 'openrouter_model', cerebras: 'cerebras_model', grok: 'grok_model', openai: 'openai_model' };
-    const defaults: Record<Provider, string> = { gemini: 'gemini-2.5-flash', groq: 'openai/gpt-oss-120b', anthropic: 'claude-sonnet-4-6', openrouter: 'meta-llama/llama-3.3-70b-instruct:free', cerebras: 'gpt-oss-120b', grok: 'grok-3-mini', openai: 'gpt-4o-mini' };
+    const defaults: Record<Provider, string> = { gemini: 'gemini-2.5-flash', groq: 'llama-3.3-70b-versatile', anthropic: 'claude-sonnet-4-6', openrouter: 'meta-llama/llama-3.3-70b-instruct:free', cerebras: 'llama-3.3-70b', grok: 'grok-3-mini', openai: 'gpt-4o-mini' };
     return s.get(modelKeys[p]) || defaults[p];
   };
 

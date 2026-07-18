@@ -9,8 +9,9 @@ import { SubtitleService } from '../services/subtitle.service';
 import { getSettings } from '../services/settings.service';
 import { llmComplete, getLastUsedModel } from '../services/llm.service';
 import { dbGet, dbAll, dbRun } from '../db';
-import { renderSceneClip } from '../services/remotion-renderer.service';
-import type { SceneClipConfig } from '../remotion/types';
+import { renderSceneClip, renderComparisonScene } from '../services/remotion-renderer.service';
+import type { SceneClipConfig, ComparisonSceneConfig } from '../remotion/types';
+import { searchAndDownloadBatch as pexelsBatch } from '../services/pexels.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -25,7 +26,30 @@ function safeJsonParse(raw: string): unknown {
   );
   try { return JSON.parse(fixed); } catch { /* fallback below */ }
   // Last resort: strip ALL control chars (loses newlines in values but parses)
-  return JSON.parse(raw.replace(/[\x00-\x1F]/g, ' '));
+  try {
+    return JSON.parse(raw.replace(/[\x00-\x1F]/g, ' '));
+  } catch {
+    /* ignore and fallback to empty object */
+  }
+  return {};
+}
+
+/** Strip visual direction cues from narration script (comparison mode).
+ *  These cues ("point left", "head right", etc.) belong in image prompts, not TTS audio. */
+function stripVisualDirections(script: string): string {
+  // Remove bracket stage directions: [points left], [head right], [gesture toward X]
+  let cleaned = script.replace(/\s*\[[^\]]*(?:points?|head|look|gesture|turn|facing)[^\]]*(?:left|right|toward)[^\]]*\]\s*/gi, ' ');
+  // Remove [Winner left/right], [Win left/right]
+  cleaned = cleaned.replace(/\s*\[win(?:ner)?\s+(?:left|right)\]\s*/gi, ' ');
+  // Remove [Round N: Topic]
+  cleaned = cleaned.replace(/\s*\[round\s+\d+[:\s][^\]]*\]\s*/gi, ' ');
+  // Remove parenthetical stage directions: (point left), (gesture right), (look toward X)
+  cleaned = cleaned.replace(/\s*\([^)]*(?:points?|head|look|gesture|turn|facing)\s+(?:left|right|toward)[^)]*\)\s*/gi, ' ');
+  // Remove standalone/inline directions: "Points left," or "point right" (with optional surrounding commas/periods)
+  cleaned = cleaned.replace(/[,.]?\s*(?:points?|head|look|gesture|turn|facing)\s+(?:to\s+the\s+)?(?:left|right|toward(?:\s+\w+)?)\s*[,.]?\s*/gi, ' ');
+  // Clean up double spaces / leading commas / orphaned punctuation
+  cleaned = cleaned.replace(/\s{2,}/g, ' ').replace(/^\s*,\s*/gm, '').trim();
+  return cleaned;
 }
 
 /** Resolve a full-featured FFmpeg binary (not Remotion's limited build). */
@@ -311,6 +335,7 @@ export interface StoryboardSegment {
   text?: string;          // subtitle text for this segment
   motion?: MotionEffect;  // video motion effect for this clip
   mediaType?: MediaType;  // 'image' or 'video'
+  side?: 'left' | 'right' | 'both'; // comparison mode: which side this segment belongs to
 }
 
 export function createStoryboardRouter(narrationService: NarrationService, subtitleService: SubtitleService): Router {
@@ -536,6 +561,12 @@ export function createStoryboardRouter(narrationService: NarrationService, subti
       stageParts: Object.keys(storedStageParts).length ? storedStageParts : parsed.stageParts,
       stagePrompts,
       customPrompts,
+      mascotPrompt: (row as any).mascot_prompt || '',
+      mascotImage: (row as any).mascot_image || '',
+      mascotImageLeft: (row as any).mascot_image_left || '',
+      mascotImageRight: (row as any).mascot_image_right || '',
+      mascotImageBoth: (row as any).mascot_image_both || '',
+      mascotImageWin: (row as any).mascot_image_win || '',
       createdAt: row.created_at, updatedAt: row.updated_at,
     });
   });
@@ -548,6 +579,9 @@ export function createStoryboardRouter(narrationService: NarrationService, subti
       name: 'name', niche: 'niche', description: 'description',
       templateText: 'template_text', customPrompts: 'custom_prompts', color: 'color',
       youtubeUrl: 'youtube_url', memo: 'memo', nicheStatus: 'niche_status', visualStyle: 'visual_style',
+      mascotPrompt: 'mascot_prompt', mascotImage: 'mascot_image',
+      mascotImageLeft: 'mascot_image_left', mascotImageRight: 'mascot_image_right',
+      mascotImageBoth: 'mascot_image_both', mascotImageWin: 'mascot_image_win',
     };
     for (const [k, col] of Object.entries(fields)) {
       if (body[k] !== undefined) {
@@ -890,16 +924,36 @@ IMPORTANT:
     // Use custom prompt from frontend (user may have edited it), else fall back to template
     let systemPrompt = customPrompt;
 
+    // Resolve template niche for placeholder substitution
+    let templateNiche = '';
+    if (templateId) {
+      const tmplRow = dbGet<Record<string, unknown>>(
+        'SELECT niche, name FROM storyboard_templates WHERE id = ?', [templateId],
+      );
+      if (tmplRow) templateNiche = (tmplRow.niche as string) || (tmplRow.name as string) || '';
+    }
+
+    // Substitute [NICHE] and similar placeholders in custom prompt
+    if (systemPrompt && templateNiche) {
+      systemPrompt = systemPrompt
+        .replace(/\[NICHE\]/gi, templateNiche)
+        .replace(/\[TEMPLATE\]/gi, templateNiche)
+        .replace(/\[CHANNEL\]/gi, templateNiche);
+    }
+
     // If no custom prompt, try the linked template's stage_prompts
     if (!systemPrompt && templateId) {
       const tmpl = dbGet<Record<string, unknown>>(
         'SELECT stage_prompts, template_text, custom_prompts, niche, name FROM storyboard_templates WHERE id = ?', [templateId],
       );
       if (tmpl) {
+        const resolveNiche = (s: string) => templateNiche
+          ? s.replace(/\[NICHE\]/gi, templateNiche).replace(/\[TEMPLATE\]/gi, templateNiche).replace(/\[CHANNEL\]/gi, templateNiche)
+          : s;
         let sp: Record<string, string> = {};
         try { sp = JSON.parse((tmpl.stage_prompts as string) || '{}'); } catch { /* */ }
         if (sp.topics) {
-          systemPrompt = sp.topics;
+          systemPrompt = resolveNiche(sp.topics);
         } else if ((tmpl.template_text as string)?.trim()) {
           const { sections: parsed } = parseTemplate(tmpl.template_text as string);
           let cp: Record<string, string> = {};
@@ -933,6 +987,21 @@ IMPORTANT:
       ].join('\n');
     }
 
+    // Final pass: substitute any remaining [NICHE] placeholders
+    if (systemPrompt && templateNiche) {
+      systemPrompt = systemPrompt
+        .replace(/\[NICHE\]/gi, templateNiche)
+        .replace(/\[NICHE DESCRIPTION\]/gi, templateNiche)
+        .replace(/\[TEMPLATE\]/gi, templateNiche)
+        .replace(/\[CHANNEL\]/gi, templateNiche);
+    } else if (systemPrompt) {
+      // Strip unresolved placeholders so the LLM doesn't echo them
+      systemPrompt = systemPrompt
+        .replace(/\[NICHE(?:\s+DESCRIPTION)?\]/gi, 'this niche')
+        .replace(/\[TEMPLATE\]/gi, 'this channel')
+        .replace(/\[CHANNEL\]/gi, 'this channel');
+    }
+
     // Build exclusion list to prevent duplicates
     const exclusion = usedTopics.length > 0
       ? `\n\nDo NOT generate any of these topics (already used or shown):\n${usedTopics.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nGenerate completely NEW and DIFFERENT topics.`
@@ -950,10 +1019,27 @@ IMPORTANT:
       });
 
       // Parse JSON array from response
-      const match = raw.match(/\[[\s\S]*\]/);
-      if (!match) throw new Error('Could not parse topics');
-      const topics = safeJsonParse(match[0]) as string[];
-      res.json({ topics });
+      // Try to extract a valid JSON array by finding [ and ] then validating
+      let parsed: string[] | null = null;
+      const arrStart = raw.indexOf('[');
+      const arrEnd = raw.lastIndexOf(']');
+      if (arrStart !== -1 && arrEnd > arrStart) {
+        const candidate = raw.substring(arrStart, arrEnd + 1);
+        try { parsed = JSON.parse(candidate); } catch { parsed = null; }
+      }
+      if (!parsed || !Array.isArray(parsed)) {
+        // Fallback: try to extract numbered/bulleted list lines as topics
+        const lines = raw.split('\n')
+          .map(l => l.replace(/^\s*[\d]+[.)]\s*/, '').replace(/^[-*]\s*/, '').replace(/^[""]|[""]$/g, '').trim())
+          .filter(l => l.length > 5 && l.length < 200);
+        if (lines.length > 0) {
+          res.json({ topics: lines.slice(0, count || 5) });
+          return;
+        }
+        console.error('[generate-topics] Could not parse topics from LLM response:', raw.substring(0, 500));
+        throw new Error('Could not parse topics — LLM returned unexpected format');
+      }
+      res.json({ topics: parsed.map(t => String(t)).slice(0, count || 5) });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -983,7 +1069,7 @@ IMPORTANT:
       prompt = parsed.scriptSystemPrompt || `You are a scriptwriter. Write a narration script for a video about: ${topic}\n\nRules:\n- Pure narration only — no headers, no bullet points, no stage directions\n- Write in short, powerful sentences\n- Each sentence should be 10-20 words\n- Output ONLY the script text`;
     }
 
-    const FORMAT_RULE = `\n\nIMPORTANT: Output ONLY the narration script as plain text. No markdown, no headers (#), no bullet points, no stage directions, no file formatting instructions, no download instructions, no "next steps", no blockquotes. Do NOT include any instructions to the user about what to do with the script. Do NOT echo back the prompt, part numbers, word counts, or meta-commentary like "We need to write..." or "Here is part...". Just output the pure narration text that will be read aloud, nothing else.`;
+    const FORMAT_RULE = `\n\nIMPORTANT: Output ONLY the narration script as plain text. No markdown, no headers (#), no bullet points, no file formatting instructions, no download instructions, no "next steps", no blockquotes. Do NOT include any instructions to the user about what to do with the script. Do NOT echo back the prompt, part numbers, word counts, or meta-commentary like "We need to write..." or "Here is part...". NEVER count words, NEVER include word counts like "word(1) word(2)", NEVER plan paragraph structure, NEVER write "We need X more words" or "Let's add". NEVER use bracket placeholders like [CATCHPHRASE] or [CHARACTER NAME]. Just output the pure narration text, nothing else.`;
 
     // For short videos (≤ 200s), single call is fine
     const CHUNK_THRESHOLD = 200;
@@ -995,8 +1081,22 @@ IMPORTANT:
           temperature: 0.8,
           maxTokens: 4000,
         });
-        // Strip meta-commentary the AI may prepend
-        script = script.replace(/^(we need to|let me|here is|here are|here's|okay|sure|certainly|of course|alright)[^\n]*\n+/gim, '').trim();
+        // Strip meta-commentary the AI may leak (only at start — no global/multiline)
+        script = script.replace(/^(we need to|let me|here is|here are|here's|okay|sure|certainly|of course|alright)[^\n]*\n+/i, '').trim();
+        // Truncate from the first line that looks like AI internal reasoning
+        const sLines = script.split('\n');
+        const sCut = sLines.findIndex(line => {
+          const l = line.trim().toLowerCase();
+          if (/\w+\(\d+\)\s+\w+\(\d+\)/.test(line)) return true;
+          if (/^(we need|let'?s (add|craft|incorporate|restructure|aim)|total words|that (totals|would|brings)|so we need|paragraph \d+)/i.test(l)) return true;
+          if (/\[([A-Z\s]{3,})\]/.test(line) && !/\[\d{2}:\d{2}/.test(line)) return true;
+          if (/^\d+\s*words\.?\s*$/i.test(l)) return true;
+          return false;
+        });
+        if (sCut > 0) {
+          console.log(`[generate-script] Truncated AI reasoning from line ${sCut + 1}`);
+          script = sLines.slice(0, sCut).join('\n').trim();
+        }
         res.json({ script });
       } catch (err) {
         console.error('[generate-script] error:', (err as Error).message);
@@ -1070,9 +1170,28 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
             maxTokens: 3000,
           });
         }
-        // Strip meta-commentary lines the AI may echo (e.g. "We need to write part 1...", "Here is part 2...")
+        // Strip meta-commentary the AI may leak (word counting, planning, placeholders, etc.)
         let cleaned = chunk.trim();
-        cleaned = cleaned.replace(/^(we need to|let me|here is|here are|here's|okay|sure|certainly|of course|alright|now,?\s*(let's|we)|part\s+\d+\s*(of\s+\d+)?[\s:—\-]*(\(~?\d+\s*words?\))?[\s:—\-]*)/gim, '').trim();
+        // Remove leading meta lines (only at start — no global/multiline flags)
+        cleaned = cleaned.replace(/^(we need to|let me|here is|here are|here's|okay|sure|certainly|of course|alright|now,?\s*(let's|we)|part\s+\d+\s*(of\s+\d+)?[\s:—\-]*(\(~?\d+\s*words?\))?[\s:—\-]*)/i, '').trim();
+        // Truncate from the first line that looks like AI internal reasoning/planning
+        const lines = cleaned.split('\n');
+        const cutIdx = lines.findIndex(line => {
+          const l = line.trim().toLowerCase();
+          // Word-counting patterns: "word(1) word(2)" or "Count: word(1)"
+          if (/\w+\(\d+\)\s+\w+\(\d+\)/.test(line)) return true;
+          // Planning: "We need X more words", "Let's add", "Total words:", "That totals"
+          if (/^(we need|let'?s (add|craft|incorporate|restructure|aim)|total words|that (totals|would|brings)|so we need|paragraph \d+)/i.test(l)) return true;
+          // Bracket placeholders: [CATCHPHRASE], [MASCOT NAME], [CHARACTER]
+          if (/\[([A-Z\s]{3,})\]/.test(line) && !/\[\d{2}:\d{2}/.test(line)) return true;
+          // Explicit word counts in reasoning: "18 words.", "~375 words"
+          if (/^\d+\s*words\.?\s*$/i.test(l)) return true;
+          return false;
+        });
+        if (cutIdx > 0) {
+          console.log(`[generate-script] Chunk ${i + 1}: truncated AI reasoning from line ${cutIdx + 1} (${lines.length - cutIdx} lines removed)`);
+          cleaned = lines.slice(0, cutIdx).join('\n').trim();
+        }
         // Strip leading blank lines after cleanup
         cleaned = cleaned.replace(/^\s*\n+/, '');
         chunks.push(cleaned);
@@ -1101,9 +1220,13 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Transfer-Encoding', 'chunked');
 
+    // Strip any visual direction cues before TTS (e.g. "[points left]", "(head right)")
+    // These belong in image prompts, not spoken audio
+    const cleanText = stripVisualDirections(text);
+
     try {
       res.write(JSON.stringify({ progress: true, step: 'tts', detail: 'Generating speech...' }) + '\n');
-      const result = await narrationService.generateNarration(text, {
+      const result = await narrationService.generateNarration(cleanText, {
         voice: voice || undefined,
         rate,
         pitch,
@@ -1147,11 +1270,15 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
 
   // ── Generate image prompts from timestamped segments via Groq ──
   router.post('/generate-prompts', async (req: Request, res: Response) => {
-    const { segments, styleTemplate, visualStyle, aspectRatio } = req.body as {
-      segments: Array<{ timestamp: string; text: string }>;
+    const { segments, styleTemplate, visualStyle, aspectRatio, videoMode, comparisonItems, bgColor: promptBgColor, compMediaSource } = req.body as {
+      segments: Array<{ timestamp: string; text: string; side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right' }>;
       styleTemplate?: string;
       visualStyle?: string;
       aspectRatio?: string;
+      videoMode?: 'standard' | 'comparison';
+      comparisonItems?: { type?: 'difference' | 'winner'; layout?: { left: { x: number; y: number; w: number; h: number }; mascot: { x: number; y: number; w: number; h: number }; right: { x: number; y: number; w: number; h: number } }; left: { name: string; description?: string }; right: { name: string; description?: string } };
+      bgColor?: string;
+      compMediaSource?: 'flow' | 'pexels';
     };
 
     if (!segments?.length) {
@@ -1161,7 +1288,7 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
 
     // Only expand multi-sentence segments when input is very coarse (< 30 segments).
     // If user already has fine-grained segments, use them as-is (1 prompt per segment).
-    let expandedSegments: Array<{ timestamp: string; text: string }>;
+    let expandedSegments: Array<{ timestamp: string; text: string; side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right' }>;
     if (segments.length < 30) {
       expandedSegments = [];
       for (const seg of segments) {
@@ -1189,6 +1316,7 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
             expandedSegments.push({
               timestamp: `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`,
               text: sentences[j].trim(),
+              ...(seg.side ? { side: seg.side } : {}),
             });
           }
         }
@@ -1238,12 +1366,65 @@ Rules:
       }
     }
 
+    // Comparison mode: instruct LLM to generate focused single-subject images
+    // The final video layout is [left_image | mascot | right_image] — each generated image
+    // fills ONE panel, so it must show only that side's subject (no split-screen, no mascot)
+    if (videoMode === 'comparison' && comparisonItems?.left?.name && comparisonItems?.right?.name) {
+      const compType = comparisonItems.type || 'difference';
+      const isWhiteBg = !promptBgColor || promptBgColor === 'white' || promptBgColor === '#ffffff' || promptBgColor === '#FFFFFF';
+      const bgRule = isWhiteBg
+        ? '\n- MANDATORY: Every image MUST have a plain white background. No gradients, no colored backgrounds, no dark backgrounds — pure white only for visual consistency'
+        : '';
+      const baseRules = `\n\nCOMPARISON MODE: This video compares "${comparisonItems.left.name}" (left) vs "${comparisonItems.right.name}" (right) in a 3-panel layout. Each image fills ONE panel only. CRITICAL RULES:
+- Generate a SINGLE-SUBJECT image for each segment — show ONLY the topic being discussed
+- Do NOT create split-screen, side-by-side, or comparison images — that layout is handled separately
+- Do NOT include any mascot, presenter, host character, or pointing figure in the image
+- Focus on vivid, concrete visuals of the subject: objects, scenes, environments, infographics
+- For "left" segments about "${comparisonItems.left.name}": show only ${comparisonItems.left.name} content
+- For "right" segments about "${comparisonItems.right.name}": show only ${comparisonItems.right.name} content${bgRule}`;
+
+      if (compType === 'winner') {
+        systemPrompt += baseRules + `
+- For "win-left" or "win-right" segments: show a triumphant, victorious version of the winning side — bold, bright, celebratory
+- For neutral/both segments: show a general scene relevant to both sides`;
+      } else {
+        systemPrompt += baseRules + `
+- For neutral/both segments: show a general scene relevant to both sides`;
+      }
+    }
+
+    // When media source is Pexels, override system prompt to generate search queries
+    if (compMediaSource === 'pexels') {
+      const compCtx = (videoMode === 'comparison' && comparisonItems?.left?.name && comparisonItems?.right?.name)
+        ? `\nThis video compares "${comparisonItems.left.name}" (LEFT) vs "${comparisonItems.right.name}" (RIGHT).
+CRITICAL — every search query MUST be directly about the specific subject being discussed:
+- For "left" segments about "${comparisonItems.left.name}": query MUST include "${comparisonItems.left.name}" or a closely related real-world term. Example: if left is "Earth", use "earth planet surface", "earth from space", "earth ocean continent"
+- For "right" segments about "${comparisonItems.right.name}": query MUST include "${comparisonItems.right.name}" or a closely related real-world term. Example: if right is "Jupiter", use "jupiter planet", "jupiter great red spot", "jupiter gas giant"
+- For neutral/both segments: use a term directly relevant to the comparison topic (e.g. "solar system planets", "space universe")
+- NEVER use generic/abstract queries like "comparison", "versus", "battle", "winner" — always describe the ACTUAL visual subject`
+        : '';
+      systemPrompt = `You are a Pexels stock video search query generator. For each timestamped narration line, generate ONE short search query (2-5 words) that finds a RELEVANT stock video on Pexels.
+${compCtx}
+Rules:
+- Each line: [MM:SS] followed by the search query
+- Queries must be 2-5 concrete English keywords that describe a REAL, FILMABLE subject
+- The query must be DIRECTLY related to what the narration is talking about — NOT abstract or metaphorical
+- Think: "What would I actually see in a stock video for this topic?"
+- Good examples: "cat playing yarn", "deep ocean coral reef", "rocket launch pad", "ancient rome colosseum"
+- BAD examples: "amazing comparison", "incredible facts", "mind blowing", "ultimate showdown" — these return IRRELEVANT stock footage
+- If narration mentions a specific animal, place, object, phenomenon — USE THAT as the search term
+- Prefer specific nouns over adjectives: "volcano erupting lava" is better than "powerful dangerous mountain"
+- Output ONLY search queries. No commentary, no numbering, no markdown. Separate with blank lines.`;
+    }
+
     // Inject aspect ratio guidance
     const ar = aspectRatio || '16:9';
     const arSuffix = ar === '9:16' ? 'vertical portrait layout, 9:16' : ar === '1:1' ? 'square layout, 1:1' : 'landscape layout, 16:9';
 
-    // Append output format instruction
-    systemPrompt += `\n\nIMPORTANT: Output ONLY the image prompts. Each prompt starts with its timestamp [MM:SS]. One prompt per timestamp. Separate prompts with a blank line. No commentary, no numbering, no markdown. Do NOT write "we need to generate" or any meta-commentary — just output the image description directly.${visualStyle ? ` Every prompt MUST include "${visualStyle}" as the art style.` : ''}${isSimpleStyle ? ' Every prompt MUST include "white background".' : ''} MANDATORY: Every prompt MUST end with ", ${arSuffix}". This suffix is required on every single prompt — do not omit it.`;
+    // Append output format instruction (only for non-pexels mode)
+    if (compMediaSource !== 'pexels') {
+      systemPrompt += `\n\nIMPORTANT: Output ONLY the image prompts. Each prompt starts with its timestamp [MM:SS]. One prompt per timestamp. Separate prompts with a blank line. No commentary, no numbering, no markdown. Do NOT write "we need to generate" or any meta-commentary — just output the image description directly.${visualStyle ? ` Every prompt MUST include "${visualStyle}" as the art style.` : ''}${isSimpleStyle ? ' Every prompt MUST include "white background".' : ''} MANDATORY: Every prompt MUST end with ", ${arSuffix}". This suffix is required on every single prompt — do not omit it.`;
+    }
 
     // Extract format template from styleTemplate (e.g. "Simple stick figure doodle of [subject doing action] in ancient style, ...")
     // so we can build proper fallback prompts and remind the LLM of the format per batch
@@ -1257,8 +1438,16 @@ Rules:
     }
 
     // Build a validator: reject prompts that are just raw narration text or missing required elements
+    const isPexelsMode = compMediaSource === 'pexels';
     const validatePrompt = (prompt: string, narrationText: string): boolean => {
-      if (!prompt || prompt.length < 15) return false;
+      if (!prompt) return false;
+      // Pexels mode: short search queries are valid (just reject empty or meta-commentary)
+      if (isPexelsMode) {
+        if (prompt.length < 3) return false;
+        if (/^(we need to|let me|i will|i'll|here is|here are|sure|okay|of course|certainly)/i.test(prompt.trim())) return false;
+        return true;
+      }
+      if (prompt.length < 15) return false;
       // Reject meta-commentary / AI self-talk instead of actual image prompts
       const lower = prompt.toLowerCase();
       if (/^(we need to|let me|i will|i'll|here is|here are|sure|okay|of course|certainly|for this|the prompt|this prompt)/i.test(prompt.trim())) return false;
@@ -1343,10 +1532,13 @@ Rules:
       try {
         let raw: string;
         try {
-          const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
+          const fmtReminder = (!isPexelsMode && formatTemplate) ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
+          const userMsg = isPexelsMode
+            ? `Generate one Pexels search query per timestamp. Each query must name the SPECIFIC subject from the narration (animal, place, object, event). No abstract words.\n\n${segmentText}`
+            : `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder}`;
           raw = await llmComplete({
             systemPrompt,
-            userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder}`,
+            userMessage: userMsg,
             temperature: 0.7,
             maxTokens: 16000,
           });
@@ -1355,10 +1547,13 @@ Rules:
           console.warn(`[storyboard] Batch ${batchNum} failed, retrying after 3s...`, (retryErr as Error).message);
           res.write(JSON.stringify({ progress: true, step: 'retrying', detail: `Batch ${batchNum} rate limited, retrying in 3s...` }) + '\n');
           await new Promise((r) => setTimeout(r, 3000));
-          const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
+          const fmtReminder2 = (!isPexelsMode && formatTemplate) ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
+          const userMsg2 = isPexelsMode
+            ? `Generate one Pexels search query per timestamp. Each query must name the SPECIFIC subject from the narration (animal, place, object, event). No abstract words.\n\n${segmentText}`
+            : `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder2}`;
           raw = await llmComplete({
             systemPrompt,
-            userMessage: `Generate one image prompt per timestamp line:\n\n${segmentText}${fmtReminder}`,
+            userMessage: userMsg2,
             temperature: 0.7,
             maxTokens: 16000,
           });
@@ -1366,7 +1561,17 @@ Rules:
 
         const lineCount = parseBatch(raw, getLastUsedModel());
         console.log(`[storyboard] Batch ${batchNum}: parsed ${allPrompts.length} prompts from ${lineCount} lines`);
-        res.write(JSON.stringify({ progress: true, step: 'batch-done', detail: `Batch ${batchNum} done (${allPrompts.length} prompts so far)` }) + '\n');
+        // Send partial prompts so frontend can show them immediately
+        const partialBySec = new Map<number, string>();
+        for (const p of allPrompts) partialBySec.set(tsToSec(p.timestamp), p.prompt);
+        const partialPrompts = expandedSegments
+          .map((seg) => {
+            const segSec = tsToSec(seg.timestamp);
+            const prompt = partialBySec.get(segSec) || '';
+            return { timestamp: seg.timestamp, text: seg.text, prompt, model: modelBySec.get(segSec) || '' };
+          })
+          .filter(p => p.prompt);
+        res.write(JSON.stringify({ progress: true, step: 'batch-done', detail: `Batch ${batchNum} done (${allPrompts.length} prompts so far)`, partialPrompts }) + '\n');
 
         // Short delay between batches to avoid rate limiting
         if (i + batchSize < expandedSegments.length) {
@@ -1378,12 +1583,13 @@ Rules:
     }
 
     // Programmatically append aspect ratio to every prompt (LLM often ignores instructions)
-    const arTag = `, ${arSuffix}`;
-
-    for (let j = 0; j < allPrompts.length; j++) {
-      // Enforce aspect ratio
-      if (!allPrompts[j].prompt.includes(arSuffix)) {
-        allPrompts[j].prompt = allPrompts[j].prompt.replace(/\.?\s*$/, '') + arTag;
+    // Skip for Pexels mode — search queries don't need aspect ratio
+    if (!isPexelsMode) {
+      const arTag = `, ${arSuffix}`;
+      for (let j = 0; j < allPrompts.length; j++) {
+        if (!allPrompts[j].prompt.includes(arSuffix)) {
+          allPrompts[j].prompt = allPrompts[j].prompt.replace(/\.?\s*$/, '') + arTag;
+        }
       }
     }
 
@@ -1416,7 +1622,7 @@ Rules:
             if (prompt) break;
           }
         }
-        return { timestamp: seg.timestamp, text: seg.text, prompt: prompt || '', model: modelBySec.get(matchedSec) || '' };
+        return { timestamp: seg.timestamp, text: seg.text, prompt: prompt || '', model: modelBySec.get(matchedSec) || '', ...(seg.side ? { side: seg.side } : {}) };
       });
     };
 
@@ -1431,12 +1637,15 @@ Rules:
       await new Promise((r) => setTimeout(r, delay));
 
       const retryText = missingSegments.map(s => `[${s.timestamp}] ${s.text}`).join('\n');
-      const fmtReminder = formatTemplate ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
+      const fmtReminderRetry = (!isPexelsMode && formatTemplate) ? `\n\nREMINDER: Every prompt MUST follow the format: "${formatTemplate.substring(0, 120)}".` : '';
+      const retryUserMsg = isPexelsMode
+        ? `Generate one Pexels search query per timestamp. Each query must name the SPECIFIC subject from the narration (animal, place, object, event). No abstract words.\n\n${retryText}`
+        : `Generate one image prompt per timestamp line:\n\n${retryText}${fmtReminderRetry}`;
 
       try {
         const raw = await llmComplete({
           systemPrompt,
-          userMessage: `Generate one image prompt per timestamp line:\n\n${retryText}${fmtReminder}`,
+          userMessage: retryUserMsg,
           temperature: 0.7,
           maxTokens: 8000,
         });
@@ -1532,6 +1741,28 @@ Rules:
       }
       // Final re-match — all segments guaranteed to have prompts
       finalPrompts = matchPrompts();
+    }
+
+    // ── Comparison mode: resolve side for each prompt ──
+    if (videoMode === 'comparison' && comparisonItems?.left?.name && comparisonItems?.right?.name) {
+      // Use pre-tagged sides from frontend (parsed from script direction markers)
+      // Fall back to name-matching for un-tagged segments
+      const leftName = comparisonItems.left.name.toLowerCase();
+      const rightName = comparisonItems.right.name.toLowerCase();
+      const leftWords = leftName.split(/\s+/).filter(w => w.length > 2);
+      const rightWords = rightName.split(/\s+/).filter(w => w.length > 2);
+
+      for (const p of finalPrompts) {
+        if (p.side) continue; // already tagged from script direction markers
+        const lower = (p.text + ' ' + p.prompt).toLowerCase();
+        const hasLeft = leftWords.some(w => lower.includes(w)) || lower.includes(leftName);
+        const hasRight = rightWords.some(w => lower.includes(w)) || lower.includes(rightName);
+        if (hasLeft && hasRight) p.side = 'both';
+        else if (hasLeft) p.side = 'left';
+        else if (hasRight) p.side = 'right';
+        else p.side = 'both';
+      }
+      res.write(JSON.stringify({ progress: true, step: 'side-detect', detail: `Auto-tagged ${finalPrompts.filter(p => p.side === 'left').length} left, ${finalPrompts.filter(p => p.side === 'right').length} right, ${finalPrompts.filter(p => p.side === 'both').length} both` }) + '\n');
     }
 
     res.write(JSON.stringify({ done: true, prompts: finalPrompts }) + '\n');
@@ -1792,7 +2023,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
 
   // Assemble: combine images + audio into a video
   router.post('/assemble', async (req: Request, res: Response) => {
-    const { segments, audioFilename, aspectRatio, bgMusicFilename, voiceVolume, musicVolume, outputName, speed, bgColor, subtitleStyle } = req.body as {
+    const { segments, audioFilename, aspectRatio, bgMusicFilename, voiceVolume, musicVolume, outputName, speed, bgColor, subtitleStyle, videoMode, mascotImage, mascotImageLeft, mascotImageRight, mascotImageBoth, mascotImageWin, comparisonLayout, comparisonItems, compRoundPanels, compBgSource, compBgQuery, frameTemplateId } = req.body as {
       segments: StoryboardSegment[];
       audioFilename: string;
       aspectRatio?: string;
@@ -1802,6 +2033,15 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       outputName?: string;
       speed?: number;
       bgColor?: string;
+      videoMode?: 'standard' | 'comparison';
+      mascotImage?: string;
+      mascotImageLeft?: string;
+      mascotImageRight?: string;
+      mascotImageBoth?: string;
+      mascotImageWin?: string;
+      comparisonItems?: { type?: 'difference' | 'winner'; left: { name: string }; right: { name: string } };
+      compBgSource?: 'color' | 'pexels';
+      compBgQuery?: string; // Pexels search query for background video
       subtitleStyle?: {
         enabled: boolean;
         fontFamily: string;
@@ -1819,6 +2059,9 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         uppercase: boolean;
         animation: 'none' | 'fade' | 'word-highlight' | 'karaoke';
       };
+      comparisonLayout?: { left: { x: number; y: number; w: number; h: number }; mascot: { x: number; y: number; w: number; h: number }; right: { x: number; y: number; w: number; h: number } };
+      compRoundPanels?: boolean;
+      frameTemplateId?: string;
     };
 
     if (!segments?.length || !audioFilename) {
@@ -1833,6 +2076,29 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
 
     try {
       const ffmpeg = await resolveFullFfmpeg();
+
+      const protocol = req.protocol;
+      const host = req.headers.host || 'localhost:3002';
+      const baseUrl = `${protocol}://${host}`;
+
+      const toHttpUrl = (filePath: string): string => {
+        if (!filePath) return '';
+        const resolved = path.resolve(filePath);
+        const resolvedAssets = path.resolve(process.env.ASSETS_DIR ?? './assets');
+        const resolvedCache = path.resolve(cacheDir);
+
+        if (resolved.startsWith(resolvedAssets)) {
+          const rel = path.relative(resolvedAssets, resolved).replace(/\\/g, '/');
+          return `${baseUrl}/assets/${rel}`;
+        }
+        if (resolved.startsWith(resolvedCache)) {
+          const rel = path.relative(resolvedCache, resolved).replace(/\\/g, '/');
+          return `${baseUrl}/cache/${rel}`;
+        }
+
+        const base = path.basename(resolved);
+        return `${baseUrl}/api/media-library/file/${base}`;
+      };
 
       // Resolve audio path
       const narrationDir = path.resolve(cacheDir, 'narration');
@@ -1885,13 +2151,13 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
 
       // Merge consecutive segments that use the same image + same motion to avoid zoom resets
       // Video clips are never merged (each is a unique clip)
-      interface MergedSegment { imageFilename: string; videoFilename?: string; mediaType?: MediaType; startTime: number; endTime: number; texts: string[]; motion: MotionEffect }
+      interface MergedSegment { imageFilename: string; videoFilename?: string; mediaType?: MediaType; startTime: number; endTime: number; texts: string[]; motion: MotionEffect; side?: 'left' | 'right' | 'both' }
       const merged: MergedSegment[] = [];
       for (const seg of segments) {
         const motion = seg.motion || 'static';
         const isVideo = (seg.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(seg.videoFilename || seg.imageFilename || '')) && (seg.videoFilename || seg.imageFilename);
         const last = merged[merged.length - 1];
-        if (!isVideo && last && !last.videoFilename && last.imageFilename === seg.imageFilename && last.motion === motion) {
+        if (!isVideo && last && !last.videoFilename && last.imageFilename === seg.imageFilename && last.motion === motion && last.side === seg.side) {
           last.endTime = seg.endTime;
           last.texts.push(seg.text || '');
         } else {
@@ -1900,6 +2166,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
             videoFilename: isVideo ? (seg.videoFilename || seg.imageFilename) : undefined,
             mediaType: isVideo ? 'video' : seg.mediaType,
             startTime: seg.startTime, endTime: seg.endTime, texts: [seg.text || ''], motion,
+            side: seg.side,
           });
         }
       }
@@ -1908,7 +2175,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
 
       const videoDir = path.resolve(cacheDir, 'videos');
 
-      let padColor = 'black';
+      let padColor = 'white';
       if (bgColor) {
         if (/^#[0-9a-fA-F]{6}$/.test(bgColor)) {
           padColor = '0x' + bgColor.substring(1);
@@ -1928,15 +2195,378 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         ].join(';');
       }
 
+      // ── Comparison mode: resolve mascot image path ──
+      const isComparison = videoMode === 'comparison';
+      let mascotPath = '';
+      if (isComparison && mascotImage) {
+        mascotPath = path.join(imageDir, path.basename(mascotImage));
+        if (!fs.existsSync(mascotPath)) {
+          res.write(JSON.stringify({ error: 'Mascot image not found: ' + mascotImage }) + '\n');
+          res.end();
+          return;
+        }
+        res.write(JSON.stringify({ progress: true, step: 'preparing', detail: 'Comparison mode: 3-panel layout with mascot' }) + '\n');
+      }
+      let mascotLeftPath = '';
+      let mascotRightPath = '';
+      let mascotBothPath = '';
+      let mascotWinPath = '';
+      if (isComparison && mascotImageLeft) {
+        mascotLeftPath = path.join(imageDir, path.basename(mascotImageLeft));
+      }
+      if (isComparison && mascotImageRight) {
+        mascotRightPath = path.join(imageDir, path.basename(mascotImageRight));
+      }
+      if (isComparison && mascotImageBoth) {
+        mascotBothPath = path.join(imageDir, path.basename(mascotImageBoth));
+      }
+      if (isComparison && mascotImageWin) {
+        mascotWinPath = path.join(imageDir, path.basename(mascotImageWin));
+      }
+
+      // ── Comparison mode: fetch Pexels background video if requested ──
+      let compBgVideoPath = '';
+      if (isComparison && compBgSource === 'pexels') {
+        const bgQuery = compBgQuery || 'abstract dark background';
+        res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `Searching Pexels for background: "${bgQuery}"` }) + '\n');
+        try {
+          const { searchAndDownloadPexelsVideo } = await import('../services/pexels.service');
+          const orientation = (aspectRatio === '9:16' || aspectRatio === '3:4') ? 'portrait' : 'landscape';
+          const bgResult = await searchAndDownloadPexelsVideo(bgQuery, {
+            orientation,
+            minDuration: 10,
+          });
+          if (bgResult) {
+            compBgVideoPath = path.join(imageDir, bgResult.filename);
+            res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `Background video downloaded: ${bgResult.filename} (${bgResult.duration}s)` }) + '\n');
+          } else {
+            res.write(JSON.stringify({ progress: true, step: 'warning', detail: 'No Pexels background found, using solid color' }) + '\n');
+          }
+        } catch (err: any) {
+          res.write(JSON.stringify({ progress: true, step: 'warning', detail: `Pexels background fetch failed: ${err.message}` }) + '\n');
+        }
+      }
+
+      // ── Resolve frame template overlay → render HTML to transparent PNG ──
+      let frameOverlayPng = '';
+      if (isComparison && frameTemplateId) {
+        const frameRow = dbGet<{ id: string; filename: string; filepath: string; mime_type: string }>('SELECT id, filename, filepath, mime_type FROM frame_video_library WHERE id = ?', [frameTemplateId]);
+        if (frameRow && (frameRow.mime_type === 'text/html' || frameRow.filename.endsWith('.html'))) {
+          res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `Rendering frame template: ${frameRow.filename}` }) + '\n');
+          try {
+            const frameDir = path.resolve(process.env.ASSETS_DIR || './assets', 'frame-video-library');
+            const htmlPath = path.join(frameDir, frameRow.filename);
+            if (fs.existsSync(htmlPath)) {
+              // Read HTML and inject transparent background + hide placeholder text
+              let html = fs.readFileSync(htmlPath, 'utf-8');
+              const transparencyCSS = `<style>
+                body { background: transparent !important; }
+                .panel { background: transparent !important; backdrop-filter: none !important; }
+                .preview-media-placeholder { display: none !important; }
+              </style>`;
+              html = html.replace('</head>', transparencyCSS + '\n</head>');
+
+              const tmpHtml = path.join(concatDir, 'frame_overlay.html');
+              fs.writeFileSync(tmpHtml, html);
+              frameOverlayPng = path.join(concatDir, 'frame_overlay.png');
+
+              // Render HTML to transparent PNG via inline Node ESM script (puppeteer-core is ESM-only)
+              const renderScript = `
+                import puppeteer from 'puppeteer-core';
+                const browser = await puppeteer.launch({
+                  executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+                  headless: true,
+                  args: ['--no-sandbox', '--disable-setuid-sandbox'],
+                });
+                const page = await browser.newPage();
+                await page.setViewport({ width: ${w}, height: ${h} });
+                await page.goto('file:///${tmpHtml.replace(/\\/g, '/')}', { waitUntil: 'networkidle0' });
+                await page.screenshot({ path: '${frameOverlayPng.replace(/\\/g, '/')}', omitBackground: true });
+                await browser.close();
+              `;
+              const renderScriptPath = path.join(concatDir, 'render_frame.mjs');
+              fs.writeFileSync(renderScriptPath, renderScript);
+              await execFileAsync('node', [renderScriptPath], { timeout: 30_000 });
+              res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `Frame overlay rendered: ${w}x${h} PNG` }) + '\n');
+            }
+          } catch (err: any) {
+            res.write(JSON.stringify({ progress: true, step: 'warning', detail: `Frame template render failed: ${err.message}` }) + '\n');
+            frameOverlayPng = '';
+          }
+        }
+      }
+
+      // Helper: build comparison 3-panel filter for FFmpeg
+      // Layout: [left_image | mascot | right_image] on a 1920x1080 canvas
+      // Input 0 = left image, Input 1 = mascot, Input 2 = right image
+      // Active side is bright with a colored border; inactive side is dimmed to 30%
+      // 'both' = verdict/winner moment — both sides bright with highlight borders
+      interface CompFilterOpts {
+        activeSide: 'left' | 'right' | 'both' | 'win-left' | 'win-right';
+        layout?: { left: { x: number; y: number; w: number; h: number }; mascot: { x: number; y: number; w: number; h: number }; right: { x: number; y: number; w: number; h: number } };
+        scoreLeft?: number;
+        scoreRight?: number;
+        leftName?: string;
+        rightName?: string;
+        roundLabel?: string; // e.g. "ROUND 1: INDEPENDENCE"
+        isFinalReveal?: boolean;
+        roundPanels?: boolean; // apply rounded corners to left/right panels
+        stickerInputIdx?: number; // FFmpeg input index for sticker overlay
+        stickerSize?: number; // target sticker size in pixels
+        bgInputIdx?: number; // FFmpeg input index for Pexels background video
+      }
+      function buildComparisonFilter(outW: number, outH: number, fps: number, opts: CompFilterOpts): string {
+        const { activeSide, layout, scoreLeft = 0, scoreRight = 0, leftName = '', rightName = '', roundLabel, isFinalReveal, roundPanels } = opts;
+        // Panel rects from layout (percentages 0-100) or defaults — edge-to-edge, no gaps
+        const L = layout?.left  || { x: 0, y: 0, w: 50, h: 58 };
+        const M = layout?.mascot || { x: 20, y: 58, w: 60, h: 42 };
+        const R = layout?.right || { x: 50, y: 0, w: 50, h: 58 };
+
+        // Convert percentages to pixel rects (ensure even dimensions for yuv420p)
+        const px = (r: { x: number; y: number; w: number; h: number }) => ({
+          x: Math.round(outW * r.x / 100),
+          y: Math.round(outH * r.y / 100),
+          w: Math.max(Math.round(outW * r.w / 100) & ~1, 2),
+          h: Math.max(Math.round(outH * r.h / 100) & ~1, 2),
+        });
+        const lp = px(L), mp = px(M), rp = px(R);
+
+        // Winner sides: highlight winner with gold, dim loser
+        const isWin = activeSide === 'win-left' || activeSide === 'win-right';
+        const winnerSide = activeSide === 'win-left' ? 'left' : activeSide === 'win-right' ? 'right' : null;
+
+        // Dim inactive/loser panels
+        const dimLeft = (activeSide === 'right' || activeSide === 'win-right') ? ',colorlevels=rimax=0.3:gimax=0.3:bimax=0.3' : '';
+        const dimRight = (activeSide === 'left' || activeSide === 'win-left') ? ',colorlevels=rimax=0.3:gimax=0.3:bimax=0.3' : '';
+
+        // Rounded corner radius (proportional to panel width)
+        const cornerR = roundPanels ? Math.round(Math.min(lp.w, lp.h) * 0.06) : 0;
+
+        // Build rounded-corner geq alpha expression: alpha=255 inside rounded rect, 0 outside
+        // Uses distance from nearest corner to create rounded rectangle mask
+        const roundGeq = (pw: number, ph: number) => {
+          const r = Math.min(cornerR, Math.floor(pw / 2), Math.floor(ph / 2));
+          // geq expression: for each pixel (X,Y), compute if inside rounded rect
+          // Corner circles at (r,r), (W-r-1,r), (r,H-r-1), (W-r-1,H-r-1)
+          return `geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,${r})*lt(Y,${r})*gt(hypot(X-${r},Y-${r}),${r}),0,if(gt(X,${pw-r-1})*lt(Y,${r})*gt(hypot(X-${pw-r-1},Y-${r}),${r}),0,if(lt(X,${r})*gt(Y,${ph-r-1})*gt(hypot(X-${r},Y-${ph-r-1}),${r}),0,if(gt(X,${pw-r-1})*gt(Y,${ph-r-1})*gt(hypot(X-${pw-r-1},Y-${ph-r-1}),${r}),0,255))))'`;
+        };
+
+        const filters: string[] = [];
+
+        // Left panel
+        if (cornerR > 0) {
+          filters.push(`color=c=white:s=${lp.w}x${lp.h}:d=0.04,format=yuva420p,${roundGeq(lp.w, lp.h)},loop=loop=-1:size=1[left_mask]`);
+          filters.push(`[0:v]scale=${lp.w}:${lp.h}${dimLeft}[left_scaled]`);
+          filters.push(`[left_scaled][left_mask]alphamerge[left]`);
+        } else {
+          filters.push(`[0:v]scale=${lp.w}:${lp.h}${dimLeft}[left]`);
+        }
+
+        // Mascot panel (never rounded)
+        filters.push(`[1:v]scale=${mp.w}:${mp.h}[mascot]`);
+
+        // Right panel
+        if (cornerR > 0) {
+          filters.push(`color=c=white:s=${rp.w}x${rp.h}:d=0.04,format=yuva420p,${roundGeq(rp.w, rp.h)},loop=loop=-1:size=1[right_mask]`);
+          filters.push(`[2:v]scale=${rp.w}:${rp.h}${dimRight}[right_scaled]`);
+          filters.push(`[right_scaled][right_mask]alphamerge[right]`);
+        } else {
+          filters.push(`[2:v]scale=${rp.w}:${rp.h}${dimRight}[right]`);
+        }
+
+        // Canvas: Pexels background video or solid color
+        if (opts.bgInputIdx != null) {
+          filters.push(`[${opts.bgInputIdx}:v]scale=${outW}:${outH}:force_original_aspect_ratio=increase,crop=${outW}:${outH},fps=${fps},setsar=1/1[canvas]`);
+        } else {
+          filters.push(`color=c=${padColor}:s=${outW}x${outH}:d=1:r=${fps}[canvas]`);
+        }
+        filters.push(
+          `[canvas][left]overlay=x=${lp.x}:y=${lp.y}:format=auto[c1]`,
+          `[c1][mascot]overlay=x=${mp.x}:y=${mp.y}[c2]`,
+          `[c2][right]overlay=x=${rp.x}:y=${rp.y}:format=auto[c3]`,
+        );
+
+        // ── Score counter overlay (top center) ──
+        const escDt = (s: string) => s.replace(/'/g, "\u2019").replace(/:/g, '\\:').replace(/%/g, '%%');
+        const hasScore = leftName && rightName && (scoreLeft > 0 || scoreRight > 0);
+        if (hasScore) {
+          const scoreText = `${escDt(leftName)}  ${scoreLeft} \\: ${scoreRight}  ${escDt(rightName)}`;
+          const scoreFontSize = Math.round(outW * 0.025);
+          const scoreY = Math.round(outH * 0.01);
+          // Score pill background + text
+          filters.push(
+            `[c3]drawtext=text='${scoreText}':fontsize=${scoreFontSize}:fontcolor=white:fontfile=/Windows/Fonts/arialbd.ttf:x=(w-text_w)/2:y=${scoreY}:box=1:boxcolor=black@0.6:boxborderw=12[c4]`
+          );
+        } else {
+          filters.push(`[c3]null[c4]`);
+        }
+
+        // ── Round label overlay (brief banner) ──
+        if (roundLabel) {
+          const rlText = escDt(roundLabel.toUpperCase());
+          const rlFontSize = Math.round(outW * 0.028);
+          const rlY = hasScore ? Math.round(outH * 0.06) : Math.round(outH * 0.01);
+          filters.push(
+            `[c4]drawtext=text='${rlText}':fontsize=${rlFontSize}:fontcolor=#FFD700:fontfile=/Windows/Fonts/arialbd.ttf:x=(w-text_w)/2:y=${rlY}:box=1:boxcolor=black@0.5:boxborderw=8[c5]`
+          );
+        } else {
+          filters.push(`[c4]null[c5]`);
+        }
+
+        // ── Sticker overlay (from media library) ──
+        if (opts.stickerInputIdx != null) {
+          const stSz = opts.stickerSize || Math.round(outW * 0.12);
+          // Position sticker in bottom-right of active panel area (above mascot)
+          const stX = Math.round(outW * 0.78);
+          const stY = Math.round(outH * 0.40);
+          filters.push(
+            `[${opts.stickerInputIdx}:v]scale=${stSz}:${stSz}:force_original_aspect_ratio=decrease,format=rgba[stk]`,
+            `[c5][stk]overlay=x=${stX}:y=${stY}:format=auto:enable='between(t,0.2,999)'[c6]`
+          );
+        } else {
+          filters.push(`[c5]null[c6]`);
+        }
+
+        filters.push(`[c6]fps=${fps},setsar=1/1,format=yuv420p[out]`);
+        return filters.join(';');
+      }
+
+      // ── Generate a round title card clip (e.g. "ROUND 1: INDEPENDENCE") ──
+      async function generateRoundCard(text: string, duration: number, outPath: string): Promise<void> {
+        const escDt = (s: string) => s.replace(/'/g, "\u2019").replace(/:/g, '\\:').replace(/%/g, '%%');
+        const titleSize = Math.round(w * 0.04);
+        const inputArgs: string[] = [];
+        let bgFilter: string;
+        if (compBgVideoPath) {
+          inputArgs.push('-stream_loop', '-1', '-i', compBgVideoPath);
+          bgFilter = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=${fps},setsar=1/1[bg]`;
+        } else {
+          inputArgs.push('-f', 'lavfi', '-i', `color=c=${padColor}:s=${w}x${h}:d=${duration}:r=${fps}`);
+          bgFilter = `[0:v]null[bg]`;
+        }
+        const filter = [
+          bgFilter,
+          `[bg]drawtext=text='${escDt(text.toUpperCase())}':fontsize=${titleSize}:fontcolor=#FFD700:fontfile=/Windows/Fonts/arialbd.ttf:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=black@0.5:boxborderw=20[out]`,
+        ].join(';');
+        await execFileAsync(ffmpeg, [
+          ...inputArgs,
+          '-filter_complex', filter,
+          '-map', '[out]',
+          '-t', duration.toFixed(3),
+          '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+          '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+          '-an', '-y', outPath,
+        ], { timeout: 30_000 });
+      }
+
       // Step 1: Create individual clip videos from images or use video clips directly
       const fps = 24;
+      // Track last known left/right images for comparison mode carry-forward
+      let lastLeftImage = '';
+      let lastRightImage = '';
+
+      // ── Comparison mode: pre-compute scores and round labels per segment ──
+      const compLeftName = comparisonItems?.left?.name || '';
+      const compRightName = comparisonItems?.right?.name || '';
+      const compIsWinnerMode = comparisonItems?.type === 'winner';
+      let runningScoreLeft = 0;
+      let runningScoreRight = 0;
+      // Pre-scan to build score-at-each-segment and detect round transitions
+      const segScores: Array<{ left: number; right: number }> = [];
+      const segRoundLabels: Array<string> = [];
+      let currentRound = 0;
+      let prevSideGroup = ''; // track left/right group transitions for round detection
+      for (const seg of merged) {
+        const side = (seg.side || 'both') as string;
+        // Detect round labels from segment text: [Round N: Topic] was stripped from TTS but still in original text markers
+        // We check the texts array for round markers that may have survived in prompts
+        const roundMatch = seg.texts.join(' ').match(/round\s+(\d+)/i);
+        let roundLabel = '';
+
+        // Auto-detect round transitions: a new round starts when we enter 'left' from 'both' or from a winner
+        const sideGroup = (side === 'left' || side === 'win-left') ? 'left' : (side === 'right' || side === 'win-right') ? 'right' : 'both';
+        if (sideGroup === 'left' && prevSideGroup !== 'left') {
+          // Entering left side = start of a new round
+          currentRound++;
+          const topicWords = seg.texts[0]?.replace(/\[.*?\]/g, '').trim().split(/\s+/).slice(0, 3).join(' ') || '';
+          roundLabel = `Round ${currentRound}`;
+          if (topicWords) roundLabel += `: ${topicWords}`;
+        }
+        if (roundMatch) roundLabel = `Round ${roundMatch[1]}`;
+        prevSideGroup = sideGroup;
+
+        if (side === 'win-left') runningScoreLeft++;
+        if (side === 'win-right') runningScoreRight++;
+        segScores.push({ left: runningScoreLeft, right: runningScoreRight });
+        segRoundLabels.push(roundLabel);
+      }
+
+      // ── Media library: pre-load stickers and SFX for comparison overlays ──
+      interface MediaLibRow { id: string; name: string; type: string; filename: string; filepath: string; url: string; trigger_tags: string; mime_type: string; }
+      const mediaLibDir = path.resolve(process.env.ASSETS_DIR || './assets', 'media-library');
+      // Map side → context tags for media library matching
+      const sideContextMap: Record<string, string[]> = {
+        'left': ['left', 'point'],
+        'right': ['right', 'point'],
+        'both': ['both', 'versus', 'intro'],
+        'win-left': ['winner', 'win-left', 'victory'],
+        'win-right': ['winner', 'win-right', 'victory'],
+      };
+      // Pre-query all media items and build side-based lookup
+      const allMedia = isComparison ? dbAll<MediaLibRow>('SELECT * FROM media_library') : [];
+      const stickerForSide: Record<string, string | null> = {};
+      const sfxForSide: Record<string, string | null> = {};
+      for (const side of Object.keys(sideContextMap)) {
+        const tags = sideContextMap[side];
+        // Find best sticker (highest trigger_tags overlap)
+        let bestSticker: { path: string; overlap: number } | null = null;
+        let bestSfx: { path: string; overlap: number } | null = null;
+        for (const m of allMedia) {
+          let trigTags: string[] = [];
+          try { trigTags = (JSON.parse(m.trigger_tags) as string[]).map(t => t.toLowerCase()); } catch {}
+          const overlap = tags.filter(t => trigTags.includes(t)).length;
+          if (overlap === 0) continue;
+          const fpath = path.join(mediaLibDir, m.filename);
+          if (!fs.existsSync(fpath)) continue;
+          if ((m.type === 'sticker' || m.type === 'icon') && (!bestSticker || overlap > bestSticker.overlap)) {
+            bestSticker = { path: fpath, overlap };
+          }
+          if (m.type === 'sfx' && (!bestSfx || overlap > bestSfx.overlap)) {
+            bestSfx = { path: fpath, overlap };
+          }
+        }
+        stickerForSide[side] = bestSticker?.path || null;
+        sfxForSide[side] = bestSfx?.path || null;
+      }
+      // Also find "final/champion" sticker and SFX
+      let championSticker: string | null = null;
+      let championSfx: string | null = null;
+      for (const m of allMedia) {
+        let trigTags: string[] = [];
+        try { trigTags = (JSON.parse(m.trigger_tags) as string[]).map(t => t.toLowerCase()); } catch {}
+        if (!trigTags.includes('champion') && !trigTags.includes('final')) continue;
+        const fpath = path.join(mediaLibDir, m.filename);
+        if (!fs.existsSync(fpath)) continue;
+        if ((m.type === 'sticker' || m.type === 'icon') && !championSticker) championSticker = fpath;
+        if (m.type === 'sfx' && !championSfx) championSfx = fpath;
+      }
+      // Track SFX events: { time, sfxPath } to mix into final audio
+      const sfxEvents: Array<{ time: number; sfxPath: string }> = [];
+      if (isComparison && allMedia.length > 0) {
+        res.write(JSON.stringify({ progress: true, step: 'preparing', detail: `Media library: ${allMedia.length} items loaded for overlays & SFX` }) + '\n');
+      }
+
+      // Track segment output index (may differ from i due to inserted round cards)
+      let segFileIdx = 0;
+
       for (let i = 0; i < merged.length; i++) {
         const seg = merged[i];
         const duration = Math.max((seg.endTime - seg.startTime) / speedFactor, 0.5);
-        const segOut = path.join(concatDir, `seg_${String(i).padStart(3, '0')}.mp4`);
+        const segOut = path.join(concatDir, `seg_${String(segFileIdx).padStart(3, '0')}.mp4`);
+        segFileIdx++;
 
-        // ── Video clip: scale/trim to target duration and resolution ──
-        if (seg.videoFilename) {
+        // ── Video clip: scale/trim to target duration and resolution (standard mode only) ──
+        if (seg.videoFilename && !(isComparison && mascotPath)) {
           // Check both cache/videos and cache/images (Flow-generated videos land in images dir)
           const baseName = path.basename(seg.videoFilename);
           let vidPath = path.join(videoDir, baseName);
@@ -1973,6 +2603,161 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
           continue;
         }
 
+        // ── Comparison mode: 3-panel composition with score + round cards ──
+        if (isComparison && mascotPath) {
+          // Resolve panel media: could be image or video (Pexels clips)
+          const panelFile = seg.videoFilename || seg.imageFilename;
+          let imgPath = path.join(imageDir, path.basename(panelFile));
+          if (!fs.existsSync(imgPath)) imgPath = path.join(videoDir, path.basename(panelFile));
+          if (!fs.existsSync(imgPath)) {
+            res.write(JSON.stringify({ progress: true, step: 'error', detail: `Media not found: ${panelFile}` }) + '\n');
+            continue;
+          }
+
+          // Insert round title card before this segment if it starts a new round
+          const roundLabel = segRoundLabels[i];
+          if (roundLabel && compIsWinnerMode) {
+            const cardOut = path.join(concatDir, `seg_${String(segFileIdx).padStart(3, '0')}.mp4`);
+            segFileIdx++;
+            res.write(JSON.stringify({ progress: true, step: 'encoding', detail: `Round card: ${roundLabel}` }) + '\n');
+            try {
+              await generateRoundCard(roundLabel, 0.8, cardOut);
+            } catch (err) {
+              console.warn('[assemble] Round card generation failed:', (err as Error).message);
+            }
+          }
+
+          // Update tracked left/right images
+          const side = (seg.side || 'both') as 'left' | 'right' | 'both' | 'win-left' | 'win-right';
+          if (side === 'left' || side === 'both' || side === 'win-left') lastLeftImage = imgPath;
+          if (side === 'right' || side === 'both' || side === 'win-right') lastRightImage = imgPath;
+
+          const leftImg = (side === 'right' || side === 'win-right') ? lastLeftImage : imgPath;
+          const rightImg = (side === 'left' || side === 'win-left') ? lastRightImage : imgPath;
+
+          const blankPath = path.join(concatDir, 'blank.png');
+          if (!fs.existsSync(blankPath)) {
+            await execFileAsync(ffmpeg, [
+              '-f', 'lavfi', '-i', `color=c=${padColor}:s=640x1080:d=0.04`,
+              '-frames:v', '1', '-y', blankPath,
+            ], { timeout: 10_000 });
+          }
+
+          const finalLeft = leftImg && fs.existsSync(leftImg) ? leftImg : blankPath;
+          const finalRight = rightImg && fs.existsSync(rightImg) ? rightImg : blankPath;
+
+          // Determine if this is the final reveal segment (last segment with win side)
+          const isFinalReveal = (side === 'win-left' || side === 'win-right') && i === merged.length - 1;
+
+          const score = segScores[i] || { left: 0, right: 0 };
+          res.write(JSON.stringify({ progress: true, step: 'encoding', detail: `Comparison clip ${i + 1}/${merged.length} (${duration.toFixed(1)}s) [${side}] Score: ${compLeftName} ${score.left}-${score.right} ${compRightName} via Remotion...` }) + '\n');
+
+          // Pick mascot variant based on which side is active
+          const pickMascot = (p: string) => p && fs.existsSync(p) ? p : mascotPath;
+          let activeMascot = mascotPath;
+          if (side === 'left') {
+            activeMascot = pickMascot(mascotLeftPath);
+          } else if (side === 'right') {
+            activeMascot = pickMascot(mascotRightPath);
+          } else if (side === 'both') {
+            activeMascot = pickMascot(mascotBothPath);
+          } else if (side === 'win-left' || side === 'win-right') {
+            activeMascot = pickMascot(mascotWinPath);
+          }
+
+          // Show round label on the first segment of each new round (persists for that clip)
+          const showRoundLabel = roundLabel || '';
+
+          const segOut = path.join(concatDir, `seg_${String(segFileIdx).padStart(3, '0')}.mp4`);
+          segFileIdx++;
+
+          // ── Media library: resolve sticker overlay and SFX for this segment ──
+          const showSticker = side === 'win-left' || side === 'win-right' || isFinalReveal;
+          const stickerPath = showSticker ? (isFinalReveal && championSticker ? championSticker : stickerForSide[side] || null) : null;
+          const sfxPath = (side === 'win-left' || side === 'win-right') ? (isFinalReveal && championSfx ? championSfx : sfxForSide[side] || null) : null;
+          if (sfxPath) {
+            sfxEvents.push({ time: seg.startTime / speedFactor, sfxPath });
+          }
+
+          // Media Types
+          const isVidExt = (f: string) => /\.(mp4|webm|mov)$/i.test(f);
+          const leftMediaType = isVidExt(finalLeft) ? 'video' : 'image';
+          const rightMediaType = isVidExt(finalRight) ? 'video' : 'image';
+
+          // Background setup
+          let bgType: 'color' | 'image' | 'video' = 'color';
+          let bgSrc = padColor;
+          if (compBgVideoPath && fs.existsSync(compBgVideoPath)) {
+            bgType = 'video';
+            bgSrc = toHttpUrl(compBgVideoPath);
+          }
+
+          const totalFrames = Math.ceil(duration * fps);
+          const sceneConfig: ComparisonSceneConfig = {
+            durationInFrames: totalFrames,
+            leftMediaSrc: toHttpUrl(finalLeft),
+            leftMediaType,
+            leftName: compLeftName || 'Left',
+            leftScore: score.left,
+            rightMediaSrc: toHttpUrl(finalRight),
+            rightMediaType,
+            rightName: compRightName || 'Right',
+            rightScore: score.right,
+            mascotSrc: toHttpUrl(activeMascot),
+            layout: comparisonLayout || {
+              left: { x: 0, y: 0, w: 50, h: 58 },
+              mascot: { x: 20, y: 58, w: 60, h: 42 },
+              right: { x: 50, y: 0, w: 50, h: 58 },
+            },
+            activeSide: side,
+            roundLabel: showRoundLabel || undefined,
+            roundPanels: !!compRoundPanels,
+            bgType,
+            bgSrc,
+            stickerSrc: stickerPath ? toHttpUrl(stickerPath) : undefined,
+          };
+
+          await renderComparisonScene(segOut, sceneConfig, w, h);
+
+          // Conform Remotion output to ensure identical properties (pixel format, timescale, SAR)
+          const tmpOut = segOut + '.conform.mp4';
+          const conformTimeout = Math.max(30_000, Math.ceil(duration) * 10_000);
+
+          // If frame template overlay PNG is available, composite it on top
+          if (frameOverlayPng && fs.existsSync(frameOverlayPng)) {
+            await execFileAsync(ffmpeg, [
+              '-i', segOut,
+              '-i', frameOverlayPng,
+              '-filter_complex', `[1:v]scale=${w}:${h}[frame];[0:v][frame]overlay=0:0:format=auto,setsar=1/1[out]`,
+              '-map', '[out]',
+              '-c:v', 'libx264',
+              '-preset', 'superfast',
+              '-crf', '23',
+              '-pix_fmt', 'yuv420p',
+              '-video_track_timescale', '90000',
+              '-an',
+              '-y',
+              tmpOut,
+            ], { timeout: conformTimeout });
+          } else {
+            await execFileAsync(ffmpeg, [
+              '-i', segOut,
+              '-c:v', 'libx264',
+              '-preset', 'superfast',
+              '-crf', '23',
+              '-pix_fmt', 'yuv420p',
+              '-video_track_timescale', '90000',
+              '-vf', 'setsar=1/1',
+              '-an',
+              '-y',
+              tmpOut,
+            ], { timeout: conformTimeout });
+          }
+
+          fs.renameSync(tmpOut, segOut);
+          continue;
+        }
+
         // ── Image clip: create video from still image ──
         const imgPath = path.join(imageDir, path.basename(seg.imageFilename));
         if (!fs.existsSync(imgPath)) {
@@ -1996,7 +2781,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
             imageSrc: dataUri,
             motion: seg.motion,
             durationInFrames: totalFrames,
-            bgColor: bgColor || 'black',
+            bgColor: bgColor || 'white',
           };
           await renderSceneClip(segOut, sceneConfig, w, h);
 
@@ -2035,6 +2820,44 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
             '-y',
             segOut,
           ], { timeout: 120_000 });
+        }
+      }
+
+      // ── Comparison mode: append subscribe CTA card at the end ──
+      if (isComparison && compIsWinnerMode) {
+        const ctaOut = path.join(concatDir, `seg_${String(segFileIdx).padStart(3, '0')}.mp4`);
+        segFileIdx++;
+        res.write(JSON.stringify({ progress: true, step: 'encoding', detail: 'Adding subscribe card...' }) + '\n');
+        try {
+          const escDt = (s: string) => s.replace(/'/g, "\u2019").replace(/:/g, '\\:').replace(/%/g, '%%');
+          const ctaDuration = 2.0;
+          const titleSize = Math.round(w * 0.035);
+          const subSize = Math.round(w * 0.022);
+          const ctaInputArgs: string[] = [];
+          let ctaBgFilter: string;
+          if (compBgVideoPath) {
+            ctaInputArgs.push('-stream_loop', '-1', '-i', compBgVideoPath);
+            ctaBgFilter = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=${fps},setsar=1/1[bg]`;
+          } else {
+            ctaInputArgs.push('-f', 'lavfi', '-i', `color=c=${padColor}:s=${w}x${h}:d=${ctaDuration}:r=${fps}`);
+            ctaBgFilter = `[0:v]null[bg]`;
+          }
+          const ctaFilter = [
+            ctaBgFilter,
+            `[bg]drawtext=text='${escDt('What do YOU think?')}':fontsize=${titleSize}:fontcolor=white:fontfile=/Windows/Fonts/arialbd.ttf:x=(w-text_w)/2:y=(h/2)-${titleSize + 20}:box=1:boxcolor=black@0.4:boxborderw=12[t1]`,
+            `[t1]drawtext=text='${escDt('Subscribe for more comparisons!')}':fontsize=${subSize}:fontcolor=#FF0000:fontfile=/Windows/Fonts/arialbd.ttf:x=(w-text_w)/2:y=(h/2)+20:box=1:boxcolor=black@0.3:boxborderw=10[out]`,
+          ].join(';');
+          await execFileAsync(ffmpeg, [
+            ...ctaInputArgs,
+            '-filter_complex', ctaFilter,
+            '-map', '[out]',
+            '-t', ctaDuration.toFixed(3),
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+            '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+            '-an', '-y', ctaOut,
+          ], { timeout: 30_000 });
+        } catch (err) {
+          console.warn('[assemble] CTA card generation failed:', (err as Error).message);
         }
       }
 
@@ -2169,6 +2992,45 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         res.write(JSON.stringify({ progress: true, step: 'subtitles', detail: 'Subtitles burned successfully' }) + '\n');
       }
 
+      // Step 3b: Generate SFX mix track if any SFX events exist
+      let sfxMixPath: string | null = null;
+      if (sfxEvents.length > 0) {
+        res.write(JSON.stringify({ progress: true, step: 'sfx', detail: `Mixing ${sfxEvents.length} sound effects...` }) + '\n');
+        sfxMixPath = path.join(concatDir, 'sfx_mix.mp3');
+        // Build an FFmpeg command that overlays all SFX at their timestamps onto a silent track
+        const sfxInputArgs: string[] = [];
+        // Input 0: silent base track matching video duration
+        sfxInputArgs.push('-f', 'lavfi', '-i', `anullsrc=r=44100:cl=stereo,atrim=0:${audioDuration}`);
+        // Add each SFX as an input
+        for (const evt of sfxEvents) {
+          sfxInputArgs.push('-i', evt.sfxPath);
+        }
+        // Build filter: delay each SFX to its timestamp and mix all together
+        const sfxFilters: string[] = [];
+        const mixInputs: string[] = ['[0:a]'];
+        for (let si = 0; si < sfxEvents.length; si++) {
+          const delayMs = Math.round(sfxEvents[si].time * 1000);
+          sfxFilters.push(`[${si + 1}:a]adelay=${delayMs}|${delayMs},volume=0.7[sfx${si}]`);
+          mixInputs.push(`[sfx${si}]`);
+        }
+        sfxFilters.push(`${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=first:dropout_transition=0[sfxout]`);
+
+        try {
+          await execFileAsync(ffmpeg, [
+            ...sfxInputArgs,
+            '-filter_complex', sfxFilters.join(';'),
+            '-map', '[sfxout]',
+            '-c:a', 'libmp3lame', '-b:a', '128k',
+            '-t', audioDuration.toFixed(3),
+            '-y', sfxMixPath,
+          ], { timeout: 60_000 });
+          res.write(JSON.stringify({ progress: true, step: 'sfx', detail: `SFX mix created (${sfxEvents.length} effects)` }) + '\n');
+        } catch (err) {
+          console.warn('[assemble] SFX mix failed:', (err as Error).message);
+          sfxMixPath = null;
+        }
+      }
+
       // Step 4: Mux audio (with optional background music mixing)
       const vVol = typeof voiceVolume === 'number' ? Math.max(0, Math.min(2, voiceVolume)) : 1.0;
       const mVol = typeof musicVolume === 'number' ? Math.max(0, Math.min(2, musicVolume)) : 0.3;
@@ -2187,22 +3049,41 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         : '';
       const outputFile = path.join(outputDir, safeName ? `${safeName}_${concatId}.mp4` : `storyboard_${concatId}.mp4`);
 
-      if (musicPath) {
-        res.write(JSON.stringify({ progress: true, step: 'muxing', detail: `Mixing voice (${Math.round(vVol * 100)}%) + music (${Math.round(mVol * 100)}%)...` }) + '\n');
+      if (musicPath || sfxMixPath) {
+        const mixParts: string[] = [];
+        const mixInputs: string[] = ['-i', videoInput, '-i', audioPath];
+        let inputIdx = 2;
 
-        // Mix voice narration + background music with volume control
-        // Music loops to fill the video duration and fades out at the end
-        const filterComplex = [
-          `[1:a]volume=${vVol}[voice]`,
-          `[2:a]aloop=loop=-1:size=2e+09,atrim=0:${audioDuration},afade=t=out:st=${Math.max(0, audioDuration - 3)}:d=3,volume=${mVol}[music]`,
-          `[voice][music]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
-        ].join(';');
+        // Voice
+        mixParts.push(`[1:a]volume=${vVol}[voice]`);
+        const amixInputLabels = ['[voice]'];
+
+        // Background music
+        if (musicPath) {
+          mixInputs.push('-i', musicPath);
+          mixParts.push(`[${inputIdx}:a]aloop=loop=-1:size=2e+09,atrim=0:${audioDuration},afade=t=out:st=${Math.max(0, audioDuration - 3)}:d=3,volume=${mVol}[music]`);
+          amixInputLabels.push('[music]');
+          inputIdx++;
+        }
+
+        // SFX mix
+        if (sfxMixPath) {
+          mixInputs.push('-i', sfxMixPath);
+          mixParts.push(`[${inputIdx}:a]volume=0.8[sfxtrack]`);
+          amixInputLabels.push('[sfxtrack]');
+          inputIdx++;
+        }
+
+        mixParts.push(`${amixInputLabels.join('')}amix=inputs=${amixInputLabels.length}:duration=first:dropout_transition=2[aout]`);
+
+        const detailParts = [`voice (${Math.round(vVol * 100)}%)`];
+        if (musicPath) detailParts.push(`music (${Math.round(mVol * 100)}%)`);
+        if (sfxMixPath) detailParts.push(`SFX (${sfxEvents.length} effects)`);
+        res.write(JSON.stringify({ progress: true, step: 'muxing', detail: `Mixing ${detailParts.join(' + ')}...` }) + '\n');
 
         await execFileAsync(ffmpeg, [
-          '-i', videoInput,
-          '-i', audioPath,
-          '-i', musicPath,
-          '-filter_complex', filterComplex,
+          ...mixInputs,
+          '-filter_complex', mixParts.join(';'),
           '-map', '0:v',
           '-map', '[aout]',
           '-c:v', 'copy',
@@ -2338,7 +3219,28 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       `INSERT INTO storyboards (id, name, template_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
       [id, name.trim(), finalTemplateId, now, now],
     );
-    res.status(201).json({ id, name: name.trim(), templateId: finalTemplateId, currentStep: 'topics', status: 'draft', speed: 1.0, bgColor: 'black', createdAt: now, updatedAt: now });
+    res.status(201).json({ id, name: name.trim(), templateId: finalTemplateId, currentStep: 'topics', status: 'draft', speed: 1.0, bgColor: 'white', createdAt: now, updatedAt: now });
+  });
+
+  // ── Pexels batch video search ──
+  router.post('/pexels-batch', async (req: Request, res: Response) => {
+    const { queries } = req.body as { queries: Array<{ timestamp: string; query: string; side?: string }> };
+    if (!queries?.length) { res.status(400).json({ error: 'queries required' }); return; }
+    if (!process.env.PEXELS_API_KEY) { res.status(400).json({ error: 'PEXELS_API_KEY not configured' }); return; }
+
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.flushHeaders();
+
+    try {
+      const videos = await pexelsBatch(queries, (msg) => {
+        res.write(JSON.stringify(msg) + '\n');
+      });
+      res.write(JSON.stringify({ done: true, videos }) + '\n');
+    } catch (err) {
+      res.write(JSON.stringify({ error: (err as Error).message }) + '\n');
+    }
+    res.end();
   });
 
   router.get('/projects', (_req: Request, res: Response) => {
@@ -2361,7 +3263,7 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         status: r.status, audioDuration: r.audio_duration, resultFilename: r.result_filename,
         thumbnailUrl: (r.thumbnail_url as string) || thumbnailUrl,
         thumbnailPrompt: (r.thumbnail_prompt as string) || '',
-        bgColor: (r.bg_color as string) || 'black',
+        bgColor: (r.bg_color as string) || 'white',
         speed: typeof r.speed === 'number' ? r.speed : 1.0,
         templateName: r.template_name, templateNiche: r.template_niche, templateColor: r.template_color,
         templateYoutubeUrl: r.template_youtube_url || '', templateMemo: r.template_memo || '',
@@ -2398,6 +3300,19 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       bgColor: row.bg_color || 'black',
       speed: typeof row.speed === 'number' ? row.speed : 1.0,
       subtitleStyle: row.subtitle_style ? JSON.parse(row.subtitle_style as string) : null,
+      videoMode: (row as any).video_mode || 'standard',
+      mascotPrompt: (row as any).mascot_prompt || '',
+      mascotImage: (row as any).mascot_image || '',
+      mascotImageLeft: (row as any).mascot_image_left || '',
+      mascotImageRight: (row as any).mascot_image_right || '',
+      mascotImageBoth: (row as any).mascot_image_both || '',
+      mascotImageWin: (row as any).mascot_image_win || '',
+      comparisonItems: (() => { try { return JSON.parse(((row as any).comparison_items as string) || '{}'); } catch { return {}; } })(),
+      compMediaSource: (row as any).comp_media_source || 'flow',
+      compRoundPanels: !!(row as any).comp_round_panels,
+      compBgSource: (row as any).comp_bg_source || 'color',
+      compBgQuery: (row as any).comp_bg_query || '',
+      frameTemplateId: (row as any).frame_template_id || '',
     });
   });
 
@@ -2414,12 +3329,25 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       thumbnailUrl: 'thumbnail_url', thumbnailPrompt: 'thumbnail_prompt', thumbnailBgColor: 'thumbnail_bg_color',
       bgColor: 'bg_color',
       speed: 'speed',
+      videoMode: 'video_mode',
+      mascotPrompt: 'mascot_prompt',
+      mascotImage: 'mascot_image',
+      mascotImageLeft: 'mascot_image_left',
+      mascotImageRight: 'mascot_image_right',
+      mascotImageBoth: 'mascot_image_both',
+      mascotImageWin: 'mascot_image_win',
+      compMediaSource: 'comp_media_source',
+      compRoundPanels: 'comp_round_panels',
+      compBgSource: 'comp_bg_source',
+      compBgQuery: 'comp_bg_query',
+      frameTemplateId: 'frame_template_id',
     };
     const jsonCols: Record<string, string> = {
       transcriptEntries: 'transcript_entries', prompts: 'prompts',
       generatedImages: 'generated_images', segments: 'segments',
       metadataTags: 'metadata_tags', stageParts: 'stage_parts',
       subtitleStyle: 'subtitle_style',
+      comparisonItems: 'comparison_items',
     };
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -2427,7 +3355,11 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
       if (body[k] !== undefined) { sets.push(`${col} = ?`); params.push(body[k]); }
     }
     for (const [k, col] of Object.entries(jsonCols)) {
-      if (body[k] !== undefined) { sets.push(`${col} = ?`); params.push(JSON.stringify(body[k])); }
+      if (body[k] !== undefined) {
+        sets.push(`${col} = ?`);
+        // If the value is already a string (pre-serialized JSON), store as-is to avoid double-encoding
+        params.push(typeof body[k] === 'string' ? body[k] : JSON.stringify(body[k]));
+      }
     }
     if (!sets.length) { res.status(400).json({ error: 'Nothing to update' }); return; }
     sets.push('updated_at = ?');

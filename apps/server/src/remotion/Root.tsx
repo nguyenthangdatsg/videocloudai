@@ -3,7 +3,8 @@ import { Composition, registerRoot } from 'remotion';
 import { Intro } from './compositions/Intro';
 import { Outro } from './compositions/Outro';
 import { SceneClip } from './compositions/SceneClip';
-import type { IntroConfig, OutroConfig, SceneClipConfig } from './types';
+import { ComparisonScene } from './compositions/ComparisonScene';
+import type { IntroConfig, OutroConfig, SceneClipConfig, ComparisonSceneConfig } from './types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const IntroComp = Intro as React.ComponentType<any>;
@@ -11,6 +12,8 @@ const IntroComp = Intro as React.ComponentType<any>;
 const OutroComp = Outro as React.ComponentType<any>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const SceneClipComp = SceneClip as React.ComponentType<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ComparisonSceneComp = ComparisonScene as React.ComponentType<any>;
 
 function RemotionRoot() {
   return (
@@ -56,6 +59,35 @@ function RemotionRoot() {
           durationInFrames: 120,
           bgColor: 'black',
         } satisfies SceneClipConfig}
+      />
+      <Composition
+        id="ComparisonScene"
+        component={ComparisonSceneComp}
+        durationInFrames={120}
+        fps={24}
+        width={1080}
+        height={1920}
+        defaultProps={{
+          durationInFrames: 120,
+          leftMediaSrc: '',
+          leftMediaType: 'image',
+          leftName: 'Left',
+          leftScore: 0,
+          rightMediaSrc: '',
+          rightMediaType: 'image',
+          rightName: 'Right',
+          rightScore: 0,
+          mascotSrc: '',
+          layout: {
+            left: { x: 0, y: 0, w: 50, h: 58 },
+            mascot: { x: 20, y: 58, w: 60, h: 42 },
+            right: { x: 50, y: 0, w: 50, h: 58 },
+          },
+          activeSide: 'both',
+          roundPanels: true,
+          bgType: 'color',
+          bgSrc: '#0d0e12',
+        } satisfies ComparisonSceneConfig}
       />
     </>
   );

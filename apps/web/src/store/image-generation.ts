@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { imageApi, storyboardApi } from '../lib/api';
 import { useAppStore } from './index';
 
-export type GenMediaType = 'image' | 'video';
+export type GenMediaType = 'image' | 'video' | 'pexels';
 
 export interface GenImage {
   timestamp: string;
@@ -10,6 +10,7 @@ export interface GenImage {
   url: string;
   status: 'pending' | 'generating' | 'done' | 'error';
   mediaType?: GenMediaType;
+  videoFilename?: string;
 }
 
 interface ImageGenTask {
@@ -19,6 +20,9 @@ interface ImageGenTask {
   running: boolean;
   abortController: AbortController | null;
 }
+
+// Track active Flow event listener cleanup functions per project
+const flowCleanups = new Map<string, () => void>();
 
 interface ImageGenStore {
   tasks: Map<string, ImageGenTask>;
@@ -342,6 +346,10 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     const existing = get().tasks.get(projectId);
     if (existing?.abortController) existing.abortController.abort();
 
+    // Clean up old Flow event listeners to prevent duplicates
+    const oldCleanup = flowCleanups.get(projectId);
+    if (oldCleanup) oldCleanup();
+
     // If existingImages provided (resume mode), keep done images and only reset failed/pending for the prompts being retried
     let initialImages: GenImage[];
     // Maps extension subset index → full images array index (for resume mode)
@@ -498,12 +506,14 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
         if (!t) return s;
         const next = new Map(s.tasks);
         let updatedImages = [...t.images];
+        let updatedProgress = [...t.progress];
         if (typeof d.index === 'number') {
           const realIdx = resolveIndex(d.index);
           if (d.status === 'done') {
             updatedImages = updatedImages.map((item, i) =>
               i === realIdx ? { ...item, filename: d.filename, url: d.url, status: 'done' as const } : item,
             );
+            updatedProgress.push(`(${realIdx + 1}/${updatedImages.length}) Done — saved ${d.filename}`);
             // Save to prompt cache so future runs reuse this image
             const matchedPrompt = prompts.find(p => p.timestamp === updatedImages[realIdx]?.timestamp);
             if (matchedPrompt) {
@@ -513,9 +523,10 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
             updatedImages = updatedImages.map((item, i) =>
               i === realIdx ? { ...item, status: 'error' as const } : item,
             );
+            updatedProgress.push(`(${realIdx + 1}/${updatedImages.length}) Failed: ${d.error || 'unknown error'}`);
           }
         }
-        next.set(projectId, { ...t, images: updatedImages });
+        next.set(projectId, { ...t, images: updatedImages, progress: updatedProgress });
 
         // Incrementally save to DB so images survive page reload
         storyboardApi.updateProject(projectId, {
@@ -531,6 +542,7 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
       window.removeEventListener('Han2YT_flow_image', onImage);
       window.removeEventListener('Han2YT_flow_done', onDone);
       window.removeEventListener('Han2YT_flow_error', onError);
+      flowCleanups.delete(projectId);
     };
 
     // Helper: finalize any images still stuck as generating/pending → error
@@ -613,6 +625,9 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     window.addEventListener('Han2YT_flow_image', onImage);
     window.addEventListener('Han2YT_flow_done', onDone);
     window.addEventListener('Han2YT_flow_error', onError);
+
+    // Store cleanup so it can be called on next start or stop
+    flowCleanups.set(projectId, cleanup);
   },
 
   stopGeneration: (projectId) => {
@@ -622,6 +637,10 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     }
     // Also stop Flow generation if running
     window.dispatchEvent(new CustomEvent('Han2YT_flow_stop'));
+
+    // Clean up Flow event listeners
+    const flowCleanup = flowCleanups.get(projectId);
+    if (flowCleanup) flowCleanup();
 
     // Immediately mark task as stopped
     if (task) {

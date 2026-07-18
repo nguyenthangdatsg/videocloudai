@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
+import { AdvancedToggle } from './AdvancedToggle';
 import { useStoryboard } from '../StoryboardContext';
 import type { MotionEffect } from '../../../lib/api';
 
@@ -56,116 +57,99 @@ export function AssembleStep() {
     <div className="space-y-4">
       {!assembling && (
         <>
-          <div className="border border-c-border rounded-xl p-3 bg-c-surface space-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] text-c-dim font-medium">{t('storyboard.motionEffects')}:</span>
-              {allEffects.map((fx) => (
-                <label key={fx} className="flex items-center gap-1 cursor-pointer">
-                  <input type="checkbox" checked={randomEffects.has(fx)} onChange={() => toggleRandomEffect(fx)} className="w-3 h-3 rounded accent-cyan-500" />
-                  <span className="text-[10px] text-c-text">{t(`storyboard.motion${fx.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('')}` as never)}</span>
-                </label>
-              ))}
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="input text-xs">
-                <option value="16:9">16:9</option>
-                <option value="9:16">9:16</option>
-                <option value="1:1">1:1</option>
+          {/* Hero action: Assemble button + key settings */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <button onClick={handleAssemble} disabled={assembling || !segments.length} className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50 py-2.5 px-6">
+              <Film className="w-4 h-4" />
+              {result ? t('storyboard.reAssemble') : t('storyboard.assemble')}
+            </button>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-c-dim">{t('storyboard.speed')}:</span>
+              <select value={String(speed)} onChange={(e) => { const val = parseFloat(e.target.value); setSpeed(val); saveProject({ speed: val }); }} className="input text-xs py-1">
+                {[0.75, 0.8, 0.9, 1, 1.1, 1.15, 1.2, 1.25, 1.3, 1.5, 1.75, 2].map(v => (
+                  <option key={v} value={String(v)}>{v === 1 ? t('storyboard.speedNormal') : `${v}x`}</option>
+                ))}
               </select>
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] text-c-dim">{t('storyboard.speed')}:</span>
-                <select value={String(speed)} onChange={(e) => { const val = parseFloat(e.target.value); setSpeed(val); saveProject({ speed: val }); }} className="input text-xs py-1">
-                  {[0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.5, 1.6, 1.75, 2, 2.5, 3].map(v => (
-                    <option key={v} value={String(v)}>{v === 1 ? t('storyboard.speedNormal') : `${v}x`}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-c-dim">{t('storyboard.background')}:</span>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="color"
-                    value={bgColor.startsWith('#') && bgColor.length <= 7 ? bgColor : '#000000'}
-                    onChange={(e) => { setBgColor(e.target.value); saveProject({ bgColor: e.target.value }); }}
-                    className="w-5 h-5 rounded cursor-pointer border border-c-border bg-transparent p-0 overflow-hidden shrink-0"
-                    title={t('storyboard.chooseCustomColor')}
-                  />
-                  <select
-                    value={bgColor}
-                    onChange={(e) => { setBgColor(e.target.value); saveProject({ bgColor: e.target.value }); }}
-                    className="input text-xs py-1 pr-7"
-                  >
-                    <option value="black">{t('storyboard.colorBlack')}</option>
-                    <option value="white">{t('storyboard.colorWhite')}</option>
-                    <option value="#1e1e2e">{t('storyboard.colorCatppuccin')}</option>
-                    <option value="#0f172a">{t('storyboard.colorSlate')}</option>
-                    <option value="#1c1917">{t('storyboard.colorStone')}</option>
-                    <option value="#022c22">{t('storyboard.colorEmerald')}</option>
-                    <option value="#1e1b4b">{t('storyboard.colorIndigo')}</option>
-                    {bgColor !== 'black' && bgColor !== 'white' && !['#1e1e2e', '#0f172a', '#1c1917', '#022c22', '#1e1b4b'].includes(bgColor) && (
-                      <option value={bgColor}>{t('storyboard.customColor', { color: bgColor })}</option>
-                    )}
-                  </select>
-                </div>
-              </div>
-              <button onClick={randomizeMotion} disabled={randomEffects.size === 0} className="btn-secondary text-xs flex items-center gap-1.5 disabled:opacity-50">
-                <RefreshCw className="w-3 h-3" /> {t('storyboard.randomize')}
-              </button>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-c-dim">{t('storyboard.motionAll')}:</span>
-                <select onChange={(e) => setAllMotion(e.target.value as MotionEffect)} className="input text-[10px] py-0.5" defaultValue="">
-                  <option value="" disabled>—</option>
-                  {allEffects.map((fx) => (
-                    <option key={fx} value={fx}>{t(`storyboard.motion${fx.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('')}` as never)}</option>
-                  ))}
-                </select>
-              </div>
-              <button onClick={handleAssemble} disabled={assembling || !segments.length} className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50 ml-auto">
-                <Film className="w-3.5 h-3.5" />
-                {result ? t('storyboard.reAssemble') : t('storyboard.assemble')}
-              </button>
             </div>
+            <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="input text-xs py-1">
+              <option value="16:9">16:9</option>
+              <option value="9:16">9:16</option>
+              <option value="1:1">1:1</option>
+            </select>
+            <div className="flex items-center gap-1">
+              <input type="color"
+                value={bgColor.startsWith('#') && bgColor.length <= 7 ? bgColor : '#000000'}
+                onChange={(e) => { setBgColor(e.target.value); saveProject({ bgColor: e.target.value }); }}
+                className="w-5 h-5 rounded cursor-pointer border border-c-border bg-transparent p-0 shrink-0" />
+              <select value={bgColor} onChange={(e) => { setBgColor(e.target.value); saveProject({ bgColor: e.target.value }); }} className="input text-xs py-1">
+                <option value="black">{t('storyboard.colorBlack')}</option>
+                <option value="white">{t('storyboard.colorWhite')}</option>
+                <option value="#1e1e2e">{t('storyboard.colorCatppuccin')}</option>
+                <option value="#0f172a">{t('storyboard.colorSlate')}</option>
+                {bgColor !== 'black' && bgColor !== 'white' && !['#1e1e2e', '#0f172a'].includes(bgColor) && (
+                  <option value={bgColor}>{bgColor}</option>
+                )}
+              </select>
+            </div>
+            <span className="text-xs text-c-dim ml-auto">{segments.length} {t('storyboard.segments')}</span>
           </div>
 
-          <div className="space-y-1.5 max-h-[400px] overflow-auto">
-            {segments.map((seg, i) => (
-              <div key={i} className="flex items-center gap-2 border border-c-border rounded-lg bg-c-surface p-1.5">
-                {(() => {
+          {/* Advanced: Motion effects + Segment list */}
+          <AdvancedToggle label={`${t('storyboard.motionEffects')} & ${t('storyboard.segments')}`}>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                {allEffects.map((fx) => (
+                  <label key={fx} className="flex items-center gap-1 cursor-pointer">
+                    <input type="checkbox" checked={randomEffects.has(fx)} onChange={() => toggleRandomEffect(fx)} className="w-3 h-3 rounded accent-cyan-500" />
+                    <span className="text-[10px] text-c-text">{t(`storyboard.motion${fx.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('')}` as never)}</span>
+                  </label>
+                ))}
+                <button onClick={randomizeMotion} disabled={randomEffects.size === 0} className="btn-secondary text-[10px] py-0.5 px-2 flex items-center gap-1 disabled:opacity-50">
+                  <RefreshCw className="w-3 h-3" /> {t('storyboard.randomize')}
+                </button>
+                <select onChange={(e) => setAllMotion(e.target.value as MotionEffect)} className="input text-[10px] py-0.5" defaultValue="">
+                  <option value="" disabled>{t('storyboard.motionAll')}</option>
+                  {allEffects.map((fx) => (<option key={fx} value={fx}>{t(`storyboard.motion${fx.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('')}` as never)}</option>))}
+                </select>
+              </div>
+              <div className="space-y-1.5 max-h-[300px] overflow-auto">
+                {segments.map((seg, i) => {
                   const segIsVid = seg.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(seg.videoFilename || seg.imageFilename || '');
                   const vidSrc = seg.videoUrl || (segIsVid ? seg.imageUrl : '');
                   return (
-                    <div className="w-14 h-10 shrink-0 rounded overflow-hidden relative cursor-pointer group" onClick={() => !segIsVid && setLightboxUrl(seg.imageUrl)}>
-                      {segIsVid && vidSrc ? (
-                        <video src={`${vidSrc}#t=0.1`} className="w-full h-full object-cover" muted preload="metadata" />
+                    <div key={i} className="flex items-center gap-2 border border-c-border rounded-lg bg-c-surface p-1.5">
+                      <div className="w-14 h-10 shrink-0 rounded overflow-hidden relative cursor-pointer group" onClick={() => !segIsVid && setLightboxUrl(seg.imageUrl)}>
+                        {segIsVid && vidSrc ? (
+                          <video src={`${vidSrc}#t=0.1`} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                        ) : (
+                          <img src={seg.imageUrl} alt={seg.text || `Segment ${i + 1}`} className="w-full h-full object-cover" />
+                        )}
+                        <div className="absolute top-0 left-0 bg-black/60 rounded-br px-1 text-[8px] font-mono text-white">{i + 1}</div>
+                        {segIsVid && <div className="absolute bottom-0 right-0 bg-violet-600/80 rounded-tl px-1 text-[7px] text-white">{t('storyboard.videoAbbr')}</div>}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[10px] text-c-text truncate">{seg.text || '—'}</div>
+                        <div className="text-[9px] text-c-dim">{seg.startTime.toFixed(1)}s &rarr; {seg.endTime.toFixed(1)}s</div>
+                      </div>
+                      {segIsVid ? (
+                        <span className="text-[10px] text-violet-400"><Video className="w-3 h-3" /></span>
                       ) : (
-                        <img src={seg.imageUrl} alt={seg.text || `Segment ${i + 1}`} className="w-full h-full object-cover" />
+                        <select value={seg.motion || 'static'} onChange={(e) => updateSegmentMotion(i, e.target.value as MotionEffect)} className="input text-[10px] py-0.5 w-24">
+                          <option value="static">{t('storyboard.motionStatic')}</option>
+                          <option value="zoom-in">{t('storyboard.motionZoomIn')}</option>
+                          <option value="zoom-out">{t('storyboard.motionZoomOut')}</option>
+                          <option value="pan-left">{t('storyboard.motionPanLeft')}</option>
+                          <option value="pan-right">{t('storyboard.motionPanRight')}</option>
+                          <option value="pan-up">{t('storyboard.motionPanUp')}</option>
+                          <option value="pan-down">{t('storyboard.motionPanDown')}</option>
+                        </select>
                       )}
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors" />
-                      <div className="absolute top-0 left-0 bg-black/60 rounded-br px-1 text-[8px] font-mono text-white">{i + 1}</div>
-                      {segIsVid && <div className="absolute bottom-0 right-0 bg-violet-600/80 rounded-tl px-1 text-[7px] text-white">{t('storyboard.videoAbbr')}</div>}
                     </div>
                   );
-                })()}
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] text-c-text truncate">{seg.text || '—'}</div>
-                  <div className="text-[9px] text-c-dim">{seg.startTime.toFixed(1)}s &rarr; {seg.endTime.toFixed(1)}s</div>
-                </div>
-                {(seg.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(seg.videoFilename || seg.imageFilename || '')) ? (
-                  <span className="text-[10px] text-violet-400 flex items-center gap-1"><Video className="w-3 h-3" /></span>
-                ) : (
-                  <select value={seg.motion || 'static'} onChange={(e) => updateSegmentMotion(i, e.target.value as MotionEffect)} className="input text-[10px] py-0.5 w-24">
-                    <option value="static">{t('storyboard.motionStatic')}</option>
-                    <option value="zoom-in">{t('storyboard.motionZoomIn')}</option>
-                    <option value="zoom-out">{t('storyboard.motionZoomOut')}</option>
-                    <option value="pan-left">{t('storyboard.motionPanLeft')}</option>
-                    <option value="pan-right">{t('storyboard.motionPanRight')}</option>
-                    <option value="pan-up">{t('storyboard.motionPanUp')}</option>
-                    <option value="pan-down">{t('storyboard.motionPanDown')}</option>
-                  </select>
-                )}
+                })}
               </div>
-            ))}
-          </div>
+            </div>
+          </AdvancedToggle>
         </>
       )}
 

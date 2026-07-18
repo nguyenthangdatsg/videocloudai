@@ -253,7 +253,15 @@ chrome.runtime.onConnect.addListener((port) => {
         return;
       }
 
-      const { timestamp, prompt } = prompts[i];
+      const { timestamp } = prompts[i];
+      // For ChatGPT, prefix with "Generate an image: " so it knows to create an image
+      // For Grok, prefix with "Generate an image of: " similarly
+      let prompt = prompts[i].prompt;
+      if (providerKey === "chatgpt" && !/^(generate|create|draw|make)\s+(an?\s+)?image/i.test(prompt)) {
+        prompt = "Generate an image: " + prompt;
+      } else if (providerKey === "grok" && !/^(generate|create|draw|make)\s+(an?\s+)?image/i.test(prompt)) {
+        prompt = "Generate an image of: " + prompt;
+      }
       let success = false;
 
       for (let attempt = 0; attempt < MAX_RETRIES && !success; attempt++) {
@@ -274,10 +282,18 @@ chrome.runtime.onConnect.addListener((port) => {
           console.log("[Han2YT] GET_BOX result:", JSON.stringify(box));
           if (!box || !box.ok) throw new Error(box?.error || "Cannot find prompt input on Flow page");
 
-          // b) Type prompt + Enter via debugger
-          console.log("[Han2YT] Typing prompt at", box.x, box.y, ":", prompt.slice(0, 40));
-          await debugTypeAndSubmit(tab.id, box.x, box.y, prompt);
-          console.log("[Han2YT] Typed + submitted prompt OK");
+          // b) Type prompt + Enter
+          console.log("[Han2YT] Typing prompt at", box.x, box.y, ":", prompt.slice(0, 40), "provider:", providerKey);
+          if (providerKey === "chatgpt" || providerKey === "grok") {
+            // Use content script's TYPE_AND_SUBMIT for ChatGPT/Grok (they don't need CDP debugger)
+            const typeResp = await sendToFlowTab(tab.id, { type: "TYPE_AND_SUBMIT", prompt });
+            if (!typeResp || !typeResp.ok) throw new Error(typeResp?.error || "Failed to type prompt via content script");
+            console.log("[Han2YT] Typed + submitted via content script OK");
+          } else {
+            // Use CDP debugger for Google Flow (Slate.js requires real input events)
+            await debugTypeAndSubmit(tab.id, box.x, box.y, prompt);
+            console.log("[Han2YT] Typed + submitted via debugger OK");
+          }
           await wait(500);
 
           port.postMessage({

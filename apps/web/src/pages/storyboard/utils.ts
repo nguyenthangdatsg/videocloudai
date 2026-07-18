@@ -1,5 +1,69 @@
 import type { TranscriptEntry } from './types';
 
+// ── Shared utilities for timestamp parsing and comparison mode ──
+
+/** Convert MM:SS or HH:MM:SS timestamp to seconds */
+export function tsToSec(ts: string): number {
+  const p = ts.split(':').map(Number);
+  return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+}
+
+/** Strip visual direction cues from text (for TTS narration preview) */
+export function stripVisualDirections(script: string): string {
+  let cleaned = script.replace(/\s*\[[^\]]*(?:points?|head|look|gesture|turn|facing)[^\]]*(?:left|right|both|toward)[^\]]*\]\s*/gi, ' ');
+  // Strip [Winner left], [Winner right], [Win left], [Win right]
+  cleaned = cleaned.replace(/\s*\[win(?:ner)?\s+(?:left|right)\]\s*/gi, ' ');
+  // Strip [Round N: Topic]
+  cleaned = cleaned.replace(/\s*\[round\s+\d+[:\s][^\]]*\]\s*/gi, ' ');
+  cleaned = cleaned.replace(/\s*\([^)]*(?:points?|head|look|gesture|turn|facing)\s+(?:left|right|both|toward)[^)]*\)\s*/gi, ' ');
+  cleaned = cleaned.replace(/[,.]?\s*(?:points?|head|look|gesture|turn|facing)\s+(?:to\s+the\s+)?(?:left|right|both|toward(?:\s+\w+)?)\s*[,.]?\s*/gi, ' ');
+  cleaned = cleaned.replace(/\s{2,}/g, ' ').replace(/^\s*,\s*/gm, '').trim();
+  return cleaned;
+}
+
+/** Parse direction markers from script and build a side map for transcript entries */
+export function buildSideMap(
+  scriptText: string,
+  transcriptEntries: TranscriptEntry[],
+): Array<'left' | 'right' | 'both' | 'win-left' | 'win-right'> {
+  type Side = 'left' | 'right' | 'both' | 'win-left' | 'win-right';
+  const markers: Array<{ pos: number; side: Side }> = [];
+
+  // [Points left], [Points right], [Points both]
+  const pointsRegex = /\[points?\s+(left|right|both)\]/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pointsRegex.exec(scriptText)) !== null) {
+    markers.push({ pos: match.index, side: match[1].toLowerCase() as Side });
+  }
+
+  // [Winner left], [Win left], [Winner right], [Win right]
+  const winRegex = /\[win(?:ner)?\s+(left|right)\]/gi;
+  while ((match = winRegex.exec(scriptText)) !== null) {
+    markers.push({ pos: match.index, side: `win-${match[1].toLowerCase()}` as Side });
+  }
+
+  // Plain text: "Points left", "Points right" at sentence starts
+  const plainRegex = /(?:^|[.!?\n]\s*)Points?\s+(left|right|both)\b/gi;
+  while ((match = plainRegex.exec(scriptText)) !== null) {
+    markers.push({ pos: match.index, side: match[1].toLowerCase() as Side });
+  }
+
+  markers.sort((a, b) => a.pos - b.pos);
+
+  if (markers.length === 0) return transcriptEntries.map(() => 'both');
+
+  const scriptLower = scriptText.toLowerCase();
+  return transcriptEntries.map((e) => {
+    const words = e.text.toLowerCase().split(/\s+/).slice(0, 5).join(' ');
+    const idx = words.length > 10 ? scriptLower.indexOf(words) : -1;
+    if (idx === -1) return 'both';
+    for (let m = markers.length - 1; m >= 0; m--) {
+      if (markers[m].pos <= idx) return markers[m].side;
+    }
+    return 'both';
+  });
+}
+
 /** Convert milliseconds to SRT-style time string (HH:MM:SS,mmm) */
 export function msToTimeStr(ms: number): string {
   const h = Math.floor(ms / 3600000);

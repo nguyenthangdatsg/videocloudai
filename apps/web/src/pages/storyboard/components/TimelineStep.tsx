@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import clsx from 'clsx';
 import {
   ArrowRight,
@@ -11,6 +12,7 @@ import {
   SkipBack,
   SkipForward,
   Trash2,
+  Trophy,
   Video,
   Volume2,
   ZoomIn,
@@ -20,6 +22,7 @@ import { useStoryboard } from '../StoryboardContext';
 import { fmtTime, parseTimeInput } from '../utils';
 import { MusicPanel } from './MusicPanel';
 import { SubtitlePanel } from './SubtitlePanel';
+import { AdvancedToggle } from './AdvancedToggle';
 
 export function TimelineStep() {
   const {
@@ -87,11 +90,20 @@ export function TimelineStep() {
     setFrameHoldTime,
     subtitleStyle,
     setSubtitleStyle,
+    videoMode,
   } = useStoryboard();
 
-  // Computed values
-  const totalDuration = segments.length > 0 ? segments[segments.length - 1]?.endTime || 0 : 0;
-  const maxSegDuration = segments.length > 0 ? Math.max(...segments.map(s => s.endTime - s.startTime)) : 1;
+  // Computed values — memoize to avoid recalc on every hover/playhead update
+  const totalDuration = useMemo(() => segments.length > 0 ? segments[segments.length - 1]?.endTime || 0 : 0, [segments]);
+  const maxSegDuration = useMemo(() => segments.length > 0 ? Math.max(...segments.map(s => s.endTime - s.startTime)) : 1, [segments]);
+  const ticks = useMemo(() => {
+    if (totalDuration <= 0) return [];
+    const tickInterval = totalDuration <= 10 ? 1 : totalDuration <= 30 ? 2 : totalDuration <= 60 ? 5 : 10;
+    const arr: number[] = [];
+    for (let t = 0; t <= totalDuration; t += tickInterval) arr.push(t);
+    if (arr[arr.length - 1] < totalDuration) arr.push(totalDuration);
+    return arr;
+  }, [totalDuration]);
 
   // Local helpers (same as in AssembleStep)
   const setAllMotion = (motion: MotionEffect) => {
@@ -124,18 +136,10 @@ export function TimelineStep() {
     <div className="space-y-3">
       {/* Header card */}
       <div className="border border-c-border rounded-xl bg-c-surface p-4 space-y-3">
-        {/* Title row */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <h3 className="text-base font-medium text-c-text flex items-center gap-2">
-            <Clock className="w-4.5 h-4.5 text-cyan-400" />
-            {t('storyboard.stepTimeline')}
-          </h3>
-          <span className="text-xs text-c-dim bg-c-bg rounded-full px-3 py-0.5 border border-c-border">{segments.length} {t('storyboard.segments')}</span>
-          {segments.length > 0 && (
-            <span className="text-xs text-c-dim bg-c-bg rounded-full px-3 py-0.5 border border-c-border">
-              {fmtTime(totalDuration)} {t('storyboard.total')}
-            </span>
-          )}
+        {/* Info row */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-c-dim">{segments.length} {t('storyboard.segments')}</span>
+          {segments.length > 0 && <span className="text-xs text-c-dim">· {fmtTime(totalDuration)}</span>}
           <div className="flex items-center gap-2 ml-auto">
             <select value={timeFormat} onChange={(e) => setTimeFormat(e.target.value as 'seconds' | 'minutes')} className="input text-xs py-1 w-auto">
               <option value="seconds">{t('storyboard.timeSeconds')}</option>
@@ -149,27 +153,10 @@ export function TimelineStep() {
           </div>
         </div>
 
-        {/* Background Music & Volume Controls */}
-        <MusicPanel
-          bgMusicFilename={bgMusicFilename}
-          setBgMusicFilename={(f) => { setBgMusicFilename(f); saveProject({ bgMusicFilename: f }); }}
-          voiceVolume={voiceVolume}
-          setVoiceVolume={(v) => { setVoiceVolume(v); saveProject({ voiceVolume: v }); }}
-          musicVolume={musicVolume}
-          setMusicVolume={(v) => { setMusicVolume(v); saveProject({ musicVolume: v }); }}
-          totalDuration={totalDuration}
-          t={t}
-        />
-
         {/* CapCut-style visual timeline track */}
         {segments.length > 0 && totalDuration > 0 && (() => {
           const pxPerSec = trackZoom;
           const trackWidth = totalDuration * pxPerSec;
-          // Time ruler ticks
-          const tickInterval = totalDuration <= 10 ? 1 : totalDuration <= 30 ? 2 : totalDuration <= 60 ? 5 : 10;
-          const ticks: number[] = [];
-          for (let t = 0; t <= totalDuration; t += tickInterval) ticks.push(t);
-          if (ticks[ticks.length - 1] < totalDuration) ticks.push(totalDuration);
           return (
           <div className="space-y-1">
             <div className="flex items-center justify-between">
@@ -326,24 +313,13 @@ export function TimelineStep() {
                             }}
                             aria-label={t('storyboard.segmentOf', { current: i + 1, total: segments.length })}
                           >
-                            {/* Thumbnail fill */}
-                            {(() => {
-                              const segIsVideo = seg.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(seg.videoFilename || seg.imageFilename || '');
-                              const videoSrc = seg.videoUrl || (segIsVideo ? seg.imageUrl : '');
-                              if (segIsVideo && videoSrc) {
-                                return <video src={`${videoSrc}#t=0.1`} className={clsx(
-                                  'absolute inset-0 w-full h-full object-cover transition-opacity duration-150',
-                                  isPlaying ? 'opacity-80' : 'opacity-50 group-hover/track:opacity-70'
-                                )} muted preload="metadata" />;
-                              }
-                              if (seg.imageUrl) {
-                                return <img src={seg.imageUrl} alt="" className={clsx(
-                                  'absolute inset-0 w-full h-full object-cover transition-opacity duration-150',
-                                  isPlaying ? 'opacity-80' : 'opacity-50 group-hover/track:opacity-70'
-                                )} />;
-                              }
-                              return null;
-                            })()}
+                            {/* Thumbnail fill — always use <img> in track to avoid CPU-heavy video decode */}
+                            {seg.imageUrl ? (
+                              <img src={seg.imageUrl} alt="" loading="lazy" className={clsx(
+                                'absolute inset-0 w-full h-full object-cover',
+                                isPlaying ? 'opacity-80' : 'opacity-50 group-hover/track:opacity-70'
+                              )} />
+                            ) : null}
                             {/* Top: time range */}
                             <div className="relative z-10 flex items-center justify-between px-1.5 pt-1 w-full">
                               <span className="text-[9px] font-mono text-white/60 drop-shadow">{fmtTime(seg.startTime)}</span>
@@ -473,109 +449,82 @@ export function TimelineStep() {
           </div>
         )}
 
-        {/* Bulk motion controls */}
-        {segments.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap border-t border-c-border pt-3">
-            <Move className="w-3.5 h-3.5 text-c-dim shrink-0" />
-            <span className="text-[10px] text-c-dim font-medium shrink-0">{t('storyboard.bulkMotion')}:</span>
-            <select
-              onChange={(e) => { if (e.target.value) setAllMotion(e.target.value as MotionEffect); }}
-              className="input text-[10px] py-0.5 w-24"
-              defaultValue=""
-            >
-              <option value="" disabled>{t('storyboard.motionAll')}</option>
-              {allEffects.map((fx) => (
-                <option key={fx} value={fx}>{t(`storyboard.motion${fx.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('')}` as any)}</option>
-              ))}
-            </select>
-            <button
-              onClick={randomizeMotion}
-              disabled={randomEffects.size === 0}
-              className="btn-ghost text-[10px] py-0.5 px-2 flex items-center gap-1 disabled:opacity-40"
-            >
-              <Shuffle className="w-3 h-3" /> {t('storyboard.randomize')}
-            </button>
-            <div className="hidden sm:flex items-center gap-1 ml-1 flex-wrap">
-              {allEffects.filter(fx => fx !== 'static').map((fx) => (
-                <label key={fx} className="flex items-center gap-0.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={randomEffects.has(fx)}
-                    onChange={() => toggleRandomEffect(fx)}
-                    className="w-2.5 h-2.5 rounded accent-cyan-500"
-                  />
-                  <span className="text-[9px] text-c-dim">{t(`storyboard.motion${fx.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('')}` as any)}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Frame transition controls */}
-        <div className="flex items-center gap-3 flex-wrap border-t border-c-border pt-3">
-          <Clock className="w-3.5 h-3.5 text-c-dim shrink-0" />
-          <span className="text-[10px] text-c-dim font-medium shrink-0">{t('storyboard.frameChange')}:</span>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="radio"
-              name="frameTransition"
-              checked={frameTransition === 'voice'}
-              onChange={() => setFrameTransition('voice')}
-              className="w-3 h-3 accent-cyan-500"
-            />
-            <span className="text-[10px] text-c-text">{t('storyboard.onVoiceEnd')}</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="radio"
-              name="frameTransition"
-              checked={frameTransition === 'hold'}
-              onChange={() => setFrameTransition('hold')}
-              className="w-3 h-3 accent-cyan-500"
-            />
-            <span className="text-[10px] text-c-text">{t('storyboard.holdAfterVoice')}</span>
-          </label>
-          {frameTransition === 'hold' && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] text-c-dim">{t('storyboard.holdTimeSec')}:</span>
-              <input
-                type="number"
-                min={0}
-                max={10}
-                step={0.5}
-                value={frameHoldTime}
-                onChange={(e) => setFrameHoldTime(Math.max(0, Math.min(10, parseFloat(e.target.value) || 0)))}
-                className="input text-[10px] w-14 py-0.5 font-mono text-center"
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Subtitle style controls */}
-        <SubtitlePanel
-          subtitleStyle={subtitleStyle}
-          setSubtitleStyle={setSubtitleStyle}
-          saveProject={saveProject}
-          t={t}
-          sampleText={segments[0]?.text}
-        />
-
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={handleBuildTimeline}
-            className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
-          >
+          <button onClick={handleBuildTimeline} className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5">
             <RefreshCw className="w-3.5 h-3.5" /> {t('storyboard.syncTimeline')}
           </button>
+          {segments.length > 0 && (
+            <>
+              <select onChange={(e) => { if (e.target.value) setAllMotion(e.target.value as MotionEffect); }} className="input text-[10px] py-1 w-auto" defaultValue="">
+                <option value="" disabled>{t('storyboard.bulkMotion')}</option>
+                {allEffects.map((fx) => (<option key={fx} value={fx}>{t(`storyboard.motion${fx.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('')}` as any)}</option>))}
+              </select>
+              <button onClick={randomizeMotion} disabled={randomEffects.size === 0} className="btn-ghost text-[10px] py-1 px-2 flex items-center gap-1 disabled:opacity-40">
+                <Shuffle className="w-3 h-3" /> {t('storyboard.randomize')}
+              </button>
+            </>
+          )}
           <div className="flex-1" />
-          <button
-            onClick={() => { setStep('metadata'); saveProject({ currentStep: 'metadata' }); }}
-            className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
-          >
+          <button onClick={() => { setStep('metadata'); saveProject({ currentStep: 'metadata' }); }} className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5">
             {t('storyboard.stepMetadata')} <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
+
+        {/* Advanced: Music, Motion, Frame Transition, Subtitles */}
+        <AdvancedToggle label={`${t('storyboard.bgMusic')} · ${t('storyboard.bulkMotion')} · ${t('storyboard.frameChange')} · Subtitles`}>
+          <div className="space-y-3">
+            {/* Background Music & Volume Controls */}
+            <MusicPanel
+              bgMusicFilename={bgMusicFilename}
+              setBgMusicFilename={(f) => { setBgMusicFilename(f); saveProject({ bgMusicFilename: f }); }}
+              voiceVolume={voiceVolume}
+              setVoiceVolume={(v) => { setVoiceVolume(v); saveProject({ voiceVolume: v }); }}
+              musicVolume={musicVolume}
+              setMusicVolume={(v) => { setMusicVolume(v); saveProject({ musicVolume: v }); }}
+              totalDuration={totalDuration}
+              t={t}
+            />
+
+            {/* Random motion pool */}
+            {segments.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-[10px] text-c-dim font-medium shrink-0">{t('storyboard.randomize')} pool:</span>
+                {allEffects.filter(fx => fx !== 'static').map((fx) => (
+                  <label key={fx} className="flex items-center gap-0.5 cursor-pointer">
+                    <input type="checkbox" checked={randomEffects.has(fx)} onChange={() => toggleRandomEffect(fx)} className="w-2.5 h-2.5 rounded accent-cyan-500" />
+                    <span className="text-[9px] text-c-dim">{t(`storyboard.motion${fx.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('')}` as any)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {/* Frame transition */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <Clock className="w-3.5 h-3.5 text-c-dim shrink-0" />
+              <span className="text-[10px] text-c-dim font-medium shrink-0">{t('storyboard.frameChange')}:</span>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="frameTransition" checked={frameTransition === 'voice'} onChange={() => setFrameTransition('voice')} className="w-3 h-3 accent-cyan-500" />
+                <span className="text-[10px] text-c-text">{t('storyboard.onVoiceEnd')}</span>
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="frameTransition" checked={frameTransition === 'hold'} onChange={() => setFrameTransition('hold')} className="w-3 h-3 accent-cyan-500" />
+                <span className="text-[10px] text-c-text">{t('storyboard.holdAfterVoice')}</span>
+              </label>
+              {frameTransition === 'hold' && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-c-dim">{t('storyboard.holdTimeSec')}:</span>
+                  <input type="number" min={0} max={10} step={0.5} value={frameHoldTime}
+                    onChange={(e) => setFrameHoldTime(Math.max(0, Math.min(10, parseFloat(e.target.value) || 0)))}
+                    className="input text-[10px] w-14 py-0.5 font-mono text-center" />
+                </div>
+              )}
+            </div>
+
+            {/* Subtitles */}
+            <SubtitlePanel subtitleStyle={subtitleStyle} setSubtitleStyle={setSubtitleStyle} saveProject={saveProject} t={t} sampleText={segments[0]?.text} />
+          </div>
+        </AdvancedToggle>
       </div>
 
       {/* Empty state */}
@@ -619,6 +568,18 @@ export function TimelineStep() {
                   'w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-colors',
                   isHovered ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-c-bg text-c-dim border border-c-border'
                 )}>{i + 1}</span>
+                {videoMode === 'comparison' && seg.side && (
+                  <span className={clsx(
+                    'text-[7px] font-bold px-1 rounded',
+                    seg.side === 'left' && 'bg-blue-500/20 text-blue-300',
+                    seg.side === 'right' && 'bg-orange-500/20 text-orange-300',
+                    seg.side === 'both' && 'bg-purple-500/20 text-purple-300',
+                    seg.side === 'win-left' && 'bg-yellow-500/20 text-yellow-300',
+                    seg.side === 'win-right' && 'bg-yellow-500/20 text-yellow-300',
+                  )}>
+                    {seg.side === 'left' ? '◀' : seg.side === 'right' ? '▶' : seg.side === 'win-left' ? <><Trophy className="w-2 h-2 inline" />◀</> : seg.side === 'win-right' ? <>▶<Trophy className="w-2 h-2 inline" /></> : '◀▶'}
+                  </span>
+                )}
                 <div
                   className="cursor-grab active:cursor-grabbing p-1.5 -m-1 rounded hover:bg-c-hover transition-colors"
                   onMouseDown={() => { dragAllowed.current = true; }}
@@ -632,6 +593,8 @@ export function TimelineStep() {
               {(() => {
                 const thumbIsVid = seg.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(seg.videoFilename || seg.imageFilename || '');
                 const thumbVidSrc = seg.videoUrl || (thumbIsVid ? seg.imageUrl : '');
+                // Only load <video> for hovered/playing card to save CPU
+                const showVideo = thumbIsVid && thumbVidSrc && (isHovered || playingSegment === i);
                 return (
               <div className="shrink-0 relative">
                 <button
@@ -639,10 +602,10 @@ export function TimelineStep() {
                   onClick={() => setLightboxUrl(thumbIsVid ? (thumbVidSrc || seg.imageUrl) : seg.imageUrl)}
                   aria-label={t('storyboard.segmentOf', { current: i + 1, total: segments.length })}
                 >
-                  {thumbIsVid && thumbVidSrc ? (
-                    <video src={`${thumbVidSrc}#t=0.1`} className="w-full h-full object-cover" muted preload="metadata" />
+                  {showVideo ? (
+                    <video src={`${thumbVidSrc}#t=0.1`} className="w-full h-full object-cover" muted playsInline preload="metadata" />
                   ) : (
-                    <img src={seg.imageUrl} alt={seg.text || `Segment ${i + 1}`} className="w-full h-full object-cover" />
+                    <img src={seg.imageUrl} alt={seg.text || `Segment ${i + 1}`} loading="lazy" className="w-full h-full object-cover" />
                   )}
                   {thumbIsVid && <div className="absolute top-0.5 right-0.5 bg-violet-600/80 rounded px-1 text-[7px] text-white z-10">VID</div>}
                   <div className="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover/thumb:opacity-100">

@@ -255,6 +255,45 @@ if (!window.__HAN2YT_GROK_LISTENER__) {
       return true;
     }
 
+    if (msg.type === "TYPE_AND_SUBMIT") {
+      (async () => {
+        try {
+          const input = findPromptInput();
+          if (!input) {
+            sendResponse({ ok: false, error: "Cannot find Grok prompt input" });
+            return;
+          }
+          input.focus();
+          await sleep(100);
+
+          if (input.tagName === "TEXTAREA") {
+            const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+            nativeSetter.call(input, msg.prompt);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          } else {
+            // contenteditable
+            document.execCommand("selectAll", false, null);
+            await sleep(50);
+            document.execCommand("insertText", false, msg.prompt);
+          }
+          await sleep(300);
+
+          // Click send button
+          const btn = findSendButton();
+          if (btn) {
+            btn.click();
+            sendResponse({ ok: true });
+          } else {
+            input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
+            sendResponse({ ok: true });
+          }
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e) });
+        }
+      })();
+      return true;
+    }
+
     if (msg.type === "WAIT_IMAGE") {
       const baseline = window.__Han2YT_flow_baseline || new Set();
       waitForNewImage(baseline).then((res) => {
