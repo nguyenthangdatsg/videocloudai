@@ -17,3 +17,7 @@ output/
 .DS_Store
 Thumbs.db
 .claude/settings.local.json
+temp_assets/
+_pipeline_*.json
+assemble_body.json
+test_pexels.js
