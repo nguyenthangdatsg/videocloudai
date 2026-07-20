@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
 import { execSync } from 'child_process';
@@ -13,6 +14,36 @@ const monoRoot = path.resolve(__dirname, '../../..');
 for (const key of ['RENDERS_DIR', 'ASSETS_DIR', 'DATABASE_PATH', 'CACHE_DIR']) {
   const v = process.env[key];
   if (v && !path.isAbsolute(v)) process.env[key] = path.resolve(monoRoot, v);
+}
+
+// Bootstrap .env from .env.example on first run (so the server at least starts)
+const envPath = path.resolve(monoRoot, '.env');
+const envExamplePath = path.resolve(monoRoot, '.env.example');
+if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
+  fs.copyFileSync(envExamplePath, envPath);
+  // Re-load now that .env exists
+  dotenv.config({ path: envPath });
+  console.log('[bootstrap] Created .env from .env.example — add your API keys.');
+}
+
+// Auto-create required directories so the server works on a fresh clone
+const requiredDirs = [
+  process.env.ASSETS_DIR ?? path.join(monoRoot, 'assets'),
+  process.env.RENDERS_DIR ?? path.join(monoRoot, 'renders'),
+  process.env.CACHE_DIR ?? path.join(monoRoot, 'cache'),
+  path.join(monoRoot, 'assets/videos'),
+  path.join(monoRoot, 'assets/images'),
+  path.join(monoRoot, 'assets/audio'),
+  path.join(monoRoot, 'assets/subtitles'),
+  path.join(monoRoot, 'assets/music'),
+  path.join(monoRoot, 'cache/generations'),
+  path.join(monoRoot, 'cache/prompts'),
+  path.join(monoRoot, 'cache/narration'),
+  path.join(monoRoot, 'cache/images'),
+  path.join(monoRoot, 'database'),
+];
+for (const dir of requiredDirs) {
+  fs.mkdirSync(dir, { recursive: true });
 }
 
 import { getDb } from './db';
