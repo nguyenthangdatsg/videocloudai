@@ -1094,7 +1094,9 @@ export async function produceBlocks(
       const chartDur = Math.max(audioDurSec, 4);
       emit('info', `${ref(block)}: rendering chart (${block.chartSpec.type})...`, pct);
       try {
-        const chartResult = await renderChart(block.chartSpec, orientation, accentColor, '#0d0e12', chartDur,
+        // Render chart with green background for chromakey compositing
+        const chartBgColor = '#00b140';
+        const chartResult = await renderChart(block.chartSpec, orientation, accentColor, chartBgColor, chartDur,
           (msg) => emit('info', msg, pct));
         updateBlockClip(docId, i, chartResult.filename, 'chart');
         blocksAfterAudio[i] = { ...block, clipAssetPath: chartResult.filename, visualType: 'chart', status: 'clip_ready' };
@@ -1267,34 +1269,53 @@ export async function produceBlocks(
       const bgClipPath = bgCandidates.length > 0 ? resolveClipPath(bgCandidates[0].filename, 'pexels') : null;
 
       try {
+        const shotDurSec = (block.audioDurationMs ?? 6000) / 1000;
+        const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+
         if (bgClipPath) {
           addLog(docId, 'info', 'produce', `${ref(block)}: compositing chart over bg video ${path.basename(bgClipPath)}`);
-          // Composite: darkened Pexels video + chart overlay
-          // Chart bg is #0d0e12 — use colorkey to make it transparent, then overlay
-          const shotDurSec = (block.audioDurationMs ?? 6000) / 1000;
-          const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
-          await execFileAsync(ffmpeg, [
-            '-stream_loop', '-1', '-i', bgClipPath,
-            '-i', primaryClipPath,
-            '-filter_complex', [
-              `[0:v]${scaleVf},eq=brightness=-0.12:saturation=0.5,format=yuva420p[bg]`,
-              `[1:v]${scaleVf},colorkey=0x0d0e12:0.22:0.20,format=yuva420p[chart]`,
-              `[bg][chart]overlay=0:0:shortest=1:format=yuv420p[out]`,
-            ].join(';'),
-            '-map', '[out]',
-            '-t', shotDurSec.toFixed(3),
-            '-r', String(fps),
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
-            '-an', '-y', segOut,
-          ], { timeout: 300_000 });
-          emit('info', `${ref(block)}: chart composited on video background`, pct);
+          // Green-screen chart (#00b140) overlaid on darkened Pexels video
+          try {
+            await execFileAsync(ffmpeg, [
+              '-stream_loop', '-1', '-i', bgClipPath,
+              '-i', primaryClipPath,
+              '-filter_complex', [
+                `[0:v]${scaleVf},eq=brightness=-0.12:saturation=0.5[bg]`,
+                `[1:v]${scaleVf},chromakey=0x00b140:0.24:0.08[chart]`,
+                `[bg][chart]overlay=0:0:shortest=1[out]`,
+              ].join(';'),
+              '-map', '[out]',
+              '-t', shotDurSec.toFixed(3),
+              '-r', String(fps),
+              '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+              '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+              '-an', '-y', segOut,
+            ], { timeout: 300_000 });
+            emit('info', `${ref(block)}: chart composited on video background`, pct);
+          } catch (compErr) {
+            // Compositing failed — fall back to chart with dark background
+            addLog(docId, 'warn', 'produce', `${ref(block)}: composite failed (${(compErr as Error).message?.slice(0, 100)}), falling back to solid bg`);
+            const darkChart = await renderChart(block.chartSpec!, orientation, accentColor, '#0d0e12', shotDurSec,
+              (msg) => emit('info', msg, pct));
+            const darkChartPath = path.join(chartDir, darkChart.filename);
+            await execFileAsync(ffmpeg, [
+              '-i', darkChartPath,
+              '-vf', `${scaleVf},format=yuv420p`,
+              '-r', String(fps),
+              '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+              '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+              '-an', '-y', segOut,
+            ], { timeout: 180_000 });
+          }
         } else {
-          // No background clip available — plain re-encode
+          // No background clip — re-render chart with dark bg, then re-encode
           addLog(docId, 'warn', 'produce', `${ref(block)}: no bg video found (candidates=${bgCandidates.length}), using solid background`);
+          const darkChart = await renderChart(block.chartSpec!, orientation, accentColor, '#0d0e12', shotDurSec,
+            (msg) => emit('info', msg, pct));
+          const darkChartPath = path.join(chartDir, darkChart.filename);
           await execFileAsync(ffmpeg, [
-            '-i', primaryClipPath,
-            '-vf', `scale=w=${w}:h=${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h},format=yuv420p`,
+            '-i', darkChartPath,
+            '-vf', `${scaleVf},format=yuv420p`,
             '-r', String(fps),
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
             '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
