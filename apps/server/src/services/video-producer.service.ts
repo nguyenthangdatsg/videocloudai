@@ -1268,18 +1268,18 @@ export async function produceBlocks(
 
       try {
         if (bgClipPath) {
-          // Composite: darkened Pexels video + chart via "screen" blend
-          // Screen blend: bright chart elements show over the darkened video,
-          // dark chart background (#0d0e12) becomes transparent naturally
+          addLog(docId, 'info', 'produce', `${ref(block)}: compositing chart over bg video ${path.basename(bgClipPath)}`);
+          // Composite: darkened Pexels video + chart overlay
+          // Chart bg is #0d0e12 — use colorkey to make it transparent, then overlay
           const shotDurSec = (block.audioDurationMs ?? 6000) / 1000;
-          const scaleVf = `scale=w=${w}:h=${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+          const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
           await execFileAsync(ffmpeg, [
-            '-i', bgClipPath,
+            '-stream_loop', '-1', '-i', bgClipPath,
             '-i', primaryClipPath,
             '-filter_complex', [
-              `[0:v]${scaleVf},eq=brightness=-0.12:saturation=0.5[bg]`,
-              `[1:v]${scaleVf}[chart]`,
-              `[bg][chart]blend=all_mode=screen:all_opacity=1[out]`,
+              `[0:v]${scaleVf},eq=brightness=-0.12:saturation=0.5,format=yuva420p[bg]`,
+              `[1:v]${scaleVf},colorkey=0x0d0e12:0.22:0.20,format=yuva420p[chart]`,
+              `[bg][chart]overlay=0:0:shortest=1:format=yuv420p[out]`,
             ].join(';'),
             '-map', '[out]',
             '-t', shotDurSec.toFixed(3),
@@ -1291,6 +1291,7 @@ export async function produceBlocks(
           emit('info', `${ref(block)}: chart composited on video background`, pct);
         } else {
           // No background clip available — plain re-encode
+          addLog(docId, 'warn', 'produce', `${ref(block)}: no bg video found (candidates=${bgCandidates.length}), using solid background`);
           await execFileAsync(ffmpeg, [
             '-i', primaryClipPath,
             '-vf', `scale=w=${w}:h=${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h},format=yuv420p`,
