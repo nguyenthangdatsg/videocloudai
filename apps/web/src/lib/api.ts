@@ -437,6 +437,13 @@ export const imageApi = {
   },
   uploadSingle: (dataUrl: string, filename?: string) =>
     api.post<{ filename: string; url: string }>('/image/upload', { dataUrl, filename }).then((r) => r.data),
+  uploadMediaFile: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ filename: string; url: string }>('/image/upload-single', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then((r) => r.data);
+  },
   importFromUrl: (url: string) =>
     api.post<{ filename: string; url: string }>('/image/import-url', { url }).then((r) => r.data),
   checkPromptCache: (prompts: Array<{ timestamp: string; prompt: string }>) =>
@@ -511,6 +518,7 @@ export interface StoryboardPromptItem {
   text: string;
   prompt: string;
   model?: string;
+  mediaType?: 'image' | 'video';
   side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right';
 }
 
@@ -552,7 +560,7 @@ export const storyboardApi = {
   },
 
   generatePrompts: async (
-    data: { segments: Array<{ timestamp: string; text: string; side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right' }>; styleTemplate?: string; visualStyle?: string; aspectRatio?: string; videoMode?: 'standard' | 'comparison'; comparisonItems?: { type?: 'difference' | 'winner'; left: { name: string; description?: string }; right: { name: string; description?: string } }; compMediaSource?: 'flow' | 'pexels' },
+    data: { segments: Array<{ timestamp: string; text: string; mediaType?: 'image' | 'video'; side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right' }>; styleTemplate?: string; visualStyle?: string; aspectRatio?: string; videoMode?: 'standard' | 'comparison'; comparisonItems?: { type?: 'difference' | 'winner'; left: { name: string; description?: string }; right: { name: string; description?: string } }; compMediaSource?: 'flow' | 'pexels' },
     onProgress: (step: string, detail?: string, partialPrompts?: StoryboardPromptItem[]) => void,
     signal?: AbortSignal,
   ): Promise<StoryboardPromptItem[]> => {
@@ -605,7 +613,7 @@ export const storyboardApi = {
   delete: (filename: string) =>
     api.delete(`/storyboard/video/${encodeURIComponent(filename)}`).then((r) => r.data),
 
-  generateMetadata: (data: { projectId?: string; script: string; topic?: string; systemPrompt?: string }) =>
+  generateMetadata: (data: { projectId?: string; script: string; topic?: string; systemPrompt?: string; segments?: Array<{ startTime: string; text: string }> }) =>
     api.post<{ metadata: { title: string; description: string; tags: string[]; thumbnailPrompt: string } }>('/storyboard/generate-metadata', data).then((r) => r.data.metadata),
   generateThumbnailPrompt: (data: { projectId?: string; title?: string; script?: string; topic?: string }) =>
     api.post<{ thumbnailPrompt: string }>('/storyboard/generate-thumbnail-prompt', data).then((r) => r.data),
@@ -988,6 +996,151 @@ export const frameVideoLibraryApi = {
   categories: async () => {
     const res = await api.get('/frame-video-library/categories');
     return (res.data as { categories: Array<{ category: string; count: number }> }).categories;
+  },
+};
+
+async function ndjsonFetch(url: string, method: 'POST' | 'PUT', body: unknown): Promise<any> {
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error((errBody as any).error ?? `HTTP ${res.status}`);
+  }
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: any = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const parsed = JSON.parse(line);
+      if (parsed.type === 'result') result = parsed;
+      if (parsed.type === 'error') throw new Error(parsed.error);
+    }
+  }
+  if (buffer.trim()) {
+    const parsed = JSON.parse(buffer);
+    if (parsed.type === 'result') result = parsed;
+    if (parsed.type === 'error') throw new Error(parsed.error);
+  }
+  if (!result) throw new Error('No result received from server');
+  return result;
+}
+
+export const scriptStudioApi = {
+  list: async () => {
+    const res = await api.get('/script-studio/docs');
+    return (res.data as { docs: any[] }).docs;
+  },
+  get: async (id: string) => {
+    const res = await api.get(`/script-studio/docs/${id}`);
+    return (res.data as { doc: any }).doc;
+  },
+  create: async (rawMarkdown: string, title?: string) => {
+    return ndjsonFetch('/api/script-studio/docs', 'POST', { raw_markdown: rawMarkdown, title });
+  },
+  update: async (id: string, rawMarkdown: string, title?: string) => {
+    const result = await ndjsonFetch(`/api/script-studio/docs/${id}`, 'PUT', { raw_markdown: rawMarkdown, title });
+    return result.doc;
+  },
+  delete: async (id: string) => {
+    await api.delete(`/script-studio/docs/${id}`);
+  },
+  getNarration: async (id: string) => {
+    const res = await api.get(`/script-studio/docs/${id}/narration`);
+    return (res.data as { narration: string }).narration;
+  },
+  setStatus: async (id: string, status: string) => {
+    const res = await api.patch(`/script-studio/docs/${id}/status`, { status });
+    return res.data;
+  },
+  getLogs: async (id: string, limit = 200) => {
+    const res = await api.get(`/script-studio/docs/${id}/logs?limit=${limit}`);
+    return (res.data as { logs: any[] }).logs;
+  },
+  getBlocks: async (id: string) => {
+    const res = await api.get(`/script-studio/docs/${id}/blocks`);
+    return (res.data as { blocks: any[] }).blocks;
+  },
+  syncBlocks: async (id: string) => {
+    const res = await api.post(`/script-studio/docs/${id}/sync-blocks`);
+    return res.data as { ok: boolean; blocks: any[] };
+  },
+  updateBlock: async (id: string, blockIndex: number, fields: { pexelsQuery?: string | null; motion?: string; clipAssetPath?: string | null; visualType?: string; aiPrompt?: string | null }) => {
+    const res = await api.patch(`/script-studio/docs/${id}/blocks/${blockIndex}`, fields);
+    return res.data;
+  },
+  generateBlockAi: async (id: string, blockIndex: number, aiPrompt: string | null, orientation: 'landscape' | 'portrait' = 'landscape') => {
+    return ndjsonFetch(`/api/script-studio/docs/${id}/blocks/${blockIndex}/generate-ai`, 'POST', { aiPrompt, orientation });
+  },
+  fetchBlockPexels: async (id: string, blockIndex: number, orientation: 'landscape' | 'portrait' = 'landscape') => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/fetch-pexels`, { orientation });
+    return res.data as { ok: boolean; filename: string; pexelsId: number; duration: number };
+  },
+  fetchBlockPixabay: async (id: string, blockIndex: number, orientation: 'landscape' | 'portrait' = 'landscape') => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/fetch-pixabay`, { orientation });
+    return res.data as { ok: boolean; filename: string; duration: number };
+  },
+  getAlternatives: async (id: string, query: string, orientation: 'landscape' | 'portrait' = 'landscape', perPage = 12, service: 'pexels' | 'pixabay' | 'mixkit' = 'pexels') => {
+    const res = await api.get(`/script-studio/docs/${id}/blocks/alternatives`, {
+      params: { query, orientation, perPage, service },
+    });
+    return res.data as {
+      service: 'pexels' | 'pixabay' | 'mixkit';
+      candidates: Array<{ pexelsId?: number; pixabayId?: number; mixkitId?: number; thumbnail: string; previewUrl: string | null; downloadUrl?: string; duration: number; width: number; height: number; pexelsUrl?: string; pageURL?: string; title?: string }>;
+    };
+  },
+  applyPexelsById: async (id: string, blockIndex: number, pexelsId: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-pexels-id`, { pexelsId });
+    return res.data as { ok: boolean; filename: string; pexelsId: number; duration: number };
+  },
+  applyPixabayFromUrl: async (id: string, blockIndex: number, downloadUrl: string, duration: number, width: number, height: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-pixabay-url`, { downloadUrl, duration, width, height });
+    return res.data as { ok: boolean; filename: string; duration: number };
+  },
+  applyMixkitFromUrl: async (id: string, blockIndex: number, downloadUrl: string, duration: number, width: number, height: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-mixkit-url`, { downloadUrl, duration, width, height });
+    return res.data as { ok: boolean; filename: string; duration: number };
+  },
+  regenQuery: async (id: string, blockIndex: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/regen-query`);
+    return res.data as { query: string };
+  },
+  setClipTrim: async (id: string, blockIndex: number, startSec: number | null, endSec: number | null) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/trim`, { startSec, endSec });
+    return res.data as { ok: boolean };
+  },
+  updateBlockClips: async (id: string, blockIndex: number, clips: Array<{ assetPath: string; startSec: number; endSec: number | null; label?: string }>) => {
+    const res = await api.put(`/script-studio/docs/${id}/blocks/${blockIndex}/clips`, { clips });
+    return res.data as { ok: boolean; clips: typeof clips };
+  },
+  ttsBlock: async (id: string, blockIndex: number, opts?: { voice?: string; rate?: string; force?: boolean; engine?: string }) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/tts`, opts ?? {});
+    return res.data as { cached: boolean; audioDurationMs: number; wordCount?: number; engine?: string };
+  },
+  produce: async (id: string, options: Record<string, unknown> = {}) => {
+    const res = await api.post(`/script-studio/docs/${id}/produce`, options);
+    return res.data as { jobId: string; status: string };
+  },
+  getProduceStatus: async (id: string) => {
+    const res = await api.get(`/script-studio/docs/${id}/produce/status`);
+    return res.data as { job: any; docStatus: string };
+  },
+  omnivoiceHealth: async () => {
+    const res = await api.get('/script-studio/omnivoice/health');
+    return res.data as { reachable: boolean; baseUrl: string };
+  },
+  omnivoiceVoices: async () => {
+    const res = await api.get('/script-studio/omnivoice/voices');
+    return res.data as { voices: Array<{ voice_id: string; name: string; type: string; engine?: string }> };
   },
 };
 

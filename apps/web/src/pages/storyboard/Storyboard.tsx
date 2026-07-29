@@ -1186,6 +1186,7 @@ ENDING (CRITICAL — last 2-3 sentences):
       ? buildSideMap(scriptText, transcriptEntries)
       : [];
 
+    // Build segments with mediaType from transcriptEntries (set in Audio step)
     const segs = transcriptEntries.map((e, i) => {
       const ms = e.startMs;
       const totalSec = Math.floor(ms / 1000);
@@ -1194,31 +1195,94 @@ ENDING (CRITICAL — last 2-3 sentences):
       return {
         timestamp: `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`,
         text: e.text,
+        mediaType: (e.mediaType || 'image') as 'image' | 'video',
         ...(sideMap[i] ? { side: sideMap[i] } : {}),
       };
     });
 
+    // Pre-initialize prompts with empty placeholders so partial-prompt merging never creates sparse arrays
+    setPrompts(segs.map(s => ({ timestamp: s.timestamp, text: s.text, prompt: '', mediaType: s.mediaType })));
+
+    const commonOpts = {
+      styleTemplate: imagePromptPrompt.trim() || undefined,
+      visualStyle: linkedTemplate?.visualStyle || undefined,
+      aspectRatio,
+      ...(videoMode === 'comparison' && comparisonItems.left.name && comparisonItems.right.name
+        ? { videoMode, comparisonItems, bgColor, compMediaSource }
+        : {}),
+    };
+
+    // When user chose Pexels as video source, split: image segs get AI prompts, video segs get search queries
+    const usePexelsForVideo = compMediaSource === 'pexels';
+    const imageSegs = usePexelsForVideo ? segs.filter(s => s.mediaType !== 'video') : segs;
+    const videoSegs = usePexelsForVideo ? segs.filter(s => s.mediaType === 'video') : [];
+
     try {
-      const result = await storyboardApi.generatePrompts(
-        {
-          segments: segs,
-          styleTemplate: imagePromptPrompt.trim() || undefined,
-          visualStyle: linkedTemplate?.visualStyle || undefined,
-          aspectRatio,
-          ...(videoMode === 'comparison' && comparisonItems.left.name && comparisonItems.right.name
-            ? { videoMode, comparisonItems, bgColor, compMediaSource }
-            : {}),
-        },
-        (_step, detail, partialPrompts) => {
-          if (detail) setPromptProgress((p) => [...p, detail]);
-          if (partialPrompts?.length) setPrompts(partialPrompts);
-        },
-        abort.signal,
-      );
+      // Merged result map by timestamp
+      const resultMap = new Map<string, import('../../lib/api').StoryboardPromptItem>();
+
+      // Generate AI prompts (all segments, or just image segs when Pexels mode)
+      if (imageSegs.length > 0) {
+        setPromptProgress((p) => [...p, `Generating prompts for ${imageSegs.length} segments...`]);
+        const imageResult = await storyboardApi.generatePrompts(
+          { segments: imageSegs, ...commonOpts },
+          (_step, detail, partialPrompts) => {
+            if (detail) setPromptProgress((p) => [...p, detail]);
+            if (partialPrompts?.length) {
+              // Merge partials into current prompts
+              setPrompts((prev) => {
+                const next = [...prev];
+                for (const r of partialPrompts) {
+                  const idx = segs.findIndex(s => s.timestamp === r.timestamp);
+                  const seg = segs[idx];
+                  if (idx >= 0) next[idx] = { ...r, mediaType: seg?.mediaType ?? 'image' };
+                }
+                return next;
+              });
+            }
+          },
+          abort.signal,
+        );
+        for (const r of imageResult) {
+          const seg = segs.find(s => s.timestamp === r.timestamp);
+          resultMap.set(r.timestamp, { ...r, mediaType: seg?.mediaType ?? 'image' });
+        }
+      }
+
+      // Generate Pexels search queries for video segments (only when user chose Pexels source)
+      if (videoSegs.length > 0) {
+        setPromptProgress((p) => [...p, `Generating Pexels search queries for ${videoSegs.length} segments...`]);
+        const videoResult = await storyboardApi.generatePrompts(
+          { segments: videoSegs, ...commonOpts, compMediaSource: 'pexels' },
+          (_step, detail) => {
+            if (detail) setPromptProgress((p) => [...p, `[pexels] ${detail}`]);
+          },
+          abort.signal,
+        );
+        for (const r of videoResult) resultMap.set(r.timestamp, { ...r, mediaType: 'video' as const });
+      }
+
+      // Rebuild in original segment order, preserving unmatched prompts
+      const result = segs.map((s) => {
+        const matched = resultMap.get(s.timestamp);
+        if (matched) return matched;
+        // Fallback: keep existing prompt if any
+        const existing = prompts.find(p => p.timestamp === s.timestamp);
+        return existing ?? { timestamp: s.timestamp, text: s.text, prompt: '', mediaType: s.mediaType };
+      });
+
+      // Initialize generatedImages with mediaType tags from prompts so Images step inherits them
+      const initImages = result.map((p) => ({
+        timestamp: p.timestamp,
+        filename: '',
+        url: '',
+        status: 'pending' as const,
+        mediaType: p.mediaType,
+      }));
       setPrompts(result);
-      setGeneratedImages([]);
+      setGeneratedImages(initImages);
       setStep('prompts');
-      saveProject({ prompts: result, generatedImages: [], currentStep: 'prompts' });
+      saveProject({ prompts: result, generatedImages: initImages, currentStep: 'prompts' });
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         setError((err as Error).message);
@@ -1234,6 +1298,34 @@ ENDING (CRITICAL — last 2-3 sentences):
     promptAbortRef.current = null;
   };
 
+  const handleSetEntryMediaType = (entryIndex: number, type: 'image' | 'video') => {
+    setTranscriptEntries((prev) => {
+      const updated = prev.map((e) => e.index === entryIndex ? { ...e, mediaType: type } : e);
+      saveProject({ transcriptEntries: updated });
+      return updated;
+    });
+    // Find the matching prompt by timestamp and auto-regenerate it with the new type
+    const entry = transcriptEntries.find(e => e.index === entryIndex);
+    if (!entry || !prompts.length) return;
+    const ms = entry.startMs;
+    const totalSec = Math.floor(ms / 1000);
+    const ts = `${String(Math.floor(totalSec / 60)).padStart(2, '0')}:${String(totalSec % 60).padStart(2, '0')}`;
+    const promptIdx = prompts.findIndex(p => p.timestamp === ts);
+    if (promptIdx < 0) return;
+    // Update mediaType immediately on the prompt
+    setPrompts(prev => {
+      const updated = prev.map((p, i) => i === promptIdx ? { ...p, mediaType: type } : p);
+      saveProject({ prompts: updated });
+      return updated;
+    });
+    // Queue regen with forced type (override ref ensures correct type before state re-renders)
+    if (!regenQueueRef.current.includes(promptIdx)) {
+      regenTypeOverrideRef.current.set(promptIdx, type);
+      regenQueueRef.current.push(promptIdx);
+      processRegenQueue();
+    }
+  };
+
   const [regenPromptIdx, setRegenPromptIdx] = useState<number | null>(null);
   const regenQueueRef = useRef<number[]>([]);
   const regenProcessingRef = useRef(false);
@@ -1241,6 +1333,8 @@ ENDING (CRITICAL — last 2-3 sentences):
   // Keep a ref to latest prompts so processRegenQueue can read synchronously
   const promptsRef = useRef(prompts);
   promptsRef.current = prompts;
+  // Override map: idx -> forced mediaType for next regen (avoids state race)
+  const regenTypeOverrideRef = useRef<Map<number, 'image' | 'video'>>(new Map());
 
   const processRegenQueue = async () => {
     if (regenProcessingRef.current) return;
@@ -1251,13 +1345,24 @@ ENDING (CRITICAL — last 2-3 sentences):
       try {
         const currentPrompt = promptsRef.current[idx];
         if (!currentPrompt) continue;
+        const forcedType = regenTypeOverrideRef.current.get(idx);
+        regenTypeOverrideRef.current.delete(idx);
+        const effectiveMediaType = forcedType ?? currentPrompt.mediaType;
+        // Only use Pexels query generation when user explicitly chose Pexels as video source
+        const usePexels = effectiveMediaType === 'video' && compMediaSource === 'pexels';
         const result = await storyboardApi.generatePrompts(
-          { segments: [{ timestamp: currentPrompt.timestamp, text: currentPrompt.text }], styleTemplate: imagePromptPrompt.trim() || undefined, visualStyle: linkedTemplate?.visualStyle || undefined, aspectRatio },
+          {
+            segments: [{ timestamp: currentPrompt.timestamp, text: currentPrompt.text, mediaType: effectiveMediaType }],
+            styleTemplate: imagePromptPrompt.trim() || undefined,
+            visualStyle: linkedTemplate?.visualStyle || undefined,
+            aspectRatio,
+            ...(usePexels ? { compMediaSource: 'pexels' as const } : {}),
+          },
           () => {},
         );
         if (result.length > 0 && result[0].prompt) {
           setPrompts(prev => {
-            const updated = prev.map((pp, j) => j === idx ? { ...pp, prompt: result[0].prompt } : pp);
+            const updated = prev.map((pp, j) => j === idx ? { ...pp, prompt: result[0].prompt, mediaType: effectiveMediaType } : pp);
             saveProject({ prompts: updated });
             return updated;
           });
@@ -1277,27 +1382,66 @@ ENDING (CRITICAL — last 2-3 sentences):
   };
 
   // ── Step 4: Batch Generate Images ──
+  const handleSetSegmentMediaType = (idx: number, type: GenMediaType) => {
+    setGeneratedImages((prev) => {
+      const updated = prev.map((img, i) => {
+        if (i !== idx) return img;
+        // Reset done card to pending when switching type
+        if (img.mediaType !== type && img.status === 'done') {
+          return { ...img, mediaType: type, status: 'pending' as const, filename: '', url: '' };
+        }
+        return { ...img, mediaType: type };
+      });
+      saveProject({ generatedImages: updated });
+      return updated;
+    });
+  };
+
   const handleGenerateImages = () => {
     if (!prompts.length || !projectId) return;
     setError(null);
+    // Filter to image-typed (or untyped) pending/error segments
+    const hasExistingVideos = generatedImages.some((img) => img.status === 'done' && img.mediaType === 'video');
+    const targetPrompts = hasExistingVideos
+      ? prompts
+          .filter((_, i) => {
+            const img = generatedImages[i];
+            return (!img?.mediaType || img.mediaType === 'image') && (!img || img.status !== 'done');
+          })
+          .map((p) => ({ timestamp: p.timestamp, prompt: p.prompt }))
+      : prompts.map((p) => ({ timestamp: p.timestamp, prompt: p.prompt }));
+    if (!targetPrompts.length) return;
     imageGenStore.startGeneration(
       projectId,
-      prompts.map((p) => ({ timestamp: p.timestamp, prompt: p.prompt })),
+      targetPrompts,
       aspectRatio,
       provider,
       imageModel || undefined,
+      hasExistingVideos ? generatedImages : undefined,
     );
   };
 
   const handleGenerateVideos = () => {
     if (!prompts.length || !projectId) return;
     setError(null);
+    // Filter to video-typed pending/error segments (preserve existing images)
+    const hasExistingImages = generatedImages.some((img) => img.status === 'done' && img.mediaType !== 'video');
+    const targetPrompts = hasExistingImages
+      ? prompts
+          .filter((_, i) => {
+            const img = generatedImages[i];
+            return img?.mediaType === 'video' && (!img || img.status !== 'done');
+          })
+          .map((p) => ({ timestamp: p.timestamp, prompt: p.prompt }))
+      : prompts.map((p) => ({ timestamp: p.timestamp, prompt: p.prompt }));
+    if (!targetPrompts.length) return;
     imageGenStore.startFlowGeneration(
       projectId,
-      prompts.map((p) => ({ timestamp: p.timestamp, prompt: p.prompt })),
+      targetPrompts,
       'video',
-      undefined,
+      hasExistingImages ? generatedImages : undefined,
       flowProvider,
+      videoDuration,
     );
   };
 
@@ -1327,28 +1471,20 @@ ENDING (CRITICAL — last 2-3 sentences):
     }
   };
 
-  // Extension-based generation
+  // Extension-based generation — sends ALL pending segments with per-prompt mediaType
+  // Extension handles image vs video generation per segment based on mediaType field
   const handleFlowGenerate = () => {
     if (!prompts.length || !projectId) return;
     setError(null);
-    if (generatedImages.length > 0 && generatedImages.some((i) => i.status === 'done')) {
-      const pendingPrompts = prompts
-        .filter((_, i) => {
-          const img = generatedImages[i];
-          return !img || img.status !== 'done';
-        })
-        .map((p) => ({ timestamp: p.timestamp, prompt: p.prompt }));
-      if (!pendingPrompts.length) return;
-      imageGenStore.startFlowGeneration(projectId, pendingPrompts, 'image', generatedImages, flowProvider);
-    } else {
-      imageGenStore.startFlowGeneration(
-        projectId,
-        prompts.map((p) => ({ timestamp: p.timestamp, prompt: p.prompt })),
-        'image',
-        undefined,
-        flowProvider,
-      );
-    }
+    const pendingPrompts = prompts
+      .map((p, i) => ({ timestamp: p.timestamp, prompt: p.prompt, mediaType: (generatedImages[i]?.mediaType ?? p.mediaType ?? 'image') as 'image' | 'video', _i: i }))
+      .filter(p => { const img = generatedImages[p._i]; return !img || img.status !== 'done'; })
+      .map(({ _i: _unused, ...p }) => p);
+    if (!pendingPrompts.length) return;
+    const existingBase = generatedImages.length > 0 ? generatedImages : undefined;
+    // Pass the dominant mediaType as the batch-level fallback; per-prompt mediaType takes precedence
+    const dominantType = pendingPrompts.some(p => p.mediaType === 'video') ? 'video' : 'image';
+    imageGenStore.startFlowGeneration(projectId, pendingPrompts, dominantType, existingBase, flowProvider);
   };
 
   const handleFlowRegenerateAll = () => {
@@ -1356,13 +1492,12 @@ ENDING (CRITICAL — last 2-3 sentences):
     setError(null);
     const promptTexts = prompts.map(p => p.prompt).filter(Boolean);
     if (promptTexts.length) imageApi.clearPromptCache(promptTexts);
-    imageGenStore.startFlowGeneration(
-      projectId,
-      prompts.map((p) => ({ timestamp: p.timestamp, prompt: p.prompt })),
-      'image',
-      undefined,
-      flowProvider,
-    );
+    const allPrompts = prompts.map((p, i) => {
+      const img = generatedImages[i];
+      return { timestamp: p.timestamp, prompt: p.prompt, mediaType: (img?.mediaType ?? p.mediaType ?? 'image') as 'image' | 'video' };
+    });
+    const dominantType = allPrompts.some(p => p.mediaType === 'video') ? 'video' : 'image';
+    imageGenStore.startFlowGeneration(projectId, allPrompts, dominantType, undefined, flowProvider);
   };
 
   const failedImageCount = generatedImages.filter((i) => i.status === 'error' || i.status === 'pending').length;
@@ -1370,13 +1505,12 @@ ENDING (CRITICAL — last 2-3 sentences):
     if (!prompts.length || !projectId) return;
     setError(null);
     const failedPrompts = prompts
-      .filter((_, i) => {
-        const img = generatedImages[i];
-        return !img || img.status === 'error' || img.status === 'pending';
-      })
-      .map((p) => ({ timestamp: p.timestamp, prompt: p.prompt }));
+      .map((p, i) => ({ timestamp: p.timestamp, prompt: p.prompt, mediaType: (generatedImages[i]?.mediaType ?? p.mediaType ?? 'image') as 'image' | 'video', _i: i }))
+      .filter(p => { const img = generatedImages[p._i]; return !img || img.status === 'error' || img.status === 'pending'; })
+      .map(({ _i: _unused, ...p }) => p);
     if (!failedPrompts.length) return;
-    imageGenStore.startFlowGeneration(projectId, failedPrompts, 'image', generatedImages, flowProvider);
+    const dominantType = failedPrompts.some(p => p.mediaType === 'video') ? 'video' : 'image';
+    imageGenStore.startFlowGeneration(projectId, failedPrompts, dominantType, generatedImages, flowProvider);
     const idx = generatedImages.findIndex((i) => i.status === 'error' || i.status === 'pending');
     if (idx >= 0) {
       requestAnimationFrame(() => {
@@ -1532,12 +1666,13 @@ ENDING (CRITICAL — last 2-3 sentences):
     window.addEventListener('Han2YT_flow_error', onError);
     singleRegenCleanupRef.current = cleanup;
 
+    const segMediaType = generatedImages[idx]?.mediaType ?? prompts[idx].mediaType ?? 'image';
     window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
       detail: {
         prompts: [{ timestamp: prompts[idx].timestamp, prompt: prompts[idx].prompt }],
         delayMin: 0,
         delayMax: 0,
-        mediaType,
+        mediaType: segMediaType,
         provider: useProvider,
       },
     }));
@@ -1687,6 +1822,7 @@ ENDING (CRITICAL — last 2-3 sentences):
         script: scriptText.trim(),
         topic: scriptTopic.trim() || undefined,
         systemPrompt: metadataPrompt.trim() || undefined,
+        segments: transcriptEntries.length > 0 ? transcriptEntries.map(e => ({ startTime: e.startTime, text: e.text })) : undefined,
       }) as any;
       setMetadataTitle(meta.title);
       setMetadataDesc(meta.description);
@@ -2071,7 +2207,7 @@ ENDING (CRITICAL — last 2-3 sentences):
     handleAutoSeparate, handleRetranscribe,
     voices, handleVoicePreview, handleGenerateAudio, audioLogRef,
     prompts, setPrompts, generatingPrompts, promptProgress,
-    editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, handleStopPrompts, handleRegenPrompt, regenPromptIdx, regenQueueRef, promptLogRef,
+    editingPromptIdx, setEditingPromptIdx, handleGeneratePrompts, handleStopPrompts, handleRegenPrompt, handleSetEntryMediaType, regenPromptIdx, regenQueueRef, promptLogRef,
     linkedTemplate: linkedTemplate as { visualStyle?: string } | undefined,
     generatedImages, setGeneratedImages, generatingImages, imageProgress,
     provider, setProvider, imageModel, setImageModel, aspectRatio, setAspectRatio,
@@ -2079,6 +2215,7 @@ ENDING (CRITICAL — last 2-3 sentences):
     imageTab, setImageTab, flowAvailable, flowProvider, setFlowProvider,
     mediaType, setMediaType, videoDuration, setVideoDuration,
     imageProviders, selectedProviderInfo,
+    handleSetSegmentMediaType,
     handleGenerateImages, handleGenerateVideos, handleStopImages, handleUploadZip,
     handleFlowGenerate, handleFlowRegenerateAll, handleFlowResume,
     handleRegenSingle, handleDropImage, handleImportFromUrl, regenIndex,

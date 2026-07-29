@@ -27,6 +27,10 @@ export default defineConfig({
         target: BACKEND_URL,
         changeOrigin: true,
       },
+      '/cache': {
+        target: BACKEND_URL,
+        changeOrigin: true,
+      },
     },
   },
 });

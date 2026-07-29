@@ -24,6 +24,7 @@ import { createStoryboardRouter } from './routes/storyboard.routes';
 import { createDramaRouter } from './routes/drama.routes';
 import { createMediaLibraryRouter } from './routes/media-library.routes';
 import { createFrameVideoLibraryRouter } from './routes/frame-video-library.routes';
+import { createScriptStudioRouter } from './routes/script-studio.routes';
 import { DramaService } from './services/drama.service';
 import { ChannelService } from './services/channel.service';
 import { DistributionService } from './services/distribution.service';
@@ -72,7 +73,7 @@ export function createApp() {
   // Register job handlers, THEN resume any pending jobs from the database. The order
   // matters — resuming first runs jobs with no handlers attached and fails them as
   // "No handler registered for job type: ...".
-  registerHandlers(generationService, videoService, platformUploadService);
+  registerHandlers(generationService, videoService, platformUploadService, narrationService, subtitleService);
   getJobQueue().resumePendingJobs();
 
   // Routes
@@ -96,6 +97,7 @@ export function createApp() {
   app.use('/api/drama', createDramaRouter(dramaService, narrationService, subtitleService));
   app.use('/api/media-library', createMediaLibraryRouter());
   app.use('/api/frame-video-library', createFrameVideoLibraryRouter());
+  app.use('/api/script-studio', createScriptStudioRouter());
 
   // Queue WebSocket events endpoint (SSE)
   app.get('/api/events', (req, res) => {
@@ -115,6 +117,7 @@ export function createApp() {
       ['job:progress', onEvent('job:progress')],
       ['job:completed', onEvent('job:completed')],
       ['job:failed', onEvent('job:failed')],
+      ['job:waiting_review', onEvent('job:waiting_review')],
     ];
 
     handlers.forEach(([event, handler]) => queue.on(event, handler));

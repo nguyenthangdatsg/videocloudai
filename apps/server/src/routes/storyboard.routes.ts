@@ -446,14 +446,14 @@ export function createStoryboardRouter(narrationService: NarrationService, subti
     if (!name?.trim()) { res.status(400).json({ error: 'name is required' }); return; }
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    const customPromptsJson = customPrompts && Object.keys(customPrompts).length ? JSON.stringify(customPrompts) : null;
+    const customPromptsJson = customPrompts && Object.keys(customPrompts).length ? JSON.stringify(customPrompts) : '{}';
     dbRun(
       `INSERT INTO storyboard_templates (id, name, niche, description, template_text, color, youtube_url, memo, niche_status, visual_style, custom_prompts, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, name.trim(), niche?.trim() || '', description?.trim() || '', templateText?.trim() || '', color || '#7c6af5', youtubeUrl?.trim() || '', memo?.trim() || '', nicheStatus || 'active', visualStyle?.trim() || '', customPromptsJson, now, now],
     );
     // Pre-compute stage prompts from template text (includes custom_prompts overrides)
-    if (templateText?.trim() || customPromptsJson) recomputeTemplatePrompts(id);
+    if (templateText?.trim()) recomputeTemplatePrompts(id);
     res.status(201).json({ id, name: name.trim(), niche: niche?.trim() || '', description: description?.trim() || '', templateText: templateText?.trim() || '', customPrompts: customPrompts || {}, color: color || '#7c6af5', youtubeUrl: youtubeUrl?.trim() || '', memo: memo?.trim() || '', nicheStatus: nicheStatus || 'active', visualStyle: visualStyle?.trim() || '', createdAt: now, updatedAt: now });
   });
 
@@ -1271,7 +1271,7 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
   // ── Generate image prompts from timestamped segments via Groq ──
   router.post('/generate-prompts', async (req: Request, res: Response) => {
     const { segments, styleTemplate, visualStyle, aspectRatio, videoMode, comparisonItems, bgColor: promptBgColor, compMediaSource } = req.body as {
-      segments: Array<{ timestamp: string; text: string; side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right' }>;
+      segments: Array<{ timestamp: string; text: string; mediaType?: 'image' | 'video'; side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right' }>;
       styleTemplate?: string;
       visualStyle?: string;
       aspectRatio?: string;
@@ -1288,7 +1288,7 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
 
     // Only expand multi-sentence segments when input is very coarse (< 30 segments).
     // If user already has fine-grained segments, use them as-is (1 prompt per segment).
-    let expandedSegments: Array<{ timestamp: string; text: string; side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right' }>;
+    let expandedSegments: Array<{ timestamp: string; text: string; mediaType?: 'image' | 'video'; side?: 'left' | 'right' | 'both' | 'win-left' | 'win-right' }>;
     if (segments.length < 30) {
       expandedSegments = [];
       for (const seg of segments) {
@@ -1316,6 +1316,7 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
             expandedSegments.push({
               timestamp: `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`,
               text: sentences[j].trim(),
+              ...(seg.mediaType ? { mediaType: seg.mediaType } : {}),
               ...(seg.side ? { side: seg.side } : {}),
             });
           }
@@ -1421,6 +1422,19 @@ Rules:
     const ar = aspectRatio || '16:9';
     const arSuffix = ar === '9:16' ? 'vertical portrait layout, 9:16' : ar === '1:1' ? 'square layout, 1:1' : 'landscape layout, 16:9';
 
+    // Inject media type guidance when segments have mixed image/video types
+    const hasVideoSegments = expandedSegments.some(s => s.mediaType === 'video');
+    const hasImageSegments = expandedSegments.some(s => !s.mediaType || s.mediaType === 'image');
+    if (hasVideoSegments && compMediaSource !== 'pexels') {
+      if (hasImageSegments) {
+        systemPrompt += `\n\nSome segments are tagged [VIDEO] and others are [IMAGE]:
+- [IMAGE] segments: generate a static visual description (composition, colors, objects, scene)
+- [VIDEO] segments: generate a motion-oriented prompt describing what MOVES or FLOWS in the scene (camera motion, action, animation) — suitable for AI video clip generation`;
+      } else {
+        systemPrompt += `\n\nAll segments are for VIDEO clip generation. Generate motion-oriented prompts describing what moves, flows, or changes in each scene — suitable for AI video generation.`;
+      }
+    }
+
     // Append output format instruction (only for non-pexels mode)
     if (compMediaSource !== 'pexels') {
       systemPrompt += `\n\nIMPORTANT: Output ONLY the image prompts. Each prompt starts with its timestamp [MM:SS]. One prompt per timestamp. Separate prompts with a blank line. No commentary, no numbering, no markdown. Do NOT write "we need to generate" or any meta-commentary — just output the image description directly.${visualStyle ? ` Every prompt MUST include "${visualStyle}" as the art style.` : ''}${isSimpleStyle ? ' Every prompt MUST include "white background".' : ''} MANDATORY: Every prompt MUST end with ", ${arSuffix}". This suffix is required on every single prompt — do not omit it.`;
@@ -1490,7 +1504,10 @@ Rules:
 
       res.write(JSON.stringify({ progress: true, step: 'generating', detail: `Generating prompts batch ${batchNum}/${totalBatches}...` }) + '\n');
 
-      const segmentText = batch.map((s) => `[${s.timestamp}] ${s.text}`).join('\n');
+      const segmentText = batch.map((s) => {
+        const typeTag = (hasVideoSegments && hasImageSegments && compMediaSource !== 'pexels') ? (s.mediaType === 'video' ? ' [VIDEO]' : ' [IMAGE]') : '';
+        return `[${s.timestamp}]${typeTag} ${s.text}`;
+      }).join('\n');
 
       const parseBatch = (raw: string, usedModel: string) => {
         const lines = raw.split('\n');
@@ -1795,11 +1812,12 @@ Rules:
 
   // ── Generate metadata (title, description, tags) via Groq ──
   router.post('/generate-metadata', async (req: Request, res: Response) => {
-    const { projectId, script, topic, systemPrompt: customPrompt } = req.body as {
+    const { projectId, script, topic, systemPrompt: customPrompt, segments } = req.body as {
       projectId?: string;
       script: string;
       topic?: string;
       systemPrompt?: string;
+      segments?: Array<{ startTime: string; text: string }>;
     };
 
     if (!script?.trim()) {
@@ -1841,8 +1859,16 @@ Rules:
 
 Rules:
 - Title: catchy, under 100 characters, includes power words
-- Description: 2-3 paragraphs, SEO-friendly, includes relevant keywords
-- Tags: 10-15 relevant tags as a JSON array
+- Description: Write a detailed summary of the video content. Structure it as follows:
+  1. Opening hook paragraph (2-3 sentences)
+  2. Blank line
+  3. Timestamped chapter list (one per line, format: "0:00 - Chapter title"): summarize each section based on the transcript segments provided. Use the actual timestamps from the transcript.
+  4. Blank line
+  5. Closing call-to-action line (subscribe/like/comment)
+  6. Blank line
+  7. Hashtags line: 5-8 hashtags starting with # separated by spaces (e.g. #topic #keyword #niche)
+  Each section must be separated by a blank line (\\n\\n).
+- Tags: 10-15 relevant tags as a JSON array (without # prefix)
 - Thumbnail Prompt: A highly descriptive, detailed prompt for generating a high-CTR, click-enticing YouTube thumbnail. The prompt should specify visual composition, dramatic lighting, and focal subject. It MUST NOT contain generic filler meta-words like "image of", "photo of", "picture of", "graphic of", "generate...", etc. Describe the visual elements directly (e.g. "A weathered archaeologist holding a glowing artifact" instead of "An image of a weathered archaeologist..."). It MUST match the video's Niche, Visual Style DNA, and Topic if provided.
 
 Output ONLY valid JSON with keys: "title", "description", "tags" (array of strings), "thumbnailPrompt" (string). No markdown, no commentary.`;
@@ -1870,13 +1896,20 @@ In addition to title, description, and tags, you MUST generate a high-CTR, engag
 Example response:
 {"title": "Sunset Over Mountains", "description": "Watch a breathtaking sunset...", "tags": ["sunset", "nature", "mountains"], "thumbnailPrompt": "A dramatic wide-angle shot of a glowing orange sunset reflecting on jagged snow-capped mountain peaks, epic cinematic lighting, highly detailed, photorealistic 8k"}`;
 
+      // Format transcript segments as timestamped list for description generation
+      let transcriptBlock = '';
+      if (segments && segments.length > 0) {
+        transcriptBlock = '\n\nTimestamped Transcript Segments (use these exact timestamps for the chapter list in the description):\n' +
+          segments.map(s => `${s.startTime} - ${s.text}`).join('\n');
+      }
+
       const raw = await llmComplete({
         systemPrompt: systemPrompt + jsonInstruction,
         userMessage: `Generate metadata and a high-CTR thumbnail prompt for this video. Respond with ONLY a JSON object.
 
 ${contextInfo}
 Script:
-${script}`,
+${script}${transcriptBlock}`,
         temperature: 0.5,
         maxTokens: 2000,
       });

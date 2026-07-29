@@ -50,8 +50,8 @@ let resolvedFfprobe: string | null = null;
 // Sync resolver — does NOT spawn the binary, only checks file existence. Use this when
 // you need an ffmpeg path during synchronous initialization (e.g., constructing a
 // VideoAssembler). Returns the user-configured path if it points to a real file,
-// then falls back to the bundled Remotion binary, then to the literal name (which will
-// rely on PATH if it's there).
+// then falls back to ffmpeg-static (full filter support), then Remotion compositor,
+// then to the literal name (which will rely on PATH if it's there).
 export function resolveFfmpegPathSync(name: 'ffmpeg' | 'ffprobe'): string {
   const settingsValue =
     name === 'ffmpeg'
@@ -63,7 +63,20 @@ export function resolveFfmpegPathSync(name: 'ffmpeg' | 'ffprobe'): string {
     return settingsValue;
   }
 
-  // Otherwise, prefer the bundled Remotion binary (always present in our node_modules)
+  // Try ffmpeg-static — full-featured build with all filters (zoompan etc.)
+  if (name === 'ffmpeg') {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const staticBin = require('ffmpeg-static') as string | null;
+      if (staticBin && fs.existsSync(staticBin)) {
+        console.log(`[ffmpeg] Using ffmpeg-static: ${staticBin}`);
+        return staticBin;
+      }
+    } catch { /* ffmpeg-static not installed */ }
+  }
+
+  // Fall back to Remotion compositor binary (built with --disable-filters,
+  // so zoompan and some other filters may be unavailable)
   const bundled = findBundledRemotionBinary(name);
   if (bundled) {
     console.log(`[ffmpeg] Using bundled Remotion ${name}: ${bundled}`);

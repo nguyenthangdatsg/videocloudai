@@ -1,5 +1,46 @@
 export type MotionEffect = 'static' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down';
 
+export interface ChartBigNumberConfig {
+  durationInFrames: number;
+  value: number;
+  prefix?: string;
+  suffix?: string;
+  label?: string;
+  sourceLabel?: string;
+  accentColor?: string;
+  bgColor?: string;
+}
+
+export interface ChartLineConfig {
+  durationInFrames: number;
+  dataPoints: { label: string; value: number }[];
+  title?: string;
+  sourceLabel?: string;
+  accentColor?: string;
+  bgColor?: string;
+}
+
+export interface ChartBarsConfig {
+  durationInFrames: number;
+  bars: { name: string; value: number }[];
+  title?: string;
+  sourceLabel?: string;
+  accentColor?: string;
+  bgColor?: string;
+  sortOrder?: 'asc' | 'desc' | 'scripted';
+}
+
+export interface ChartVsConfig {
+  durationInFrames: number;
+  leftLabel: string;
+  leftValue: string;
+  rightLabel: string;
+  rightValue: string;
+  title?: string;
+  accentColor?: string;
+  bgColor?: string;
+}
+
 export interface SceneClipConfig {
   imageSrc: string;
   motion: MotionEffect;

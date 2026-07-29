@@ -12,6 +12,7 @@ export function ScriptStep() {
     scriptTopic, setStep, setScriptTopic,
     scriptDuration, setScriptDuration, generatingScript, handleGenerateScript,
     scriptText, setScriptText, saveProject,
+    videoDuration, setVideoDuration,
     t,
   } = useStoryboard();
 
@@ -36,6 +37,20 @@ export function ScriptStep() {
               className="input text-sm w-20"
               min={30}
               max={1800}
+            />
+            <span className="text-xs text-c-dim">{t('storyboard.secondsAbbr')}</span>
+          </div>
+        </div>
+        <div>
+          <label className="text-[10px] text-c-dim mb-0.5 block">{t('storyboard.clipDuration')}</label>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              value={videoDuration}
+              onChange={(e) => setVideoDuration(Math.max(1, Math.min(60, Number(e.target.value))))}
+              className="input text-sm w-16"
+              min={1}
+              max={60}
             />
             <span className="text-xs text-c-dim">{t('storyboard.secondsAbbr')}</span>
           </div>

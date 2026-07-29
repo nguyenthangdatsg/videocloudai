@@ -33,6 +33,7 @@ interface ImageGenStore {
     aspectRatio: string,
     provider: string,
     model?: string,
+    existingImages?: GenImage[],
   ) => void;
 
   startVideoGeneration: (
@@ -45,10 +46,12 @@ interface ImageGenStore {
 
   startFlowGeneration: (
     projectId: string,
-    prompts: Array<{ timestamp: string; prompt: string }>,
+    prompts: Array<{ timestamp: string; prompt: string; mediaType?: 'image' | 'video' }>,
     mediaType?: 'image' | 'video',
     existingImages?: GenImage[],
     flowProvider?: 'google-flow' | 'grok' | 'chatgpt',
+    duration?: number,
+    flowModel?: string,
   ) => void;
 
   stopGeneration: (projectId: string) => void;
@@ -62,18 +65,28 @@ interface ImageGenStore {
 export const useImageGenStore = create<ImageGenStore>((set, get) => ({
   tasks: new Map(),
 
-  startGeneration: (projectId, prompts, aspectRatio, provider, model) => {
+  startGeneration: (projectId, prompts, aspectRatio, provider, model, existingImages?) => {
     // Abort any existing task for this project
     const existing = get().tasks.get(projectId);
     if (existing?.abortController) existing.abortController.abort();
 
     const controller = new AbortController();
-    const initialImages: GenImage[] = prompts.map((p) => ({
-      timestamp: p.timestamp,
-      filename: '',
-      url: '',
-      status: 'pending',
-    }));
+    let initialImages: GenImage[];
+    if (existingImages) {
+      const targetTimestamps = new Set(prompts.map((p) => p.timestamp));
+      initialImages = existingImages.map((img) =>
+        targetTimestamps.has(img.timestamp)
+          ? { ...img, status: 'pending' as const, filename: '', url: '' }
+          : img,
+      );
+    } else {
+      initialImages = prompts.map((p) => ({
+        timestamp: p.timestamp,
+        filename: '',
+        url: '',
+        status: 'pending',
+      }));
+    }
 
     const task: ImageGenTask = {
       projectId,
@@ -341,7 +354,7 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     })();
   },
 
-  startFlowGeneration: (projectId, prompts, mediaType = 'image', existingImages, flowProvider = 'google-flow') => {
+  startFlowGeneration: (projectId, prompts, mediaType = 'image', existingImages, flowProvider = 'google-flow', duration, flowModel) => {
     // Abort any existing task
     const existing = get().tasks.get(projectId);
     if (existing?.abortController) existing.abortController.abort();
@@ -373,6 +386,8 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
         filename: '',
         url: '',
         status: 'pending',
+        // Use per-prompt mediaType if present, fall back to batch-level mediaType
+        mediaType: (p.mediaType ?? mediaType) as GenMediaType,
       }));
     }
 
@@ -458,20 +473,20 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
           }
         }
 
-        // Dispatch only uncached prompts to extension
+        // Dispatch only uncached prompts to extension (strip per-prompt mediaType for backward compatibility)
         window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-          detail: { prompts: uncachedPrompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
+          detail: { prompts: uncachedPrompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel },
         }));
       } else {
         // No cache hits — send all prompts to extension
         window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-          detail: { prompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
+          detail: { prompts: prompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel },
         }));
       }
     }).catch(() => {
       // Cache check failed — send all prompts to extension
       window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-        detail: { prompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider },
+        detail: { prompts: prompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel },
       }));
     });
 
@@ -511,7 +526,7 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
           const realIdx = resolveIndex(d.index);
           if (d.status === 'done') {
             updatedImages = updatedImages.map((item, i) =>
-              i === realIdx ? { ...item, filename: d.filename, url: d.url, status: 'done' as const } : item,
+              i === realIdx ? { ...item, filename: d.filename, url: d.url, status: 'done' as const, mediaType: (item.mediaType ?? d.mediaType ?? mediaType) as GenMediaType } : item,
             );
             updatedProgress.push(`(${realIdx + 1}/${updatedImages.length}) Done — saved ${d.filename}`);
             // Save to prompt cache so future runs reuse this image
@@ -586,11 +601,61 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
       }
     };
 
+    // Model fallback chains within google-flow when quota is exceeded
+    // Extension uses these model IDs in the Han2YT_flow_start event
+    const FLOW_VIDEO_MODELS = ['veo-3', 'veo-2'];
+    const FLOW_IMAGE_MODELS = ['imagen-4', 'imagen-3'];
+    const FLOW_PROVIDER_CHAIN: Array<'google-flow' | 'grok' | 'chatgpt'> = ['google-flow', 'grok', 'chatgpt'];
+
     const onError = (e: Event) => {
       const d = (e as CustomEvent).detail;
       cleanup();
       const currentTask = get().tasks.get(projectId);
-      const cleanImages = finalizeImages(currentTask?.images ?? []);
+      const currentImages = currentTask?.images ?? [];
+
+      const errorMsg = (d.error || d.message || '').toLowerCase();
+      const isQuota = errorMsg.includes('quota') || errorMsg.includes('429') || errorMsg.includes('rate') || errorMsg.includes('limit') || errorMsg.includes('exceeded');
+
+      const doneTimestamps = new Set(currentImages.filter(img => img.status === 'done').map(img => img.timestamp));
+      const pendingPrompts = prompts.filter(p => !doneTimestamps.has(p.timestamp));
+
+      if (isQuota && pendingPrompts.length > 0) {
+        // Within google-flow: try next model in the chain before switching providers
+        if (flowProvider === 'google-flow') {
+          const isVideoMode = mediaType === 'video';
+          const modelChain = isVideoMode ? FLOW_VIDEO_MODELS : FLOW_IMAGE_MODELS;
+          const currentModelIdx = flowModel ? modelChain.indexOf(flowModel) : 0;
+          const nextModel = modelChain[currentModelIdx + 1];
+
+          if (nextModel) {
+            useAppStore.getState().pushNotification({
+              id: `flow-model-fallback-${projectId}-${Date.now()}`,
+              type: 'info',
+              title: `Switching Flow model`,
+              message: `${flowModel || modelChain[0]} quota exceeded — retrying with ${nextModel}`,
+            });
+            get().startFlowGeneration(projectId, pendingPrompts, mediaType, currentImages, 'google-flow', duration, nextModel);
+            return;
+          }
+        }
+
+        // google-flow exhausted all models (or other provider) — try next provider
+        const currentIdx = FLOW_PROVIDER_CHAIN.indexOf(flowProvider);
+        const nextProvider = currentIdx >= 0 && currentIdx < FLOW_PROVIDER_CHAIN.length - 1 ? FLOW_PROVIDER_CHAIN[currentIdx + 1] : null;
+        if (nextProvider) {
+          useAppStore.getState().pushNotification({
+            id: `flow-provider-fallback-${projectId}-${Date.now()}`,
+            type: 'info',
+            title: `Switching to ${nextProvider}`,
+            message: `${flowProvider} quota exhausted — retrying ${pendingPrompts.length} items with ${nextProvider}`,
+          });
+          get().startFlowGeneration(projectId, pendingPrompts, mediaType, currentImages, nextProvider, duration);
+          return;
+        }
+      }
+
+      // No fallback available — finalize as error
+      const cleanImages = finalizeImages(currentImages);
 
       // Save partially-completed images to DB so they survive restarts
       const doneCount = cleanImages.filter((i) => i.status === 'done').length;

@@ -1,7 +1,8 @@
-import { useRef } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import {
   Film, RefreshCw, Square, Download, CheckCircle, Copy, Tag, FileText, Mic, Image, Clock, Video, X,
 } from 'lucide-react';
+import { reencodeVideoUrl, type ExportQuality } from '../../../lib/video-watermark';
 import { clsx } from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
 import { AdvancedToggle } from './AdvancedToggle';
@@ -25,6 +26,52 @@ export function AssembleStep() {
   } = ctx;
 
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // ── Quality export state ──────────────────────────────────────────
+  const [expState, setExpState] = useState<'idle' | 'processing' | 'done'>('idle');
+  const [expProgress, setExpProgress] = useState(0);
+  const [expQuality, setExpQuality] = useState<ExportQuality>('hd');
+  const [expUrl, setExpUrl] = useState<string | null>(null);
+  const [expExt, setExpExt] = useState('webm');
+  const expAbortRef = useRef<AbortController | null>(null);
+
+  // Revoke object URL on unmount
+  useEffect(() => {
+    return () => { if (expUrl) URL.revokeObjectURL(expUrl); };
+  }, [expUrl]);
+
+  // Reset export state when a new assembly completes
+  useEffect(() => {
+    if (result) { setExpState('idle'); setExpProgress(0); setExpUrl(null); }
+  }, [result?.url]);
+
+  const handleExportVideo = async () => {
+    if (!result?.url || expState === 'processing') return;
+    const abort = new AbortController();
+    expAbortRef.current = abort;
+    setExpState('processing');
+    setExpProgress(0);
+    try {
+      const { blob, mimeType } = await reencodeVideoUrl(
+        result.url,
+        (pct) => setExpProgress(Math.round(pct * 100)),
+        { quality: expQuality, signal: abort.signal },
+      );
+      if (!abort.signal.aborted) {
+        if (expUrl) URL.revokeObjectURL(expUrl);
+        setExpUrl(URL.createObjectURL(blob));
+        setExpExt(mimeType.includes('mp4') ? 'mp4' : 'webm');
+        setExpState('done');
+      }
+    } catch (err) {
+      if (!abort.signal.aborted) {
+        alert((err as Error).message);
+        setExpState('idle');
+      }
+    } finally {
+      expAbortRef.current = null;
+    }
+  };
 
   const toggleRandomEffect = (effect: MotionEffect) => {
     setRandomEffects(prev => {
@@ -197,6 +244,98 @@ export function AssembleStep() {
           <div className="rounded-xl overflow-hidden border border-c-border bg-black">
             <video ref={videoRef} src={result.url} controls className="w-full max-h-[500px]" />
           </div>
+
+          {/* ── Quality export ── */}
+          {expState === 'idle' && (
+            <div className="border border-c-border rounded-xl p-3 bg-c-surface space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Download className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-xs font-medium text-c-text">{t('storyboard.exportQualityTitle')}</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] text-c-dim shrink-0">{t('storyboard.exportQuality')}:</span>
+                <div className="flex rounded-lg border border-c-border overflow-hidden">
+                  {([
+                    { id: 'hd' as ExportQuality, label: 'HD',  hint: '1920px · 8 Mbps'  },
+                    { id: '2k' as ExportQuality, label: '2K',  hint: '2560px · 18 Mbps' },
+                    { id: '4k' as ExportQuality, label: '4K',  hint: '3840px · 40 Mbps' },
+                  ]).map(({ id, label }) => (
+                    <button
+                      key={id}
+                      onClick={() => setExpQuality(id)}
+                      className={clsx(
+                        'px-3 py-1 text-[10px] font-medium transition-colors border-r border-c-border last:border-r-0',
+                        expQuality === id
+                          ? 'bg-cyan-600/30 text-cyan-200'
+                          : 'text-c-dim hover:text-c-text hover:bg-c-bg',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[9px] text-c-dim">
+                  {expQuality === 'hd' && '1920px · 8 Mbps'}
+                  {expQuality === '2k' && '2560px · 18 Mbps'}
+                  {expQuality === '4k' && '3840px · 40 Mbps'}
+                </span>
+              </div>
+              <button
+                onClick={handleExportVideo}
+                className="w-full flex items-center justify-center gap-2 text-xs text-cyan-300 hover:text-cyan-200 border border-cyan-700/50 hover:border-cyan-500/70 rounded-lg px-4 py-2 transition-colors bg-cyan-800/10 hover:bg-cyan-800/20"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {t('storyboard.exportVideo')}
+              </button>
+            </div>
+          )}
+          {expState === 'processing' && (
+            <div className="border border-c-border rounded-xl p-3 bg-c-surface space-y-2">
+              <div className="flex items-center gap-2">
+                <Download className="w-3.5 h-3.5 text-cyan-400 animate-pulse shrink-0" />
+                <span className="text-xs text-c-text flex-1">
+                  {t('storyboard.exportingVideo')}
+                  {expProgress > 0 && <span className="ml-1 text-c-dim">— {expProgress}%</span>}
+                </span>
+                <button
+                  onClick={() => { expAbortRef.current?.abort(); setExpState('idle'); }}
+                  className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 shrink-0"
+                >
+                  <X className="w-3 h-3" /> {t('storyboard.cancel')}
+                </button>
+              </div>
+              <div className="w-full bg-c-border rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="h-full bg-cyan-400 rounded-full transition-all duration-500"
+                  style={{ width: `${expProgress}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-c-dim">{t('storyboard.exportingVideoHint')}</p>
+            </div>
+          )}
+          {expState === 'done' && expUrl && (
+            <div className="border border-c-border rounded-xl p-3 bg-c-surface flex items-center gap-3">
+              <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="text-xs text-c-text">{t('storyboard.exportedVideo')}</span>
+                <span className="ml-2 text-[9px] bg-cyan-700/30 text-cyan-200 px-1.5 py-0.5 rounded font-mono">{expQuality.toUpperCase()}</span>
+              </div>
+              <a
+                href={expUrl}
+                download={`${(metadataTitle || scriptTopic || projectName || 'video').replace(/[<>:"/\\|?*]+/g, '').replace(/\s+/g, '_')}_${expQuality}.${expExt}`}
+                className="btn-primary text-xs flex items-center gap-1.5 py-1.5 px-3 shrink-0"
+              >
+                <Download className="w-3.5 h-3.5" /> {t('common.download')}
+              </a>
+              <button
+                onClick={() => { setExpState('idle'); URL.revokeObjectURL(expUrl!); setExpUrl(null); }}
+                className="p-1 text-c-dim hover:text-c-text shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {metadataTitle && (
             <div className="border border-c-border rounded-xl overflow-hidden bg-c-surface">
               <div className="px-4 py-2 border-b border-c-border bg-c-bg flex items-center justify-between">

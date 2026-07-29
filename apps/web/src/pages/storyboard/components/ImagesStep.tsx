@@ -1,5 +1,5 @@
 import { Image, Video, RefreshCw, Trash2, ArrowRight, Globe, Film, Square, Wand2, Upload, ZoomIn, X, CheckCircle, Pencil, Link, Filter } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { clsx } from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
 import { imageApi } from '../../../lib/api';
@@ -14,6 +14,7 @@ export function ImagesStep() {
     imageTab, setImageTab, flowAvailable, flowProvider, setFlowProvider,
     mediaType, setMediaType, videoDuration, setVideoDuration,
     imageProviders, selectedProviderInfo,
+    handleSetSegmentMediaType,
     handleGenerateImages, handleGenerateVideos, handleStopImages, handleUploadZip,
     handleFlowGenerate, handleFlowRegenerateAll, handleFlowResume,
     handleRegenSingle, handleDropImage, handleImportFromUrl, regenIndex,
@@ -24,7 +25,42 @@ export function ImagesStep() {
     compMediaSource, handlePexelsBatch, cancelPexels, pexelsLoading, pexelsProgress, videoMode,
   } = useStoryboard();
 
+  const mixedVideoCount = generatedImages.filter((img) => img.mediaType === 'video').length;
+
   const [statusFilter, setStatusFilter] = useState<'all' | 'done' | 'error' | 'pending'>('all');
+  const [uploadingCardIdx, setUploadingCardIdx] = useState<number | null>(null);
+  const cardUploadInputRef = useRef<HTMLInputElement>(null);
+  const cardUploadIdxRef = useRef<number>(-1);
+
+  const handleUploadToCard = (idx: number) => {
+    cardUploadIdxRef.current = idx;
+    cardUploadInputRef.current?.click();
+  };
+
+  const handleCardFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const idx = cardUploadIdxRef.current;
+    if (idx < 0) return;
+    const isVideo = file.type.startsWith('video/');
+    setUploadingCardIdx(idx);
+    setGeneratedImages((prev) => prev.map((img, i) => i === idx ? { ...img, status: 'generating' as const } : img));
+    try {
+      const result = await imageApi.uploadMediaFile(file);
+      setGeneratedImages((prev) => {
+        const updated = prev.map((img, i) =>
+          i === idx ? { ...img, filename: result.filename, url: result.url, status: 'done' as const, mediaType: isVideo ? 'video' as const : 'image' as const } : img,
+        );
+        saveProject({ generatedImages: updated });
+        return updated;
+      });
+    } catch {
+      setGeneratedImages((prev) => prev.map((img, i) => i === idx ? { ...img, status: 'error' as const } : img));
+    } finally {
+      setUploadingCardIdx(null);
+    }
+  };
 
   const doneImageCount = generatedImages.filter((i) => i.status === 'done').length;
   const errorImageCount = generatedImages.filter((i) => i.status === 'error').length;
@@ -47,6 +83,14 @@ export function ImagesStep() {
 
   return (
     <div className="space-y-3">
+      {/* Hidden file input for per-card uploads */}
+      <input
+        ref={cardUploadInputRef}
+        type="file"
+        accept="image/*,video/*"
+        className="hidden"
+        onChange={handleCardFileChange}
+      />
       {/* Status + Actions row */}
       <div className="flex items-center gap-2 flex-wrap">
         {generatedImages.length > 0 ? (
@@ -364,6 +408,12 @@ export function ImagesStep() {
             </div>
           </div>
 
+          {mixedVideoCount > 0 && !generatingImages && (
+            <div className="flex items-center gap-2 rounded-lg border border-violet-800/30 bg-violet-900/10 px-3 py-2 text-[11px] text-violet-300">
+              <Video className="w-3.5 h-3.5 shrink-0" />
+              <span>{mixedVideoCount} {t('storyboard.segmentsSetToVideo')} — {t('storyboard.generateImagesFirst')}</span>
+            </div>
+          )}
           {imageProgress.length > 0 && (
             <div className="border border-cyan-800/30 rounded-xl p-3 bg-cyan-900/10">
               <div className="font-mono text-[10px] text-c-dim space-y-0.5 max-h-[120px] overflow-auto">
@@ -435,14 +485,14 @@ export function ImagesStep() {
                     >
                       <RefreshCw className="w-3.5 h-3.5" /> {t('storyboard.regenerateAllN', { count: prompts.length })}
                     </button>
-                  ) : failedImageCount > 0 || pendingImageCount > 0 ? (
+                  ) : failedImageCount > 0 ? (
                     /* Some failed/pending — show Resume (skips done) */
                     <button
                       onClick={handleFlowResume}
                       disabled={!prompts.length}
                       className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
                     >
-                      <RefreshCw className="w-3.5 h-3.5" /> {t('storyboard.resumeNRemaining', { count: failedImageCount + pendingImageCount })}
+                      <RefreshCw className="w-3.5 h-3.5" /> {t('storyboard.resumeNRemaining', { count: failedImageCount })}
                     </button>
                   ) : (
                     /* No images yet — show Generate */
@@ -455,7 +505,7 @@ export function ImagesStep() {
                     </button>
                   )}
                   {/* Always show Regenerate All as secondary when there are partial results */}
-                  {!generatingImages && doneImageCount > 0 && (failedImageCount > 0 || pendingImageCount > 0) && (
+                  {!generatingImages && doneImageCount > 0 && failedImageCount > 0 && (
                     <button
                       onClick={handleFlowRegenerateAll}
                       className="text-xs py-2 px-3 rounded-lg font-medium flex items-center gap-1.5 border border-violet-600/50 text-violet-300 hover:bg-violet-600/20 transition-colors"
@@ -587,7 +637,7 @@ export function ImagesStep() {
                   ) : (
                     <img src={img.url} alt={`Generated image ${img.timestamp}`} className={clsx('w-full object-cover', aspectRatio === '9:16' ? 'aspect-[9/16]' : aspectRatio === '1:1' ? 'aspect-square' : 'aspect-video')} loading="lazy" />
                   )}
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+<div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
                     <ZoomIn className="w-5 h-5 text-white" />
                   </div>
                   {/* Action buttons overlay */}
@@ -626,6 +676,13 @@ export function ImagesStep() {
                         <Link className="w-3 h-3" />
                       </button>
                       <button
+                        onClick={(e) => { e.stopPropagation(); handleUploadToCard(i); }}
+                        className="p-1 rounded-md bg-black/60 text-amber-300 hover:text-white hover:bg-amber-600/80"
+                        title={t('storyboard.uploadMediaToCard')}
+                      >
+                        <Upload className="w-3 h-3" />
+                      </button>
+                      <button
                         onClick={(e) => { e.stopPropagation(); handleDropImage(i); }}
                         className="p-1 rounded-md bg-black/60 text-white/80 hover:text-white hover:bg-red-600/80"
                         title={t('storyboard.removeImage')}
@@ -639,7 +696,10 @@ export function ImagesStep() {
               })() : (
                 <div className={clsx('flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-c-elevated to-c-bg', aspectRatio === '9:16' ? 'aspect-[9/16]' : aspectRatio === '1:1' ? 'aspect-square' : 'aspect-video')}>
                   {img.status === 'generating' ? (
-                    <Spinner size="sm" />
+                    <>
+                      <Spinner size="sm" />
+                      {uploadingCardIdx === i && <span className="text-[9px] text-amber-400">{t('storyboard.uploadingMedia')}</span>}
+                    </>
                   ) : img.status === 'error' ? (
                     <>
                       <X className="w-4 h-4 text-red-400" />
@@ -668,13 +728,20 @@ export function ImagesStep() {
                           </button>
                         </div>
                       )}
-                      <div className="flex gap-1">
+                      <div className="flex gap-1 flex-wrap justify-center">
                         <button
                           onClick={() => handleImportFromUrl(i)}
                           className="text-[9px] px-2 py-0.5 rounded bg-cyan-800/60 hover:bg-cyan-700 text-white flex items-center gap-1 transition-colors"
                           title={t('storyboard.importFromUrl')}
                         >
                           <Link className="w-2.5 h-2.5" /> URL
+                        </button>
+                        <button
+                          onClick={() => handleUploadToCard(i)}
+                          className="text-[9px] px-2 py-0.5 rounded bg-amber-800/60 hover:bg-amber-700 text-white flex items-center gap-1 transition-colors"
+                          title={t('storyboard.uploadMediaToCard')}
+                        >
+                          <Upload className="w-2.5 h-2.5" /> {t('storyboard.uploadMediaToCard')}
                         </button>
                         <button
                           onClick={() => handleDropImage(i)}
@@ -719,6 +786,13 @@ export function ImagesStep() {
                       >
                         <Link className="w-2.5 h-2.5" /> URL
                       </button>
+                      <button
+                        onClick={() => handleUploadToCard(i)}
+                        className="text-[9px] px-2 py-0.5 rounded bg-amber-800/60 hover:bg-amber-700 text-white flex items-center gap-1 transition-colors"
+                        title={t('storyboard.uploadMediaToCard')}
+                      >
+                        <Upload className="w-2.5 h-2.5" /> {t('storyboard.uploadMediaToCard')}
+                      </button>
                     </>
                   )}
                 </div>
@@ -729,6 +803,23 @@ export function ImagesStep() {
                 <div className="flex items-center gap-1">
                   <span className="text-[9px] text-cyan-400 font-mono shrink-0">[{img.timestamp}]</span>
                   <span className="text-[9px] text-c-dim font-medium shrink-0">#{i + 1}</span>
+                  {/* Image / Video type toggle — always visible */}
+                  <div className="flex rounded border border-c-border overflow-hidden ml-1">
+                    <button
+                      onClick={() => handleSetSegmentMediaType(i, 'image')}
+                      className={clsx('px-1.5 py-0.5 text-[8px] flex items-center gap-0.5 transition-colors', (!img.mediaType || img.mediaType === 'image') ? 'bg-cyan-600/30 text-cyan-400' : 'text-c-dim hover:text-c-text')}
+                      title={t('storyboard.imageMode')}
+                    >
+                      <Image className="w-2.5 h-2.5" />
+                    </button>
+                    <button
+                      onClick={() => handleSetSegmentMediaType(i, 'video')}
+                      className={clsx('px-1.5 py-0.5 text-[8px] flex items-center gap-0.5 transition-colors border-l border-c-border', img.mediaType === 'video' ? 'bg-violet-600/30 text-violet-400' : 'text-c-dim hover:text-c-text')}
+                      title={t('storyboard.videoMode')}
+                    >
+                      <Video className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
                   <span className="flex-1" />
                   <button
                     onClick={() => isEditing ? handleSaveEditedPrompt(i) : handleStartEditPrompt(i)}

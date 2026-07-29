@@ -33,9 +33,30 @@ let _lastUsedModel = '';
 /** Returns the provider:model string from the most recent llmComplete call. */
 export function getLastUsedModel(): string { return _lastUsedModel; }
 
+const MODEL_KEY: Record<Provider, string> = {
+  gemini: 'gemini_model', groq: 'groq_model', anthropic: 'anthropic_model',
+  openrouter: 'openrouter_model', cerebras: 'cerebras_model', grok: 'grok_model', openai: 'openai_model',
+};
+const MODEL_DEFAULT: Record<Provider, string> = {
+  gemini: 'gemini-2.5-flash', groq: 'llama-3.3-70b-versatile', anthropic: 'claude-sonnet-4-6',
+  openrouter: 'meta-llama/llama-3.3-70b-instruct:free', cerebras: 'llama-3.3-70b',
+  grok: 'grok-3-mini', openai: 'gpt-4o-mini',
+};
+/** Fallback models to try within a provider when configured model hits quota/rate limit */
+const MODEL_FALLBACKS: Record<Provider, string[]> = {
+  gemini:     ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite'],
+  groq:       ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+  anthropic:  ['claude-haiku-4-5-20251001', 'claude-3-5-haiku-20241022'],
+  openrouter: ['google/gemma-3-27b-it:free', 'mistralai/mistral-7b-instruct:free'],
+  cerebras:   ['llama-3.1-70b'],
+  grok:       ['grok-3-mini-fast'],
+  openai:     ['gpt-3.5-turbo'],
+};
+
 /**
  * Unified LLM completion — dispatches to configured provider.
- * Falls back to other providers on missing key or runtime errors (rate limits, etc).
+ * Falls back to other models within the same provider on quota errors,
+ * then falls back to other providers on persistent failures.
  */
 export async function llmComplete(req: LlmRequest): Promise<string> {
   const s = getSettings();
@@ -49,33 +70,54 @@ export async function llmComplete(req: LlmRequest): Promise<string> {
     throw new Error('No LLM provider configured. Add an API key in Settings.');
   }
 
-  const getModel = (p: Provider) => {
-    const modelKeys: Record<Provider, string> = { gemini: 'gemini_model', groq: 'groq_model', anthropic: 'anthropic_model', openrouter: 'openrouter_model', cerebras: 'cerebras_model', grok: 'grok_model', openai: 'openai_model' };
-    const defaults: Record<Provider, string> = { gemini: 'gemini-2.5-flash', groq: 'llama-3.3-70b-versatile', anthropic: 'claude-sonnet-4-6', openrouter: 'meta-llama/llama-3.3-70b-instruct:free', cerebras: 'llama-3.3-70b', grok: 'grok-3-mini', openai: 'gpt-4o-mini' };
-    return s.get(modelKeys[p]) || defaults[p];
-  };
+  const isQuotaError = (msg: string) =>
+    msg.includes('429') || msg.includes('rate_limit') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED');
 
   let lastError: Error | null = null;
   const failedProviders: string[] = [];
+
   for (const provider of chain) {
-    try {
-      const result = await PROVIDER_FN[provider](req, s);
-      _lastUsedModel = `${provider}/${getModel(provider)}`;
-      return result;
-    } catch (err) {
-      lastError = err as Error;
-      const isRateLimit = lastError.message.includes('429') || lastError.message.includes('rate_limit') || lastError.message.includes('quota');
-      const isServerError = lastError.message.includes('503') || lastError.message.includes('500');
-      const reason = isRateLimit ? 'rate limited' : isServerError ? 'server error' : 'failed';
+    // Build model list: configured model first, then fallbacks (deduplicated)
+    const configuredModel = s.get(MODEL_KEY[provider]) || MODEL_DEFAULT[provider];
+    const fallbacks = MODEL_FALLBACKS[provider].filter(m => m !== configuredModel);
+    const modelsToTry = [configuredModel, ...fallbacks];
+
+    let providerSucceeded = false;
+    for (const model of modelsToTry) {
+      try {
+        // Create a settings view that returns the override model for this provider's model key
+        const overrideSettings = Object.create(s) as ReturnType<typeof getSettings>;
+        overrideSettings.get = (key: string) => key === MODEL_KEY[provider] ? model : s.get(key);
+        const result = await PROVIDER_FN[provider](req, overrideSettings);
+        _lastUsedModel = `${provider}/${model}`;
+        if (model !== configuredModel) {
+          console.info(`[LLM] ${provider} fell back to model ${model} (configured: ${configuredModel})`);
+        }
+        providerSucceeded = true;
+        return result;
+      } catch (err) {
+        lastError = err as Error;
+        if (isQuotaError(lastError.message) && model !== modelsToTry[modelsToTry.length - 1]) {
+          console.warn(`[LLM] ${provider}/${model} quota exceeded, trying ${modelsToTry[modelsToTry.indexOf(model) + 1]}...`);
+          continue;
+        }
+        break; // non-quota error or last model — move to next provider
+      }
+    }
+
+    if (!providerSucceeded) {
+      const isRateLimit = isQuotaError(lastError?.message || '');
+      const isServerError = lastError?.message.includes('503') || lastError?.message.includes('500');
+      const reason = isRateLimit ? 'quota exceeded' : isServerError ? 'server error' : 'failed';
       failedProviders.push(`${provider} (${reason})`);
-      console.warn(`[LLM] ${provider} failed: ${lastError.message}${chain.indexOf(provider) < chain.length - 1 ? ', trying next provider...' : ''}`);
+      console.warn(`[LLM] ${provider} exhausted all models: ${lastError?.message}${chain.indexOf(provider) < chain.length - 1 ? ', trying next provider...' : ''}`);
     }
   }
 
   // Build a clear, user-friendly error message
-  const allRateLimited = failedProviders.every(p => p.includes('rate limited'));
+  const allRateLimited = failedProviders.every(p => p.includes('quota exceeded'));
   if (allRateLimited) {
-    throw new Error(`All AI providers are rate limited (${failedProviders.map(p => p.split(' (')[0]).join(', ')}). Please wait a few minutes and try again.`);
+    throw new Error(`All AI providers are quota-exceeded (${failedProviders.map(p => p.split(' (')[0]).join(', ')}). Please wait a few minutes and try again.`);
   }
   const allServerError = failedProviders.every(p => p.includes('server error'));
   if (allServerError) {

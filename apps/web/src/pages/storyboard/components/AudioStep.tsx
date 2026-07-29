@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Mic, Globe, Play, Pause, CheckCircle, ArrowRight, Merge, RefreshCw, Scissors, Trash2 } from 'lucide-react';
+import { Mic, Globe, Play, Pause, CheckCircle, ArrowRight, Merge, RefreshCw, Scissors, Trash2, Image, Video } from 'lucide-react';
 import clsx from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
 import { AdvancedToggle } from './AdvancedToggle';
@@ -18,6 +18,7 @@ export function AudioStep() {
     handleSplitAtCursor,
     handleUpdateEntryText,
     handleAutoSeparate, handleRetranscribe,
+    handleSetEntryMediaType,
     scriptText, setStep, saveProject,
     audioLogRef,
     t,
@@ -178,8 +179,30 @@ export function AudioStep() {
       {/* Transcript segments */}
       {transcriptEntries.length > 0 && (
         <div className="border border-c-border rounded-lg overflow-hidden">
-          <div className="px-3 py-2 border-b border-c-border bg-c-surface flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-c-text shrink-0">{transcriptEntries.length} {t('storyboard.segments')}</span>
+          <div className="px-3 py-2 border-b border-c-border bg-c-surface flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-medium text-c-text">{transcriptEntries.length} {t('storyboard.segments')}</span>
+              {/* Bulk set all image or video */}
+              <div className="flex rounded border border-c-border overflow-hidden">
+                <button
+                  onClick={() => transcriptEntries.forEach(e => handleSetEntryMediaType(e.index, 'image'))}
+                  className="px-1.5 py-0.5 text-[9px] flex items-center gap-0.5 text-cyan-400 hover:bg-cyan-600/20 transition-colors"
+                  title="Set all to image"
+                >
+                  <Image className="w-2.5 h-2.5" /> All
+                </button>
+                <button
+                  onClick={() => transcriptEntries.forEach(e => handleSetEntryMediaType(e.index, 'video'))}
+                  className="px-1.5 py-0.5 text-[9px] flex items-center gap-0.5 border-l border-c-border text-violet-400 hover:bg-violet-600/20 transition-colors"
+                  title="Set all to video"
+                >
+                  <Video className="w-2.5 h-2.5" /> All
+                </button>
+              </div>
+              {transcriptEntries.some(e => e.mediaType === 'video') && (
+                <span className="text-[9px] text-violet-400">{transcriptEntries.filter(e => e.mediaType === 'video').length} video</span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <button onClick={handleRetranscribe} className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1" title={t('storyboard.retranscribeHint')}>
                 <RefreshCw className="w-3 h-3" /> {t('storyboard.retranscribe')}
@@ -204,9 +227,26 @@ export function AudioStep() {
               const dur = (e.endMs - e.startMs) / 1000;
               const isShort = dur < separateSec;
               return (
-                <div key={`${e.startMs}-${e.endMs}-${idx}`} className={clsx('px-3 py-1.5 flex gap-2 items-center hover:bg-c-surface/30 transition-colors', isShort ? 'bg-orange-900/15' : '')}>
-                  <span className="text-[10px] font-mono text-cyan-300/70 shrink-0 w-28 flex items-center gap-1.5">
-                    {e.startTime.split(',')[0]} &rarr; {e.endTime.split(',')[0]}
+                <div key={`${e.startMs}-${e.endMs}-${idx}`} className={clsx('px-2 py-1.5 flex gap-2 items-center hover:bg-c-surface/30 transition-colors', isShort ? 'bg-orange-900/15' : '')}>
+                  {/* Per-segment image/video toggle */}
+                  <div className="flex rounded border border-c-border overflow-hidden shrink-0">
+                    <button
+                      onClick={() => handleSetEntryMediaType(e.index, 'image')}
+                      className={clsx('px-1 py-0.5 transition-colors', (!e.mediaType || e.mediaType === 'image') ? 'bg-cyan-600/30 text-cyan-400' : 'text-c-dim hover:text-c-text')}
+                      title="Image"
+                    >
+                      <Image className="w-2.5 h-2.5" />
+                    </button>
+                    <button
+                      onClick={() => handleSetEntryMediaType(e.index, 'video')}
+                      className={clsx('px-1 py-0.5 border-l border-c-border transition-colors', e.mediaType === 'video' ? 'bg-violet-600/30 text-violet-400' : 'text-c-dim hover:text-c-text')}
+                      title="Video clip"
+                    >
+                      <Video className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                  <span className="text-[10px] font-mono text-cyan-300/70 shrink-0 w-24 flex items-center gap-1">
+                    {e.startTime.split(',')[0]}
                     <span className={clsx('text-[9px] font-bold', isShort ? 'text-orange-400' : 'text-c-dim')}>({dur.toFixed(1)}s)</span>
                   </span>
                   <input

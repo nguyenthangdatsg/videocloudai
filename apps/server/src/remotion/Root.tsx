@@ -4,7 +4,14 @@ import { Intro } from './compositions/Intro';
 import { Outro } from './compositions/Outro';
 import { SceneClip } from './compositions/SceneClip';
 import { ComparisonScene } from './compositions/ComparisonScene';
-import type { IntroConfig, OutroConfig, SceneClipConfig, ComparisonSceneConfig } from './types';
+import { ChartBigNumber } from './compositions/ChartBigNumber';
+import { ChartLine } from './compositions/ChartLine';
+import { ChartBars } from './compositions/ChartBars';
+import { ChartVs } from './compositions/ChartVs';
+import type {
+  IntroConfig, OutroConfig, SceneClipConfig, ComparisonSceneConfig,
+  ChartBigNumberConfig, ChartLineConfig, ChartBarsConfig, ChartVsConfig,
+} from './types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const IntroComp = Intro as React.ComponentType<any>;
@@ -14,6 +21,14 @@ const OutroComp = Outro as React.ComponentType<any>;
 const SceneClipComp = SceneClip as React.ComponentType<any>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ComparisonSceneComp = ComparisonScene as React.ComponentType<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ChartBigNumberComp = ChartBigNumber as React.ComponentType<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ChartLineComp = ChartLine as React.ComponentType<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ChartBarsComp = ChartBars as React.ComponentType<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ChartVsComp = ChartVs as React.ComponentType<any>;
 
 function RemotionRoot() {
   return (
@@ -88,6 +103,76 @@ function RemotionRoot() {
           bgType: 'color',
           bgSrc: '#0d0e12',
         } satisfies ComparisonSceneConfig}
+      />
+      {/* Chart compositions — 1920×1080 landscape (portrait variant handled via width/height props) */}
+      <Composition
+        id="ChartBigNumber"
+        component={ChartBigNumberComp}
+        durationInFrames={144}
+        fps={24}
+        width={1920}
+        height={1080}
+        defaultProps={{
+          durationInFrames: 144,
+          value: 99763,
+          prefix: '',
+          suffix: '',
+          label: 'Chart label',
+          sourceLabel: '',
+          accentColor: '#7c6af5',
+          bgColor: '#0d0e12',
+        } satisfies ChartBigNumberConfig}
+      />
+      <Composition
+        id="ChartLine"
+        component={ChartLineComp}
+        durationInFrames={144}
+        fps={24}
+        width={1920}
+        height={1080}
+        defaultProps={{
+          durationInFrames: 144,
+          dataPoints: [{ label: '2000', value: 100 }, { label: '2010', value: 500 }, { label: '2020', value: 1000 }],
+          title: 'Chart Title',
+          sourceLabel: '',
+          accentColor: '#7c6af5',
+          bgColor: '#0d0e12',
+        } satisfies ChartLineConfig}
+      />
+      <Composition
+        id="ChartBars"
+        component={ChartBarsComp}
+        durationInFrames={144}
+        fps={24}
+        width={1920}
+        height={1080}
+        defaultProps={{
+          durationInFrames: 144,
+          bars: [{ name: 'Item A', value: 80 }, { name: 'Item B', value: 60 }, { name: 'Item C', value: 40 }],
+          title: 'Chart Title',
+          sourceLabel: '',
+          accentColor: '#7c6af5',
+          bgColor: '#0d0e12',
+          sortOrder: 'scripted',
+        } satisfies ChartBarsConfig}
+      />
+      <Composition
+        id="ChartVs"
+        component={ChartVsComp}
+        durationInFrames={144}
+        fps={24}
+        width={1920}
+        height={1080}
+        defaultProps={{
+          durationInFrames: 144,
+          leftLabel: 'Left',
+          leftValue: '$1,000',
+          rightLabel: 'Right',
+          rightValue: '$2,000',
+          title: '',
+          accentColor: '#7c6af5',
+          bgColor: '#0d0e12',
+        } satisfies ChartVsConfig}
       />
     </>
   );

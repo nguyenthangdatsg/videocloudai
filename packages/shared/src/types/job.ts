@@ -7,9 +7,10 @@ export type JobType =
   | 'export-video'
   | 'analyze-scene'
   | 'import-url'
-  | 'upload-to-platform';
+  | 'upload-to-platform'
+  | 'script-studio-produce';
 
-export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'retrying';
+export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'retrying' | 'waiting_review';
 export type JobPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 export interface JobRecord {

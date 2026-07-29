@@ -4,13 +4,19 @@ import { getJobQueue } from './queue';
 import { GenerationService } from '../services/generation.service';
 import { VideoService } from '../services/video.service';
 import { PlatformUploadService } from '../services/platform-upload.service';
+import { NarrationService } from '../services/narration.service';
+import { SubtitleService } from '../services/subtitle.service';
 import { importFromUrl } from '../services/import.service';
+import { produceBlocks, type ProduceOptions } from '../services/video-producer.service';
+import { addLog, setDocStatus, type LogLevel } from '../services/script-studio.service';
 import type { TimelineClip } from '@videocloudai/shared';
 
 export function registerHandlers(
   generationService: GenerationService,
   videoService: VideoService,
-  platformUploadService: PlatformUploadService
+  platformUploadService: PlatformUploadService,
+  narrationService?: NarrationService,
+  subtitleService?: SubtitleService,
 ): void {
   const queue = getJobQueue();
 
@@ -105,5 +111,23 @@ export function registerHandlers(
     }
 
     return { outputVideoIds: outputIds, count };
+  });
+
+  queue.registerHandler('script-studio-produce', async (job: JobRecord, onProgress) => {
+    const { docId, options } = job.payload as { docId: string; options: ProduceOptions };
+
+    const emit = (level: LogLevel, message: string, pct: number) => {
+      addLog(docId, level, 'produce', message);
+      onProgress(pct, message);
+    };
+
+    try {
+      const result = await produceBlocks(docId, job.id, options, emit);
+      return result;
+    } catch (err) {
+      setDocStatus(docId, 'parsed');
+      addLog(docId, 'error', 'produce', `Production failed: ${(err as Error).message}`);
+      throw err;
+    }
   });
 }

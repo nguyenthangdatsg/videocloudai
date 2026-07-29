@@ -102,6 +102,7 @@ export interface StoryboardContextValue {
   handleGeneratePrompts: () => void;
   handleStopPrompts: () => void;
   handleRegenPrompt: (idx: number) => void;
+  handleSetEntryMediaType: (entryIndex: number, type: 'image' | 'video') => void;
   regenPromptIdx: number | null;
   regenQueueRef: React.MutableRefObject<number[]>;
   promptLogRef: React.RefObject<HTMLDivElement>;
@@ -112,6 +113,7 @@ export interface StoryboardContextValue {
   setGeneratedImages: React.Dispatch<React.SetStateAction<GenImage[]>>;
   generatingImages: boolean;
   imageProgress: string[];
+  handleSetSegmentMediaType: (idx: number, type: GenMediaType) => void;
   provider: string;
   setProvider: (v: string) => void;
   imageModel: string;

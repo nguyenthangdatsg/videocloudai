@@ -93,6 +93,8 @@ export class JobQueue extends EventEmitter {
 
   resumePendingJobs(): void {
     // Re-queue any jobs that were running when the server stopped, then schedule queued ones.
+    // NOTE: 'waiting_review' jobs are intentionally NOT reset — they stay paused until the user
+    // clicks Continue in the UI (POST .../produce/continue calls continueJob).
     dbRun(
       "UPDATE jobs SET status = 'queued', started_at = NULL WHERE status = 'running'"
     );
@@ -205,7 +207,19 @@ export class JobQueue extends EventEmitter {
       this.running.delete(jobId);
       this.emit('job:completed', { jobId, result });
     } catch (err) {
-      const error = err as Error;
+      const error = err as Error & { __reviewPause?: boolean; checkpoint?: string };
+
+      // ReviewPauseSignal: job is intentionally paused for human review, not a failure.
+      if (error.__reviewPause) {
+        dbRun(
+          "UPDATE jobs SET status = 'waiting_review', progress_message = ? WHERE id = ?",
+          [`Waiting for review at checkpoint: ${error.checkpoint ?? 'unknown'}`, jobId]
+        );
+        this.running.delete(jobId);
+        this.emit('job:waiting_review', { jobId, checkpoint: error.checkpoint });
+        return;
+      }
+
       this.running.delete(jobId);
 
       const currentJob = this.getJob(jobId)!;
@@ -234,6 +248,20 @@ export class JobQueue extends EventEmitter {
       [message, stack ?? null, new Date().toISOString(), jobId]
     );
     this.emit('job:failed', { jobId, error: message });
+  }
+
+  /** Resume a job that is in waiting_review state. */
+  continueJob(jobId: string): boolean {
+    const job = this.getJob(jobId);
+    if (!job || job.status !== 'waiting_review') return false;
+    dbRun(
+      "UPDATE jobs SET status = 'queued', progress_message = 'Resuming from checkpoint...' WHERE id = ?",
+      [jobId]
+    );
+    const updatedJob = this.getJob(jobId)!;
+    this.scheduleJob(updatedJob);
+    this.emit('job:queued', updatedJob);
+    return true;
   }
 
   cancelJob(jobId: string): void {

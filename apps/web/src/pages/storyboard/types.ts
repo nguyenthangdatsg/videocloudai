@@ -7,6 +7,7 @@ export interface TranscriptEntry {
   text: string;
   startMs: number;
   endMs: number;
+  mediaType?: 'image' | 'video';
 }
 
 export interface StagePart {

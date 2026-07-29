@@ -1,0 +1,3215 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import {
+  ArrowLeft, ChevronDown, ChevronUp, AlertTriangle, Info, Check,
+  Play, Loader2, BarChart2, Video, Mic, Settings, RefreshCw, X,
+  Volume2, Film, Square, ChevronRight, ChevronLeft, Pencil, Music2,
+  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus,
+} from 'lucide-react';
+import { scriptStudioApi, queueApi, ttsApi, musicApi } from '../../lib/api';
+import { useAppStore } from '../../store';
+
+// ── Types ──
+
+interface ScriptBlock {
+  id: string;
+  blockIndex: number;
+  segmentIndex: number;
+  segmentName: string;
+  sceneNumber: number;
+  narration: string;
+  pexelsQuery: string | null;
+  chartSpec: any | null;
+  overlays: string[];
+  paceHint: 'slow' | 'fast' | null;
+  contentHash: string | null;
+  audioPath: string | null;
+  audioDurationMs: number | null;
+  audioEngine: string | null;
+  words: Array<{ word: string; offset_ms: number; duration_ms: number }> | null;
+  visualType: string;
+  clipAssetPath: string | null;
+  clips: Array<{ assetPath: string; startSec: number; endSec: number | null; sourceDurationSec?: number; label?: string }>;
+  motion: string;
+  renderedClipPath: string | null;
+  status: 'pending' | 'audio_ready' | 'clip_ready' | 'rendered' | 'error';
+  errorMsg: string | null;
+  aiPrompt: string | null;
+  aiAssetPath: string | null;
+  voiceConfig: string | null;
+  clipStartSec: number | null;
+  clipEndSec: number | null;
+}
+
+interface LogEntry { ts: string; level: string; message: string; operation?: string; }
+
+const STATUS_CLASSES: Record<string, string> = {
+  draft: 'bg-gray-500/15 text-gray-400',
+  parsed: 'bg-blue-500/15 text-blue-400',
+  narration_copied: 'bg-indigo-500/15 text-indigo-400',
+  aligned: 'bg-purple-500/15 text-purple-400',
+  producing: 'bg-orange-500/15 text-orange-400',
+  ready: 'bg-green-500/15 text-green-400',
+  published: 'bg-emerald-500/15 text-emerald-400',
+};
+
+const MOTION_EFFECTS = ['static', 'slow-zoom', 'ken-burns-in', 'ken-burns-out', 'pan-left', 'pan-right', 'pan-up', 'pan-down'];
+
+// ── Step Indicator ──
+
+function StepIndicator({ step, totalBlocks, audioReady, rendered, isProducing, hasResult, onStepClick }: {
+  step: 1 | 2 | 3 | 4;
+  totalBlocks: number;
+  audioReady: number;
+  rendered: number;
+  isProducing: boolean;
+  hasResult: boolean;
+  onStepClick: (s: 1 | 2 | 3 | 4) => void;
+}) {
+  const steps = [
+    { num: 1 as const, label: 'Configure', sublabel: 'voice & settings', enabled: true },
+    { num: 2 as const, label: 'Review Blocks', sublabel: `${totalBlocks} blocks`, enabled: true },
+    { num: 3 as const, label: 'Produce', sublabel: isProducing ? `${rendered}/${totalBlocks} rendered` : rendered > 0 ? `${rendered}/${totalBlocks} done` : 'generate video', enabled: true },
+    { num: 4 as const, label: 'Result', sublabel: hasResult ? 'video ready' : 'pending', enabled: hasResult },
+  ];
+
+  return (
+    <div className="flex items-center gap-0 px-4 py-3 border-b border-c-border bg-c-surface shrink-0">
+      {steps.map((s, i) => {
+        const isActive = step === s.num;
+        const isDone = (step > s.num && s.num < 4) || (s.num === 4 && hasResult && step !== 4);
+        return (
+          <div key={s.num} className="flex items-center">
+            <button
+              className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg transition-all ${
+                isActive ? 'bg-c-accent/10' : s.enabled ? 'hover:bg-c-elevated cursor-pointer' : 'opacity-40 cursor-default'
+              }`}
+              onClick={() => s.enabled && onStepClick(s.num)}
+              disabled={!s.enabled}
+            >
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-all ${
+                isDone
+                  ? 'bg-green-500/20 text-green-400 border border-green-500/40'
+                  : isActive
+                    ? 'bg-c-accent text-white'
+                    : 'bg-c-elevated text-c-dim border border-c-border'
+              }`}>
+                {isDone ? <Check className="w-3 h-3" /> : s.num}
+              </div>
+              <div className="hidden sm:block">
+                <p className={`text-xs font-semibold leading-tight ${isActive ? 'text-c-text' : isDone ? 'text-green-400' : s.enabled ? 'text-c-muted' : 'text-c-dim'}`}>
+                  {s.label}
+                </p>
+                <p className={`text-xs leading-tight ${s.num === 4 && hasResult ? 'text-green-400' : 'text-c-dim'}`}>{s.sublabel}</p>
+              </div>
+            </button>
+            {i < steps.length - 1 && (
+              <ChevronRight className={`w-4 h-4 shrink-0 mx-1 ${step > s.num ? 'text-green-400/50' : 'text-c-border'}`} />
+            )}
+          </div>
+        );
+      })}
+
+      {/* Progress pills */}
+      <div className="ml-auto flex items-center gap-2">
+        <span className="text-xs text-c-dim hidden md:block">
+          <span className={audioReady === totalBlocks && totalBlocks > 0 ? 'text-blue-400' : 'text-c-dim'}>
+            {audioReady}/{totalBlocks}
+          </span>
+          {' '}audio
+        </span>
+        <span className="text-xs text-c-dim hidden md:block">·</span>
+        <span className="text-xs text-c-dim hidden md:block">
+          <span className={rendered === totalBlocks && totalBlocks > 0 ? 'text-green-400' : 'text-c-dim'}>
+            {rendered}/{totalBlocks}
+          </span>
+          {' '}rendered
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Block Status Pipeline ──
+
+function BlockStatusPipeline({ status }: { status: ScriptBlock['status'] }) {
+  const stages = ['pending', 'audio_ready', 'clip_ready', 'rendered'] as const;
+  const stageIdx = stages.indexOf(status as any);
+
+  const stageInfo = [
+    { icon: <Mic className="w-2.5 h-2.5" />, label: 'Audio', color: 'bg-blue-500' },
+    { icon: <Video className="w-2.5 h-2.5" />, label: 'Clip', color: 'bg-purple-500' },
+    { icon: <Film className="w-2.5 h-2.5" />, label: 'Render', color: 'bg-green-500' },
+  ];
+
+  if (status === 'error') {
+    return (
+      <div className="flex items-center gap-1">
+        <AlertTriangle className="w-3 h-3 text-red-400" />
+        <span className="text-xs text-red-400">error</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-0.5">
+      {stageInfo.map((stage, i) => {
+        const done = stageIdx > i;
+        const active = stageIdx === i + 1;
+        return (
+          <div
+            key={i}
+            className={`flex items-center justify-center w-4 h-4 rounded-sm transition-all ${
+              done ? stage.color : active ? `${stage.color} opacity-60` : 'bg-c-elevated'
+            }`}
+            title={stage.label}
+          >
+            <span className={done || active ? 'text-white' : 'text-c-dim'}>
+              {stage.icon}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Activity Log ──
+
+function ActivityLog({ logs, expanded, onToggle, onClear }: {
+  logs: LogEntry[];
+  expanded: boolean;
+  onToggle: () => void;
+  onClear?: () => void;
+}) {
+  const { t } = useTranslation();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (expanded && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [logs, expanded]);
+
+  const levelIcon = (level: string) => {
+    if (level === 'warn') return <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />;
+    if (level === 'error') return <AlertTriangle className="w-3 h-3 text-red-400 shrink-0" />;
+    if (level === 'success') return <Check className="w-3 h-3 text-green-400 shrink-0" />;
+    return <Info className="w-3 h-3 text-blue-400 shrink-0" />;
+  };
+
+  return (
+    <div className="border-t border-c-border bg-c-surface shrink-0">
+      <div className="flex items-center px-4 py-2.5">
+        <button
+          className="flex-1 flex items-center gap-2 text-sm font-medium text-c-muted hover:text-c-text transition-colors cursor-pointer"
+          onClick={onToggle}
+        >
+          {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+          {t('scriptStudio.activityLog')} ({logs.length})
+        </button>
+        {expanded && logs.length > 0 && onClear && (
+          <button
+            className="text-xs text-c-dim hover:text-c-text px-2 py-1 rounded hover:bg-c-elevated transition-colors cursor-pointer"
+            onClick={onClear}
+          >
+            {t('scriptStudio.clearLogs')}
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <div ref={scrollRef} className="h-44 overflow-y-auto px-4 pb-3 font-mono text-xs space-y-0.5">
+          {logs.length === 0 && <p className="text-c-dim py-3">{t('scriptStudio.noLogs')}</p>}
+          {logs.map((log, i) => (
+            <div key={i} className="flex items-start gap-2 py-0.5">
+              <span className="text-c-dim whitespace-nowrap shrink-0">{new Date(log.ts).toLocaleTimeString()}</span>
+              {levelIcon(log.level)}
+              <span className="text-c-text">{log.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Mirror of server-side buildFlowPrompt — used to pre-fill the AI prompt textarea. */
+function autoFlowPrompt(block: ScriptBlock, orientation: 'landscape' | 'portrait'): string {
+  const parts: string[] = [];
+  if (block.narration?.trim()) parts.push(block.narration.trim());
+  if (block.pexelsQuery?.trim()) parts.push(block.pexelsQuery.trim());
+  if (block.segmentName && !/^segment\s+\d+$/i.test(block.segmentName)) {
+    parts.push(block.segmentName);
+  }
+  const base = parts.join('. ').replace(/\.\.\s*/g, '. ').trim();
+  const aspect = orientation === 'portrait' ? '9:16 vertical portrait' : '16:9 widescreen';
+  return `${base} — documentary realism, natural lighting, ${aspect}, no text, no captions, no logos`;
+}
+
+// ── Block Step Editor (one-by-one preview + edit) ──
+
+function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0 }: {
+  blocks: ScriptBlock[];
+  docId: string;
+  orientation: 'landscape' | 'portrait';
+  onBlockUpdated: () => void;
+  initialIdx?: number;
+}) {
+  const { t } = useTranslation();
+  const [idx, setIdx] = useState(initialIdx);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [fetchingPexels, setFetchingPexels] = useState(false);
+  const [fetchingPixabay, setFetchingPixabay] = useState(false);
+  const [generatingAi, setGeneratingAi] = useState(false);
+  const [generatingTts, setGeneratingTts] = useState(false);
+  const [ttsEngine, setTtsEngine] = useState<'omnivoice' | 'edge-tts'>('edge-tts');
+  const [actionLog, setActionLog] = useState<{ level: string; msg: string }[]>([]);
+
+  // Stock picker state
+  const [showPexelsPicker, setShowPexelsPicker] = useState(false);
+  const [pickerService, setPickerService] = useState<'pexels' | 'pixabay' | 'mixkit'>('pexels');
+  const [pickerOrientation, setPickerOrientation] = useState<'landscape' | 'portrait'>('landscape');
+  const [pickerQuery, setPickerQuery] = useState('');
+  const [pickerCandidates, setPickerCandidates] = useState<Array<{
+    id: number; thumbnail: string; previewUrl: string | null;
+    downloadUrl?: string; duration: number; width: number; height: number;
+    pageUrl?: string; title?: string;
+  }>>([]);
+  const [loadingPicker, setLoadingPicker] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [applyingPexelsId, setApplyingPexelsId] = useState<number | null>(null);
+  const [regenningQuery, setRegenningQuery] = useState(false);
+  const [trimStart, setTrimStart] = useState<string>('');
+  const [trimEnd, setTrimEnd] = useState<string>('');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const scrubBarRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number | null>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const clampedIdx = Math.min(idx, blocks.length - 1);
+  const block = blocks[clampedIdx];
+  const [audioElDuration, setAudioElDuration] = useState<number | null>(null);
+  const [audioTime, setAudioTime] = useState(0);
+  const [activeClipIdx, setActiveClipIdx] = useState(0);
+  // Per-clip source durations (loaded from video metadata or stored in clip)
+  const [clipSourceDurations, setClipSourceDurations] = useState<Record<string, number>>({});
+  // Which trim handle is being dragged: null | { clipIdx, edge: 'start'|'end' }
+  const [trimDrag, setTrimDrag] = useState<{ clipIdx: number; edge: 'start' | 'end' } | null>(null);
+  const [narrationExpanded, setNarrationExpanded] = useState(false);
+  const [playerCollapsed, setPlayerCollapsed] = useState(false);
+  // Draggable audio range on the main player timeline
+  const [audioRangeDragStart, setAudioRangeDragStart] = useState<number | null>(null);
+  const audioRangeDragOffsetRef = useRef(0);
+
+  // Multi-clip support: use clips array, fall back to legacy single clipAssetPath
+  const blockClips = block?.clips?.length > 0
+    ? block.clips
+    : (block?.clipAssetPath ? [{ assetPath: block.clipAssetPath, startSec: block.clipStartSec ?? 0, endSec: block.clipEndSec }] : []);
+  const safeClipIdx = Math.min(activeClipIdx, Math.max(0, blockClips.length - 1));
+  const activeClip = blockClips[safeClipIdx] ?? null;
+
+  // Compute per-clip effective durations and total timeline
+  const clipEffDurations = blockClips.map((c, i) => {
+    const srcDur = c.sourceDurationSec ?? clipSourceDurations[c.assetPath] ?? null;
+    const start = c.startSec ?? 0;
+    const end = c.endSec ?? srcDur;
+    return end != null ? Math.max(0, end - start) : (srcDur != null ? srcDur - start : 0);
+  });
+  const totalClipsDuration = clipEffDurations.reduce((a, b) => a + b, 0);
+  // Cumulative start offsets on the unified timeline
+  const clipTimelineOffsets = clipEffDurations.reduce<number[]>((acc, d, i) => {
+    acc.push(i === 0 ? 0 : acc[i - 1] + clipEffDurations[i - 1]);
+    return acc;
+  }, []);
+
+  // Map a unified timeline position to { clipIdx, localSeekTime }
+  const timelineToClip = useCallback((pos: number) => {
+    let acc = 0;
+    for (let i = 0; i < blockClips.length; i++) {
+      if (pos < acc + clipEffDurations[i]) {
+        return { clipIdx: i, localTime: blockClips[i].startSec + (pos - acc) };
+      }
+      acc += clipEffDurations[i];
+    }
+    const last = blockClips.length - 1;
+    return { clipIdx: Math.max(0, last), localTime: (blockClips[last]?.endSec ?? blockClips[last]?.startSec ?? 0) };
+  }, [blockClips, clipEffDurations]);
+
+  // Computed playback values
+  const effectiveClipStart = activeClip?.startSec ?? (block?.clipStartSec ?? 0);
+  const audioDurSec = (block?.audioDurationMs && block.audioDurationMs > 0) ? block.audioDurationMs / 1000 : null;
+  const playDurSec = totalClipsDuration > 0
+    ? totalClipsDuration
+    : (audioDurSec ?? audioElDuration ?? (videoDuration != null ? videoDuration - effectiveClipStart : null));
+
+  // Stop playback and auto-open stock picker when block changes
+  useEffect(() => {
+    setPlaying(false);
+    setCurrentTime(0);
+    setVideoDuration(null);
+    setAudioElDuration(null);
+    setAudioTime(0);
+    setActiveClipIdx(0);
+    setClipSourceDurations({});
+    setTrimDrag(null);
+    setPickerCandidates([]);
+    setPickerError(null);
+    if (videoRef.current) { videoRef.current.pause(); videoRef.current.currentTime = 0; }
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
+    // Sync trim inputs from block data
+    const b = blocks[clampedIdx];
+    setTrimStart(b?.clipStartSec != null ? String(b.clipStartSec) : '');
+    setTrimEnd(b?.clipEndSec != null ? String(b.clipEndSec) : '');
+    // Auto-open Pexels picker for every block
+    setPickerService('pexels');
+    setPickerOrientation('landscape');
+    setShowPexelsPicker(true);
+    // Seek video to clipStartSec without auto-playing
+    setTimeout(() => {
+      if (videoRef.current) {
+        const cs = b?.clipStartSec ?? 0;
+        videoRef.current.currentTime = cs;
+      }
+    }, 150);
+  }, [clampedIdx]);
+
+  // Auto-fetch Pexels stock when navigating to a new block
+  useEffect(() => {
+    const currentBlock = blocks[clampedIdx];
+    if (!currentBlock) return;
+    const q = currentBlock.pexelsQuery || currentBlock.narration.split(/\s+/).slice(0, 5).join(' ');
+    if (!q) return;
+    setPickerQuery(q);
+    fetchPickerCandidates('pexels', q, 'landscape');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clampedIdx]);
+
+  // Auto-generate TTS when navigating to a block without audio
+  useEffect(() => {
+    const currentBlock = blocks[clampedIdx];
+    if (!currentBlock || !currentBlock.narration?.trim()) return;
+    if (currentBlock.audioDurationMs && currentBlock.audioDurationMs > 0) return;
+    let cancelled = false;
+    setGeneratingTts(true);
+    scriptStudioApi.ttsBlock(docId, currentBlock.blockIndex, { engine: ttsEngine }).then((data: any) => {
+      if (cancelled) return;
+      const eng = data.engine ? ` [${data.engine}]` : '';
+      setActionLog([{ level: 'success', msg: `TTS ready (${(data.audioDurationMs / 1000).toFixed(1)}s)${eng}` }]);
+      onBlockUpdated();
+    }).catch((err) => {
+      if (cancelled) return;
+      setActionLog([{ level: 'error', msg: `TTS failed: ${err.message ?? 'unknown'}` }]);
+    }).finally(() => {
+      if (!cancelled) setGeneratingTts(false);
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clampedIdx, docId]);
+
+  // Stop audio when it ends
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const onEnd = () => { setPlaying(false); if (videoRef.current) videoRef.current.pause(); };
+    audio.addEventListener('ended', onEnd);
+    return () => audio.removeEventListener('ended', onEnd);
+  }, []);
+
+  // Seek the video player to the right clip + local time for a given timeline position
+  const seekToTimeline = useCallback((pos: number) => {
+    if (blockClips.length === 0) return;
+    const { clipIdx, localTime } = timelineToClip(pos);
+    const clip = blockClips[clipIdx];
+    if (!clip) return;
+    const video = videoRef.current;
+    // Switch source if clip changed
+    if (clipIdx !== safeClipIdx) {
+      setActiveClipIdx(clipIdx);
+      // Source will update via React; seek after load
+      setTimeout(() => {
+        if (videoRef.current) videoRef.current.currentTime = localTime;
+      }, 50);
+    } else if (video) {
+      video.currentTime = localTime;
+    }
+    setCurrentTime(pos);
+  }, [blockClips, timelineToClip, safeClipIdx]);
+
+  // Track current playback time via requestAnimationFrame (multi-clip aware)
+  useEffect(() => {
+    const tick = () => {
+      const video = videoRef.current;
+      const audio = audioRef.current;
+      const dur = playDurSec;
+
+      // Always track audio time independently
+      if (audio && audio.readyState >= 1 && !audio.paused) {
+        setAudioTime(audio.currentTime);
+      }
+
+      if (dur && dur > 0) {
+        // Compute timeline position from active clip's video time
+        let timelinePos = currentTime;
+        if (video && video.readyState >= 1 && blockClips.length > 0) {
+          const localElapsed = video.currentTime - (blockClips[safeClipIdx]?.startSec ?? 0);
+          timelinePos = (clipTimelineOffsets[safeClipIdx] ?? 0) + Math.max(0, localElapsed);
+        } else if (audio && audio.readyState >= 1 && blockClips.length === 0) {
+          timelinePos = audio.currentTime;
+        }
+        timelinePos = Math.max(0, Math.min(timelinePos, dur));
+        setCurrentTime(timelinePos);
+
+        // Check if current clip ended → advance to next or stop
+        if (video && blockClips.length > 0) {
+          const clipDur = clipEffDurations[safeClipIdx] ?? 0;
+          const localElapsed = video.currentTime - (blockClips[safeClipIdx]?.startSec ?? 0);
+          if (localElapsed >= clipDur - 0.05) {
+            const nextIdx = safeClipIdx + 1;
+            if (nextIdx < blockClips.length) {
+              // Advance to next clip
+              setActiveClipIdx(nextIdx);
+              setTimeout(() => {
+                if (videoRef.current) {
+                  videoRef.current.currentTime = blockClips[nextIdx].startSec;
+                  videoRef.current.play().catch(() => {});
+                }
+              }, 50);
+            } else {
+              // End of all clips
+              video.pause();
+              audio?.pause();
+              setPlaying(false);
+              setCurrentTime(0);
+              setActiveClipIdx(0);
+              setTimeout(() => { if (videoRef.current) videoRef.current.currentTime = blockClips[0]?.startSec ?? 0; }, 50);
+            }
+          }
+        }
+        // Audio-only: stop at end
+        if (blockClips.length === 0 && audio && timelinePos >= dur - 0.05) {
+          audio.pause();
+          setPlaying(false);
+          audio.currentTime = 0;
+          setCurrentTime(0);
+        }
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    if (playing) {
+      rafRef.current = requestAnimationFrame(tick);
+    }
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [playing, playDurSec, safeClipIdx, blockClips, clipEffDurations, clipTimelineOffsets, currentTime]);
+
+  // Scrub on the playback progress bar
+  const handleScrub = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!scrubBarRef.current || !playDurSec) return;
+    const rect = scrubBarRef.current.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const seekTime = fraction * playDurSec;
+    if (blockClips.length > 0) {
+      seekToTimeline(seekTime);
+    } else {
+      if (audioRef.current) audioRef.current.currentTime = seekTime;
+      setCurrentTime(seekTime);
+    }
+  };
+
+  const handleScrubDrag = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.buttons !== 1) return;
+    handleScrub(e);
+  };
+
+  // Timeline trim: drag clip edges to adjust startSec / endSec
+  // We accumulate changes in a ref during drag, only save on mouseup
+  const trimPendingRef = useRef<{ clipIdx: number; startSec: number; endSec: number | null } | null>(null);
+
+  useEffect(() => {
+    if (!trimDrag) return;
+    const { clipIdx, edge } = trimDrag;
+    const clip = blockClips[clipIdx];
+    if (!clip) { setTrimDrag(null); return; }
+    const srcDur = clip.sourceDurationSec ?? clipSourceDurations[clip.assetPath] ?? null;
+    if (srcDur == null) { setTrimDrag(null); return; }
+
+    const onMove = (e: MouseEvent) => {
+      if (!timelineRef.current || totalClipsDuration <= 0) return;
+      const rect = timelineRef.current.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const timelinePos = frac * totalClipsDuration;
+      const clipOffset = clipTimelineOffsets[clipIdx] ?? 0;
+      const localPos = timelinePos - clipOffset; // position within this clip's span
+
+      let newStart = clip.startSec;
+      let newEnd = clip.endSec ?? srcDur;
+      if (edge === 'start') {
+        newStart = Math.max(0, Math.min(newEnd - 0.2, clip.startSec + localPos));
+      } else {
+        newEnd = Math.max(clip.startSec + 0.2, Math.min(srcDur, clip.startSec + localPos));
+      }
+      trimPendingRef.current = { clipIdx, startSec: parseFloat(newStart.toFixed(2)), endSec: parseFloat(newEnd.toFixed(2)) };
+    };
+
+    const onUp = () => {
+      setTrimDrag(null);
+      const pending = trimPendingRef.current;
+      if (pending && block) {
+        const updated = blockClips.map((c, i) => i === pending.clipIdx ? { ...c, startSec: pending.startSec, endSec: pending.endSec } : c);
+        scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => onBlockUpdated());
+      }
+      trimPendingRef.current = null;
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  }, [trimDrag, blockClips, clipTimelineOffsets, totalClipsDuration, clipSourceDurations, docId, block, onBlockUpdated]);
+
+  // Cut clip at current playhead position
+  const cutAtPlayhead = useCallback(() => {
+    if (blockClips.length === 0 || !playDurSec) return;
+    const { clipIdx, localTime } = timelineToClip(currentTime);
+    const clip = blockClips[clipIdx];
+    if (!clip) return;
+    const end = clip.endSec ?? clip.sourceDurationSec ?? clipSourceDurations[clip.assetPath] ?? null;
+    if (end == null || localTime <= clip.startSec + 0.2 || localTime >= end - 0.2) return; // too close to edges
+    const leftClip = { ...clip, endSec: parseFloat(localTime.toFixed(2)) };
+    const rightClip = { ...clip, startSec: parseFloat(localTime.toFixed(2)), endSec: end };
+    const updated = [...blockClips.slice(0, clipIdx), leftClip, rightClip, ...blockClips.slice(clipIdx + 1)];
+    scriptStudioApi.updateBlockClips(docId, block!.blockIndex, updated).then(() => onBlockUpdated());
+  }, [blockClips, playDurSec, currentTime, timelineToClip, clipSourceDurations, docId, block, onBlockUpdated]);
+
+  const togglePlay = () => {
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    if (playing) {
+      video?.pause();
+      audio?.pause();
+      setPlaying(false);
+    } else {
+      // If at end, reset to start
+      if (playDurSec && currentTime >= playDurSec - 0.05) {
+        setActiveClipIdx(0);
+        setCurrentTime(0);
+        setTimeout(() => {
+          if (videoRef.current) {
+            videoRef.current.currentTime = blockClips[0]?.startSec ?? 0;
+            videoRef.current.play().catch(() => {});
+          }
+          audio?.play().catch(() => {});
+        }, 50);
+        setPlaying(true);
+        return;
+      }
+      video?.play().catch(() => {});
+      audio?.play().catch(() => {});
+      setPlaying(true);
+    }
+  };
+
+  // Jump to next block that has an error or no clip for quick triage
+  const jumpToIssue = () => {
+    const start = clampedIdx + 1;
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[(start + i) % blocks.length];
+      if (b.status === 'error' || (!b.clipAssetPath && b.narration)) {
+        setIdx(blocks.indexOf(b));
+        return;
+      }
+    }
+  };
+
+  // Shared: fetch candidates for the given service + query + orientation
+  const fetchPickerCandidates = async (service: 'pexels' | 'pixabay' | 'mixkit', query: string, orient: 'landscape' | 'portrait') => {
+    setLoadingPicker(true);
+    setPickerCandidates([]);
+    setPickerError(null);
+    try {
+      const data = await scriptStudioApi.getAlternatives(docId, query, orient, 12, service);
+      setPickerCandidates((data.candidates ?? []).map((c) => ({
+        id: (c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? 0) as number,
+        thumbnail: c.thumbnail,
+        previewUrl: c.previewUrl,
+        downloadUrl: c.downloadUrl,
+        duration: c.duration,
+        width: c.width,
+        height: c.height,
+        pageUrl: c.pexelsUrl ?? c.pageURL,
+        title: c.title,
+      })));
+    } catch (err: any) {
+      setPickerError(err.response?.data?.error ?? err.message ?? 'Search failed');
+    }
+    setLoadingPicker(false);
+  };
+
+  // Open stock picker for a given service
+  const openPicker = async (service: 'pexels' | 'pixabay' | 'mixkit') => {
+    const query = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 5).join(' ');
+    setPickerQuery(query);
+    setPickerService(service);
+    setShowPexelsPicker(true);
+    await fetchPickerCandidates(service, query, pickerOrientation);
+  };
+
+  const switchPickerService = async (service: 'pexels' | 'pixabay' | 'mixkit') => {
+    if (service === pickerService) return;
+    setPickerService(service);
+    await fetchPickerCandidates(service, pickerQuery, pickerOrientation);
+  };
+
+  const switchPickerOrientation = async (orient: 'landscape' | 'portrait') => {
+    if (orient === pickerOrientation) return;
+    setPickerOrientation(orient);
+    await fetchPickerCandidates(pickerService, pickerQuery, orient);
+  };
+
+  const searchPicker = async () => {
+    const q = pickerQuery.trim();
+    if (!q) return;
+    await fetchPickerCandidates(pickerService, q, pickerOrientation);
+  };
+
+  const regenPickerQuery = async () => {
+    setRegenningQuery(true);
+    try {
+      const data = await scriptStudioApi.regenQuery(docId, block.blockIndex);
+      setPickerQuery(data.query);
+      await fetchPickerCandidates(pickerService, data.query, pickerOrientation);
+    } catch (err: any) {
+      setPickerError(err.response?.data?.error ?? err.message ?? 'Failed to regenerate query');
+    }
+    setRegenningQuery(false);
+  };
+
+  const applyPexelsVideo = async (candidate: typeof pickerCandidates[0]) => {
+    setApplyingPexelsId(candidate.id);
+    try {
+      let data: any;
+      if (pickerService === 'pexels') {
+        data = await scriptStudioApi.applyPexelsById(docId, block.blockIndex, candidate.id);
+      } else if (pickerService === 'mixkit') {
+        data = await scriptStudioApi.applyMixkitFromUrl(docId, block.blockIndex, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
+      } else {
+        data = await scriptStudioApi.applyPixabayFromUrl(docId, block.blockIndex, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
+      }
+      // Add to clips array (the backend already set clipAssetPath to the new file)
+      const newAssetPath = data.filename ?? data.clipAssetPath ?? block.clipAssetPath;
+      if (newAssetPath) {
+        const srcDur = data.duration ?? candidate.duration ?? null;
+        const newClip = { assetPath: newAssetPath, startSec: 0, endSec: srcDur as number | null, sourceDurationSec: srcDur as number | undefined, label: `${pickerService}:${candidate.id}` };
+        const updatedClips = [...blockClips, newClip];
+        await scriptStudioApi.updateBlockClips(docId, block.blockIndex, updatedClips);
+        setActiveClipIdx(updatedClips.length - 1);
+        if (srcDur) setClipSourceDurations(prev => ({ ...prev, [newAssetPath]: srcDur }));
+      }
+      setActionLog([{ level: 'success', msg: `Clip added (${data.duration ?? candidate.duration}s)` }]);
+      setShowPexelsPicker(false);
+      onBlockUpdated();
+    } catch (err: any) {
+      setActionLog([{ level: 'error', msg: err.response?.data?.error ?? err.message }]);
+    }
+    setApplyingPexelsId(null);
+  };
+
+  // Fetch top Pexels clip and apply it to this block (kept for direct use)
+  const fetchPexels = async () => {
+    setFetchingPexels(true);
+    setActionLog([]);
+    try {
+      const data = await scriptStudioApi.fetchBlockPexels(docId, block.blockIndex, orientation);
+      setActionLog([{ level: 'success', msg: `Fetched Pexels clip (${data.duration}s) → ${data.filename}` }]);
+      onBlockUpdated();
+    } catch (err: any) {
+      const msg = err.response?.data?.error ?? err.message;
+      setActionLog([{ level: 'error', msg }]);
+    }
+    setFetchingPexels(false);
+  };
+
+  // Fetch top Pixabay clip and apply it to this block
+  const fetchPixabay = async () => {
+    setFetchingPixabay(true);
+    setActionLog([]);
+    try {
+      const data = await scriptStudioApi.fetchBlockPixabay(docId, block.blockIndex, orientation);
+      setActionLog([{ level: 'success', msg: `Fetched Pixabay clip (${data.duration}s) → ${data.filename}` }]);
+      onBlockUpdated();
+    } catch (err: any) {
+      const msg = err.response?.data?.error ?? err.message;
+      setActionLog([{ level: 'error', msg }]);
+    }
+    setFetchingPixabay(false);
+  };
+
+  // Stream-generate AI clip for this block
+  const generateAiBlock = async () => {
+    setGeneratingAi(true);
+    setActionLog([]);
+    try {
+      const res = await fetch(
+        `/api/script-studio/docs/${docId}/blocks/${block.blockIndex}/generate-ai`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ aiPrompt: block.aiPrompt, orientation }),
+        },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      const flush = (line: string) => {
+        if (!line.trim()) return;
+        try {
+          const p = JSON.parse(line);
+          if (p.type === 'log') setActionLog((prev) => [...prev, { level: p.level, msg: p.message }]);
+          if (p.type === 'error') throw new Error(p.error);
+        } catch { /* ignore malformed */ }
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        lines.forEach(flush);
+      }
+      if (buf.trim()) flush(buf);
+      onBlockUpdated();
+    } catch (err: any) {
+      setActionLog([{ level: 'error', msg: err.message }]);
+    }
+    setGeneratingAi(false);
+  };
+
+  // Reset action log when block changes
+  useEffect(() => { setActionLog([]); }, [clampedIdx]);
+
+  if (!block) return null;
+
+  const isPortrait = orientation === 'portrait';
+  const clipUrl = activeClip
+    ? (block.visualType === 'chart' ? `/cache/charts/` : `/cache/images/`) + activeClip.assetPath
+    : null;
+  const audioUrl = block.audioPath ? `/cache/block_audio/${block.audioPath}` : null;
+  const audioTotalSec = audioDurSec ?? audioElDuration ?? 0;
+  const audioBarPct = (audioTotalSec > 0 && playDurSec && playDurSec > 0) ? Math.min(100, (audioTotalSec / playDurSec) * 100) : 0;
+
+  const hasIssue = block.status === 'error' || (!block.clipAssetPath && !!block.narration);
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* ── Navigation bar (sticky) ── */}
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-c-border bg-c-surface shrink-0 z-10">
+        <button
+          className="p-1.5 rounded-lg hover:bg-c-elevated text-c-muted hover:text-c-text transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
+          onClick={() => setIdx((i) => Math.max(0, i - 1))}
+          disabled={clampedIdx === 0}
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+
+        {/* Block pills grouped by segment */}
+        <div className="flex-1 flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+          {blocks.map((b, i) => {
+            const isActive = i === clampedIdx;
+            const hasErr = b.status === 'error';
+            const isChart = !!b.chartSpec;
+            const isAi = b.visualType === 'ai';
+            const noClip = !b.clipAssetPath && !!b.narration;
+            const isNewSegment = i === 0 || blocks[i - 1].segmentIndex !== b.segmentIndex;
+            return (
+              <div key={b.id} className="flex items-center gap-1 shrink-0">
+                {isNewSegment && i > 0 && (
+                  <div className="w-px h-5 bg-c-border mx-1 shrink-0" />
+                )}
+                {isNewSegment && (
+                  <span className="text-[10px] font-semibold text-c-accent/70 uppercase tracking-wide shrink-0 max-w-[72px] truncate" title={b.segmentName}>
+                    {b.segmentName}
+                  </span>
+                )}
+                <button
+                  onClick={() => setIdx(i)}
+                  className={`shrink-0 w-6 h-6 rounded-md text-xs font-mono font-bold transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-c-accent text-white'
+                      : hasErr
+                        ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                        : isChart
+                          ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                          : isAi
+                            ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                            : noClip
+                              ? 'bg-amber-500/15 text-amber-400'
+                              : b.status === 'rendered'
+                                ? 'bg-green-500/15 text-green-400'
+                                : 'bg-c-elevated text-c-dim hover:bg-c-hover hover:text-c-text'
+                  }`}
+                  title={`#${i + 1} · ${b.segmentName} · Sc ${b.sceneNumber}${isChart ? ' [chart]' : isAi ? ' [AI]' : ''}: ${b.status}`}
+                >
+                  {isChart ? <BarChart2 className="w-3 h-3" /> : isAi ? <Wand2 className="w-3 h-3" /> : i + 1}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <button
+          className="p-1.5 rounded-lg hover:bg-c-elevated text-c-muted hover:text-c-text transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
+          onClick={() => setIdx((i) => Math.min(blocks.length - 1, i + 1))}
+          disabled={clampedIdx === blocks.length - 1}
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+
+        {/* Jump to issue */}
+        {blocks.some((b) => b.status === 'error' || (!b.clipAssetPath && b.narration)) && (
+          <button
+            className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors cursor-pointer shrink-0"
+            onClick={jumpToIssue}
+            title="Jump to next block with issue"
+          >
+            <AlertTriangle className="w-3 h-3" />
+            {t('scriptStudio.studio.nextIssue')}
+          </button>
+        )}
+      </div>
+
+      {/* ── Scrollable content area ── */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+
+      {/* ── Current block segment info ── */}
+      <div className="flex items-center gap-1.5 px-3 py-1 border-b border-c-border bg-c-elevated/30 sticky top-0 z-[5]">
+        <div className="w-0.5 h-2.5 rounded-full bg-c-accent/50 shrink-0" />
+        <span className="text-[10px] font-semibold text-c-accent/70 uppercase tracking-widest truncate">{block.segmentName}</span>
+        <span className="text-[10px] text-c-dim/60 shrink-0">·</span>
+        <span className="text-[10px] text-c-dim tabular-nums shrink-0">{clampedIdx + 1}/{blocks.length}</span>
+        <div className="flex-1" />
+        {block.clipAssetPath
+          ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-green-500/10 text-green-400 shrink-0"><Check className="w-2 h-2" />clip</span>
+          : block.narration ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-amber-500/10 text-amber-400 shrink-0"><AlertTriangle className="w-2 h-2" />no clip</span> : null
+        }
+        {block.audioDurationMs ? (
+          <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-blue-500/10 text-blue-400 shrink-0">
+            <Mic className="w-2 h-2" />{(block.audioDurationMs / 1000).toFixed(1)}s
+          </span>
+        ) : null}
+      </div>
+
+      {/* ── Narration strip (collapsible) ── */}
+      <div className="border-b border-c-border bg-c-surface/60">
+        <button
+          className="w-full flex items-center gap-2 px-4 py-1.5 text-left hover:bg-c-elevated/30 transition-colors cursor-pointer"
+          onClick={() => setNarrationExpanded(v => !v)}
+        >
+          <FileText className="w-3 h-3 text-c-dim shrink-0" />
+          {narrationExpanded
+            ? <span className="flex-1 text-[10px] text-c-muted font-medium uppercase tracking-wider">Narration</span>
+            : <p className="flex-1 text-xs text-c-text leading-relaxed truncate">{block.narration || <span className="text-c-dim italic">No narration</span>}</p>
+          }
+          {narrationExpanded ? <ChevronUp className="w-3 h-3 text-c-dim shrink-0" /> : <ChevronDown className="w-3 h-3 text-c-dim shrink-0" />}
+        </button>
+        {narrationExpanded && (
+        <div className="px-4 pb-2">
+          <p className="text-xs text-c-text leading-relaxed whitespace-pre-line mb-1.5">{block.narration}</p>
+        {/* Voice info + regenerate */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {generatingTts ? (
+            <span className="inline-flex items-center gap-1 text-[10px] text-amber-400/70">
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />{t('scriptStudio.studio.generatingVoice')}
+            </span>
+          ) : block.audioDurationMs ? (
+            <span className="inline-flex items-center gap-1 text-[10px] text-blue-400/70">
+              <Mic className="w-2.5 h-2.5" />{(block.audioDurationMs / 1000).toFixed(1)}s
+              {block.audioEngine && (
+                <span className={`px-1 py-px rounded text-[9px] font-mono ${block.audioEngine === 'omnivoice' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/20' : 'bg-sky-500/15 text-sky-400 border border-sky-500/20'}`}>
+                  {block.audioEngine === 'omnivoice' ? 'OmniVoice' : 'edge-tts'}
+                </span>
+              )}
+            </span>
+          ) : block.narration ? (
+            <span className="inline-flex items-center gap-1 text-[10px] text-c-dim">
+              <Mic className="w-2.5 h-2.5 opacity-40" />{t('scriptStudio.studio.noAudioYet')}
+            </span>
+          ) : null}
+          {/* Voice config details */}
+          {(() => {
+            const vc = block.voiceConfig;
+            if (!vc) return null;
+            const parts = vc.split('|').map((p: string) => p.trim());
+            const groupPart = parts.find((p: string) => p.startsWith('group:'));
+            const emotionPart = parts.find((p: string) => p.startsWith('emotion:'));
+            const ratePart = parts.find((p: string) => p.startsWith('rate:'));
+            const groupName = groupPart?.split(':')[1]?.trim();
+            const emotionName = emotionPart?.split(':')[1]?.trim();
+            const rateVal = ratePart?.split(':')[1]?.trim();
+            return (
+              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono" title={vc}>
+                <Mic className="w-2.5 h-2.5 shrink-0" />
+                {groupName ?? 'custom'}
+                {emotionName && <span className="text-cyan-400/60">· {emotionName}</span>}
+                {rateVal && <span className="text-cyan-400/60">· {rateVal}</span>}
+              </span>
+            );
+          })()}
+          {!block.voiceConfig && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-c-elevated text-c-dim border border-c-border font-mono">
+              <Mic className="w-2.5 h-2.5 shrink-0 opacity-40" />
+              {t('scriptStudio.studio.defaultVoice')}
+            </span>
+          )}
+          {/* TTS engine selector + regenerate */}
+          {block.narration && !generatingTts && (
+            <>
+              <select
+                value={ttsEngine}
+                onChange={(e) => setTtsEngine(e.target.value as 'omnivoice' | 'edge-tts')}
+                className="text-[10px] px-1 py-0.5 rounded bg-c-elevated border border-c-border text-c-text cursor-pointer focus:outline-none focus:border-c-accent/40"
+              >
+                <option value="omnivoice">OmniVoice</option>
+                <option value="edge-tts">edge-tts</option>
+              </select>
+              <button
+                className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-c-elevated border border-c-border text-c-dim hover:text-c-accent hover:border-c-accent/30 transition-colors cursor-pointer"
+                title={t('scriptStudio.studio.regenVoice')}
+                onClick={() => {
+                  setGeneratingTts(true);
+                  scriptStudioApi.ttsBlock(docId, block.blockIndex, { force: true, engine: ttsEngine }).then((data: any) => {
+                    const eng = data.engine ? ` [${data.engine}]` : '';
+                    setActionLog([{ level: 'success', msg: `TTS regenerated (${(data.audioDurationMs / 1000).toFixed(1)}s)${eng}` }]);
+                    onBlockUpdated();
+                  }).catch((err) => {
+                    setActionLog([{ level: 'error', msg: `TTS failed: ${err.message ?? 'unknown'}` }]);
+                  }).finally(() => setGeneratingTts(false));
+                }}
+              >
+                <RefreshCw className="w-2.5 h-2.5" />
+                {t('scriptStudio.studio.regenVoice')}
+              </button>
+            </>
+          )}
+        </div>
+        </div>
+        )}
+      </div>
+
+      {/* ── Video/Audio player ── */}
+      {/* Collapse/expand bar */}
+      <div className="flex items-center gap-1 px-3 py-0.5 border-b border-c-border bg-c-surface/40">
+        <button
+          onClick={() => setPlayerCollapsed(v => !v)}
+          className="flex items-center gap-1 text-[10px] text-c-dim hover:text-c-text transition-colors cursor-pointer"
+        >
+          {playerCollapsed ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
+          <span>{playerCollapsed ? 'Show player' : 'Hide player'}</span>
+        </button>
+        <div className="flex-1" />
+        {clipUrl && (
+          <button
+            onClick={() => {
+              if (playing) { videoRef.current?.pause(); audioRef.current?.pause(); setPlaying(false); }
+              const updated = blockClips.length > 1
+                ? blockClips.filter((_, i) => i !== safeClipIdx)
+                : [];
+              scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => {
+                setActiveClipIdx(Math.max(0, safeClipIdx - 1));
+                setVideoDuration(null);
+                setCurrentTime(0);
+                onBlockUpdated();
+              });
+            }}
+            className="flex items-center gap-1 text-[10px] text-c-dim hover:text-red-400 transition-colors cursor-pointer"
+            title="Remove current clip"
+          >
+            <X className="w-3 h-3" />
+            <span>Remove clip</span>
+          </button>
+        )}
+      </div>
+      {!playerCollapsed && (
+      <div className={`relative bg-black flex items-center justify-center overflow-hidden ${isPortrait ? 'h-72' : 'h-56'}`}>
+        {clipUrl ? (
+          <>
+            <video
+              ref={videoRef}
+              src={clipUrl}
+              muted
+              playsInline
+              preload="auto"
+              onLoadedMetadata={(e) => {
+                const vid = e.currentTarget as HTMLVideoElement;
+                setVideoDuration(vid.duration);
+                if (activeClip) {
+                  setClipSourceDurations(prev => ({ ...prev, [activeClip.assetPath]: vid.duration }));
+                }
+                if (effectiveClipStart > 0) vid.currentTime = effectiveClipStart;
+              }}
+              className={isPortrait ? 'h-full object-contain' : 'w-full h-full object-cover'}
+            />
+            {/* Play / pause center overlay */}
+            <button
+              className="absolute inset-0 flex items-center justify-center group cursor-pointer"
+              onClick={togglePlay}
+            >
+              <div className={`w-11 h-11 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center transition-all duration-200 ${playing ? 'opacity-0 scale-90 group-hover:opacity-80 group-hover:scale-100' : 'opacity-90 hover:opacity-100 hover:scale-105'}`}>
+                {playing
+                  ? <Square className="w-4 h-4 text-white fill-white" />
+                  : <Play className="w-5 h-5 text-white fill-white ml-0.5" />}
+              </div>
+            </button>
+            {/* Clip index badge */}
+            {blockClips.length > 1 && (
+              <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] font-mono z-10">
+                {safeClipIdx + 1}/{blockClips.length}
+              </div>
+            )}
+          </>
+        ) : audioUrl ? (
+          /* Audio-only: dark player area with waveform icon */
+          <div className="flex flex-col items-center gap-2">
+            <button onClick={togglePlay} className="w-14 h-14 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors cursor-pointer">
+              {playing
+                ? <Square className="w-6 h-6 text-white fill-white" />
+                : <Play className="w-6 h-6 text-white fill-white ml-0.5" />}
+            </button>
+            <span className="text-white/50 text-xs">{audioDurSec ? `${audioDurSec.toFixed(1)}s` : 'Audio'}</span>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2 text-c-dim">
+            {hasIssue ? (
+              <>
+                <AlertTriangle className="w-8 h-8 text-amber-400/50" />
+                <p className="text-xs text-amber-400/70">
+                  {block.status === 'error' ? block.errorMsg ?? 'Error' : t('scriptStudio.studio.noClipYet')}
+                </p>
+              </>
+            ) : (
+              <>
+                <Film className="w-8 h-8 opacity-20" />
+                <p className="text-xs opacity-40">{t('scriptStudio.studio.noClipYet')}</p>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Dual timeline overlay (bottom of player) ── */}
+        {(() => {
+          const srcDur = activeClip
+            ? (activeClip.sourceDurationSec ?? clipSourceDurations[activeClip.assetPath] ?? videoDuration ?? null)
+            : null;
+          const vDur = srcDur && srcDur > 0 ? srcDur : 0;
+          const aDur = audioTotalSec > 0 ? audioTotalSec : 0;
+          if (vDur <= 0 && aDur <= 0) return null;
+
+          const masterDur = Math.max(vDur, aDur);
+          const videoIsLonger = vDur >= aDur;
+          const rangeStartSec = audioRangeDragStart ?? effectiveClipStart;
+
+          // Percentages for the shorter-one's range on the longer bar
+          const audioOnVideoPct = vDur > 0 && aDur > 0 ? Math.min(100, (aDur / vDur) * 100) : 100;
+          const audioOnVideoLeftPct = vDur > 0 ? Math.min(100 - audioOnVideoPct, (rangeStartSec / vDur) * 100) : 0;
+          const videoOnAudioPct = aDur > 0 && vDur > 0 ? Math.min(100, (vDur / aDur) * 100) : 100;
+          // When audio is longer, the video portion starts at negative offset relative to audio
+          const videoOnAudioLeftPct = aDur > 0 && vDur > 0 ? Math.max(0, Math.min(100 - videoOnAudioPct, ((aDur - vDur + rangeStartSec) / aDur) * 100)) : 0;
+
+          const canDrag = vDur > 0 && aDur > 0 && vDur !== aDur;
+
+          const audioProgressPct = aDur > 0 ? Math.min(100, (audioTime / aDur) * 100) : 0;
+          // currentTime is elapsed within the clip; absolute video pos = startSec + currentTime
+          const absVideoPos = rangeStartSec + currentTime;
+          const videoProgressPct = vDur > 0 ? Math.min(100, (absVideoPos / vDur) * 100) : 0;
+
+          const fmt = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+
+          // Drag handler for the audio range on the video bar (when video is longer)
+          const handleDragOnVideoBar = (e: React.MouseEvent, barRef: HTMLDivElement | null) => {
+            if (!barRef || !canDrag || vDur <= aDur) return;
+            e.preventDefault(); e.stopPropagation();
+            const tlRect = barRef.getBoundingClientRect();
+            const clickFrac = (e.clientX - tlRect.left) / tlRect.width;
+            audioRangeDragOffsetRef.current = clickFrac - rangeStartSec / vDur;
+
+            const calc = (ev: MouseEvent) => {
+              const rect = barRef.getBoundingClientRect();
+              const frac = (ev.clientX - rect.left) / rect.width;
+              const newFrac = Math.max(0, Math.min(1 - aDur / vDur, frac - audioRangeDragOffsetRef.current));
+              return parseFloat((newFrac * vDur).toFixed(2));
+            };
+            const onMove = (ev: MouseEvent) => {
+              const ns = calc(ev);
+              setAudioRangeDragStart(ns);
+              if (videoRef.current) videoRef.current.currentTime = ns;
+            };
+            const onUp = (ev: MouseEvent) => {
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+              const ns = calc(ev);
+              setAudioRangeDragStart(null);
+              if (!activeClip) return;
+              const ne = parseFloat((ns + aDur).toFixed(2));
+              const updated = blockClips.map((c, i) => i === safeClipIdx ? { ...c, startSec: ns, endSec: ne } : c);
+              scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => onBlockUpdated());
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          };
+
+          // Drag handler for the video range on the audio bar (when audio is longer)
+          const handleDragOnAudioBar = (e: React.MouseEvent, barRef: HTMLDivElement | null) => {
+            if (!barRef || !canDrag || aDur <= vDur) return;
+            e.preventDefault(); e.stopPropagation();
+            const tlRect = barRef.getBoundingClientRect();
+            const clickFrac = (e.clientX - tlRect.left) / tlRect.width;
+            const currentLeftFrac = (aDur - vDur + rangeStartSec) / aDur;
+            audioRangeDragOffsetRef.current = clickFrac - currentLeftFrac;
+
+            const calc = (ev: MouseEvent) => {
+              const rect = barRef.getBoundingClientRect();
+              const frac = (ev.clientX - rect.left) / rect.width;
+              const newLeftFrac = Math.max(0, Math.min(1 - vDur / aDur, frac - audioRangeDragOffsetRef.current));
+              // Convert back: rangeStartSec = newLeftFrac * aDur - (aDur - vDur)
+              return parseFloat((newLeftFrac * aDur - (aDur - vDur)).toFixed(2));
+            };
+            const onMove = (ev: MouseEvent) => {
+              const ns = Math.max(0, calc(ev));
+              setAudioRangeDragStart(ns);
+              if (videoRef.current) videoRef.current.currentTime = ns;
+            };
+            const onUp = (ev: MouseEvent) => {
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+              const ns = Math.max(0, calc(ev));
+              setAudioRangeDragStart(null);
+              if (!activeClip) return;
+              const ne = parseFloat((ns + aDur).toFixed(2));
+              const updated = blockClips.map((c, i) => i === safeClipIdx ? { ...c, startSec: ns, endSec: ne } : c);
+              scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => onBlockUpdated());
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          };
+
+          // Scrub handler for clicking on video bar
+          const scrubVideo = (e: { clientX: number }, barEl: HTMLDivElement | null) => {
+            if (!barEl || vDur <= 0) return;
+            const rect = barEl.getBoundingClientRect();
+            const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            const absTime = frac * vDur; // absolute video position
+            if (videoRef.current) videoRef.current.currentTime = absTime;
+            // currentTime is elapsed within clip = absTime - startSec
+            const elapsed = Math.max(0, absTime - rangeStartSec);
+            setCurrentTime(elapsed);
+            // Also sync audio if within audio range
+            if (audioRef.current && elapsed >= 0 && elapsed <= aDur) {
+              audioRef.current.currentTime = elapsed;
+              setAudioTime(elapsed);
+            }
+          };
+
+          // Scrub handler for clicking on audio bar
+          const scrubAudio = (e: { clientX: number }, barEl: HTMLDivElement | null) => {
+            if (!barEl || aDur <= 0) return;
+            const rect = barEl.getBoundingClientRect();
+            const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            const t = frac * aDur;
+            if (audioRef.current) audioRef.current.currentTime = t;
+            setAudioTime(t);
+            // Also sync video: absolute video pos = startSec + audioTime
+            const absVideoTime = rangeStartSec + t;
+            if (videoRef.current) videoRef.current.currentTime = absVideoTime;
+            setCurrentTime(t); // elapsed = audioTime within clip
+          };
+
+          return (
+          <div
+            className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-3 pt-5 pb-2 z-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col gap-1">
+              {/* ── Video timeline (top, blue/accent) ── */}
+              {vDur > 0 && (
+                <div className="flex items-center gap-2">
+                  <Film className="w-2.5 h-2.5 text-cyan-400/70 shrink-0" />
+                  <div
+                    ref={scrubBarRef}
+                    className="flex-1 cursor-pointer group"
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest('[data-audio-range]')) return;
+                      scrubVideo(e, scrubBarRef.current);
+                    }}
+                    onMouseDown={(e) => {
+                      if ((e.target as HTMLElement).closest('[data-audio-range]')) return;
+                      e.preventDefault();
+                      const onMove = (ev: MouseEvent) => scrubVideo(ev, scrubBarRef.current);
+                      const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+                      window.addEventListener('mousemove', onMove);
+                      window.addEventListener('mouseup', onUp);
+                    }}
+                  >
+                    <div className="h-2.5 bg-white/10 rounded relative">
+                      {/* Audio range on video bar (when video is longer) */}
+                      {videoIsLonger && canDrag && (
+                        <div
+                          data-audio-range
+                          className={`absolute inset-y-0 rounded border transition-colors ${
+                            audioRangeDragStart != null
+                              ? 'bg-orange-400/40 border-orange-400/80'
+                              : 'bg-orange-400/20 border-orange-400/40 hover:bg-orange-400/30 hover:border-orange-400/60'
+                          }`}
+                          style={{ left: `${audioOnVideoLeftPct}%`, width: `${audioOnVideoPct}%`, cursor: 'grab' }}
+                          onMouseDown={(e) => { e.stopPropagation(); handleDragOnVideoBar(e, scrubBarRef.current); }}
+                        >
+                          <div className="absolute left-0.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-orange-300/60 rounded pointer-events-none" />
+                          <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-orange-300/60 rounded pointer-events-none" />
+                          <div className="absolute right-0.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-orange-300/60 rounded pointer-events-none" />
+                          <div className="absolute right-1.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-orange-300/60 rounded pointer-events-none" />
+                        </div>
+                      )}
+                      {/* Video progress + white dot */}
+                      <div
+                        className="absolute inset-y-0 left-0 bg-cyan-400/40 rounded-l transition-[width] duration-75 pointer-events-none"
+                        style={{ width: `${videoProgressPct}%` }}
+                      >
+                        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white shadow-lg" />
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-white/50 font-mono tabular-nums shrink-0 w-8 text-right">{fmt(vDur)}</span>
+                </div>
+              )}
+
+              {/* ── Audio timeline (bottom, orange) ── */}
+              {aDur > 0 && (
+                <div className="flex items-center gap-2">
+                  <Mic className="w-2.5 h-2.5 text-orange-400/70 shrink-0" />
+                  <div
+                    className="flex-1 cursor-pointer group"
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest('[data-video-range]')) return;
+                      scrubAudio(e, e.currentTarget as HTMLDivElement);
+                    }}
+                    onMouseDown={(e) => {
+                      if ((e.target as HTMLElement).closest('[data-video-range]')) return;
+                      e.preventDefault();
+                      const bar = e.currentTarget as HTMLDivElement;
+                      const onMove = (ev: MouseEvent) => scrubAudio(ev, bar);
+                      const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+                      window.addEventListener('mousemove', onMove);
+                      window.addEventListener('mouseup', onUp);
+                    }}
+                  >
+                    <div className="h-2.5 bg-white/10 rounded relative">
+                      {/* Video range on audio bar (when audio is longer) */}
+                      {!videoIsLonger && canDrag && (
+                        <div
+                          data-video-range
+                          className={`absolute inset-y-0 rounded border transition-colors ${
+                            audioRangeDragStart != null
+                              ? 'bg-cyan-400/40 border-cyan-400/80'
+                              : 'bg-cyan-400/20 border-cyan-400/40 hover:bg-cyan-400/30 hover:border-cyan-400/60'
+                          }`}
+                          style={{ left: `${videoOnAudioLeftPct}%`, width: `${videoOnAudioPct}%`, cursor: 'grab' }}
+                          onMouseDown={(e) => { e.stopPropagation(); handleDragOnAudioBar(e, e.currentTarget.parentElement as HTMLDivElement); }}
+                        >
+                          <div className="absolute left-0.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-cyan-300/60 rounded pointer-events-none" />
+                          <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-cyan-300/60 rounded pointer-events-none" />
+                          <div className="absolute right-0.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-cyan-300/60 rounded pointer-events-none" />
+                          <div className="absolute right-1.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-cyan-300/60 rounded pointer-events-none" />
+                        </div>
+                      )}
+                      {/* Audio progress + white dot */}
+                      <div
+                        className="absolute inset-y-0 left-0 bg-orange-400/40 rounded-l transition-[width] duration-75 pointer-events-none"
+                        style={{ width: `${audioProgressPct}%` }}
+                      >
+                        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white shadow-lg" />
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-white/50 font-mono tabular-nums shrink-0 w-8 text-right">{fmt(aDur)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+          );
+        })()}
+      </div>
+      )}
+
+      {/* Hidden audio element */}
+      {audioUrl && (
+        <audio
+          ref={audioRef}
+          key={audioUrl}
+          src={audioUrl}
+          preload="metadata"
+          className="hidden"
+          onLoadedMetadata={(e) => {
+            const dur = (e.currentTarget as HTMLAudioElement).duration;
+            if (dur && isFinite(dur) && dur > 0) setAudioElDuration(dur);
+          }}
+          onDurationChange={(e) => {
+            const dur = (e.currentTarget as HTMLAudioElement).duration;
+            if (dur && isFinite(dur) && dur > 0) setAudioElDuration(dur);
+          }}
+          onEnded={() => { setPlaying(false); if (videoRef.current) videoRef.current.pause(); }}
+          onTimeUpdate={(e) => setAudioTime((e.currentTarget as HTMLAudioElement).currentTime)}
+        />
+      )}
+
+      {/* ── Quick action bar ── */}
+      <div className="px-3 py-1.5 border-t border-c-border bg-c-surface flex items-center gap-1.5">
+        {block.visualType !== 'ai' && block.visualType !== 'chart' && (
+          <button
+            onClick={() => setShowPexelsPicker((v) => !v)}
+            disabled={loadingPicker}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all disabled:opacity-50 cursor-pointer ${showPexelsPicker ? 'bg-c-accent/15 border-c-accent/40 text-c-accent' : 'bg-c-elevated border-c-border text-c-muted hover:border-c-accent/40 hover:text-c-accent'}`}
+          >
+            {loadingPicker ? <Loader2 className="w-3 h-3 animate-spin" /> : <Film className="w-3 h-3" />}
+            Stock
+          </button>
+        )}
+        {block.visualType === 'ai' && (
+          <button
+            onClick={generateAiBlock}
+            disabled={generatingAi}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-violet-500/10 border border-violet-500/25 text-violet-300 hover:bg-violet-500/20 disabled:opacity-50 transition-colors cursor-pointer"
+          >
+            {generatingAi ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+            AI Gen
+          </button>
+        )}
+        {fetchingPixabay && (
+          <span className="inline-flex items-center gap-1 text-[10px] text-c-dim">
+            <Loader2 className="w-3 h-3 animate-spin" />
+          </span>
+        )}
+        <div className="flex-1" />
+        {actionLog.length > 0 && (
+          <div className={`min-w-0 text-[10px] truncate max-w-[200px] ${actionLog[actionLog.length - 1].level === 'error' ? 'text-red-400' : actionLog[actionLog.length - 1].level === 'success' ? 'text-green-400' : 'text-c-dim'}`}>
+            {actionLog[actionLog.length - 1].msg}
+          </div>
+        )}
+      </div>
+
+      {/* ── Stock picker panel ── */}
+      {showPexelsPicker && (
+        <div className="border-t border-c-border bg-c-surface">
+          {/* Service tabs + search */}
+          <div className="px-3 pt-2 pb-1.5 flex items-center gap-1.5 flex-wrap">
+            {/* Service tabs */}
+            <div className="flex rounded-md border border-c-border overflow-hidden shrink-0">
+              {(['pexels', 'pixabay', 'mixkit'] as const).map((svc) => (
+                <button
+                  key={svc}
+                  onClick={() => switchPickerService(svc)}
+                  className={`px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${svc !== 'pexels' ? 'border-l border-c-border' : ''} ${pickerService === svc
+                    ? svc === 'pexels' ? 'bg-c-accent text-white' : svc === 'pixabay' ? 'bg-emerald-600 text-white' : 'bg-orange-600 text-white'
+                    : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
+                >
+                  {svc.charAt(0).toUpperCase() + svc.slice(1)}
+                </button>
+              ))}
+            </div>
+            {/* Orientation toggle */}
+            <div className="flex rounded-md border border-c-border overflow-hidden shrink-0">
+              <button
+                onClick={() => switchPickerOrientation('landscape')}
+                className={`px-1.5 py-1 text-[11px] transition-colors cursor-pointer flex items-center gap-0.5 ${pickerOrientation === 'landscape' ? 'bg-c-accent text-white' : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
+                title="16:9"
+              >
+                <span className="inline-block w-3 h-2 border border-current rounded-[1px]" />
+              </button>
+              <button
+                onClick={() => switchPickerOrientation('portrait')}
+                className={`px-1.5 py-1 text-[11px] transition-colors cursor-pointer border-l border-c-border flex items-center gap-0.5 ${pickerOrientation === 'portrait' ? 'bg-c-accent text-white' : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
+                title="9:16"
+              >
+                <span className="inline-block w-1.5 h-3 border border-current rounded-[1px]" />
+              </button>
+            </div>
+            <input
+              type="text"
+              value={pickerQuery}
+              onChange={(e) => setPickerQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && searchPicker()}
+              className="flex-1 min-w-0 text-[11px] bg-c-elevated border border-c-border rounded-md px-2 py-1 text-c-text placeholder-c-dim focus:outline-none focus:border-c-accent/50"
+              placeholder={`Search ${pickerService}...`}
+            />
+            <button
+              onClick={regenPickerQuery}
+              disabled={regenningQuery || loadingPicker}
+              title="AI: regenerate search query"
+              className="shrink-0 p-1 rounded-md bg-violet-500/10 border border-violet-500/25 text-violet-300 hover:bg-violet-500/20 disabled:opacity-50 transition-colors cursor-pointer"
+            >
+              {regenningQuery ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+            </button>
+            <button
+              onClick={searchPicker}
+              disabled={loadingPicker || regenningQuery}
+              className="shrink-0 p-1 rounded-md bg-c-accent text-white hover:bg-c-accent/80 disabled:opacity-50 transition-colors cursor-pointer"
+            >
+              {loadingPicker ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+            </button>
+            <button
+              onClick={() => setShowPexelsPicker(false)}
+              className="shrink-0 p-1 rounded-md hover:bg-c-elevated text-c-dim hover:text-c-text transition-colors cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+          {loadingPicker && (
+            <div className={`grid gap-1.5 px-3 pb-2 ${isPortrait ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="rounded-md overflow-hidden border border-c-border bg-c-elevated aspect-video animate-pulse" />
+              ))}
+            </div>
+          )}
+          {!loadingPicker && pickerError && (
+            <div className="flex items-center gap-2 mx-3 mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              {pickerError}
+            </div>
+          )}
+          {!loadingPicker && !pickerError && pickerCandidates.length === 0 && (
+            <div className="flex flex-col items-center gap-2 py-8 text-c-dim">
+              <Film className="w-8 h-8 opacity-20" />
+              <p className="text-xs opacity-50">No results — try a different keyword</p>
+            </div>
+          )}
+          {!loadingPicker && pickerCandidates.length > 0 && (
+            <div className={`grid gap-1.5 px-3 pb-2 ${isPortrait ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
+              {pickerCandidates.map((c) => {
+                const isApplied = block.clipAssetPath?.includes(String(c.id));
+                return (
+                  <div key={c.id} className={`relative rounded-lg overflow-hidden border group bg-black transition-all ${isApplied ? 'border-c-accent ring-1 ring-c-accent/40' : 'border-c-border hover:border-c-border-hover'}`}>
+                    {c.previewUrl || c.downloadUrl ? (
+                      <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} />
+                    ) : (
+                      <img src={c.thumbnail} alt="" className="w-full aspect-video object-cover" />
+                    )}
+                    {/* Apply overlay on hover — pointer-events-none so scrub bar works */}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 pointer-events-none">
+                      <button
+                        onClick={() => applyPexelsVideo(c)}
+                        disabled={!!applyingPexelsId}
+                        className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-c-accent text-white font-medium hover:bg-c-accent/80 disabled:opacity-50 transition-colors cursor-pointer shadow-lg pointer-events-auto"
+                      >
+                        {applyingPexelsId === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                        Use
+                      </button>
+                      {c.pageUrl && (
+                        <a
+                          href={c.pageUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors pointer-events-auto"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          Source
+                        </a>
+                      )}
+                    </div>
+                    {/* Bottom bar */}
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 flex items-center justify-between gap-1">
+                      <span className="text-white/80 text-[10px] truncate flex-1">{c.title || ''}</span>
+                      {c.duration > 0 && <span className="text-white/50 text-[10px] font-mono shrink-0">{c.duration}s</span>}
+                    </div>
+                    {/* Applied badge */}
+                    {isApplied && (
+                      <div className="absolute top-1 right-1 bg-c-accent rounded-full p-0.5">
+                        <Check className="w-2.5 h-2.5 text-white" />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Block card (edit controls, hidden when picker is open) ── */}
+      {!showPexelsPicker && (
+        <div>
+          <BlockCard
+            key={block.id}
+            block={block}
+            docId={docId}
+            orientation={orientation}
+            isProducing={false}
+            onBlockUpdated={onBlockUpdated}
+          />
+        </div>
+      )}
+
+      </div>{/* end scrollable content area */}
+
+      {/* ── Footer: progress ── */}
+      <div className="shrink-0 px-3 py-1 border-t border-c-border bg-c-surface flex items-center gap-2 text-[10px] text-c-dim">
+        <span className="font-mono tabular-nums">{clampedIdx + 1}/{blocks.length}</span>
+        <div className="flex-1 h-0.5 bg-c-elevated rounded-full overflow-hidden">
+          <div
+            className="h-full bg-c-accent/50 rounded-full transition-all duration-200"
+            style={{ width: `${((clampedIdx + 1) / blocks.length) * 100}%` }}
+          />
+        </div>
+        <span className={`font-mono ${block.status === 'rendered' ? 'text-green-400' : block.status === 'error' ? 'text-red-400' : ''}`}>
+          {block.status}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Picker Video (stock preview with scrub bar) ──
+
+function PickerVideo({ previewUrl, downloadUrl, duration }: { previewUrl: string; downloadUrl?: string; duration: number }) {
+  const vidRef = useRef<HTMLVideoElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const [progress, setProgress] = useState(0);
+  const [dur, setDur] = useState(duration || 0);
+  const [hovering, setHovering] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const rafRef = useRef<number | null>(null);
+
+  // Use full quality video URL when available, fall back to preview
+  const videoSrc = downloadUrl || previewUrl;
+
+  useEffect(() => {
+    if (!playing) { if (rafRef.current) cancelAnimationFrame(rafRef.current); return; }
+    const tick = () => {
+      if (vidRef.current && dur > 0) setProgress(vidRef.current.currentTime / dur);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [playing, dur]);
+
+  const seekTo = useCallback((clientX: number) => {
+    if (!barRef.current || !vidRef.current || dur <= 0) return;
+    const rect = barRef.current.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    vidRef.current.currentTime = frac * dur;
+    setProgress(frac);
+  }, [dur]);
+
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+
+  return (
+    <div
+      className="relative w-full aspect-video"
+      onMouseEnter={() => { setHovering(true); vidRef.current?.play().then(() => setPlaying(true)).catch(() => {}); }}
+      onMouseLeave={() => { setHovering(false); const v = vidRef.current; if (v) { v.pause(); v.currentTime = 0; } setPlaying(false); setProgress(0); }}
+    >
+      <video
+        ref={vidRef}
+        src={videoSrc}
+        className="w-full h-full object-cover"
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(e) => { const d = (e.currentTarget as HTMLVideoElement).duration; if (d && isFinite(d)) setDur(d); }}
+      />
+      {/* Scrub bar — always visible at bottom */}
+      {dur > 0 && (
+        <div
+          className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-1 pt-3 pb-1 z-20"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center gap-1">
+            <span className="text-[8px] text-white/70 font-mono tabular-nums shrink-0">{fmtTime(progress * dur)}</span>
+            <div
+              ref={barRef}
+              className="flex-1 py-1 cursor-pointer group"
+              onClick={(e) => { e.stopPropagation(); seekTo(e.clientX); }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                seekTo(e.clientX);
+                const onMove = (ev: MouseEvent) => seekTo(ev.clientX);
+                const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+              }}
+            >
+              <div className="h-0.5 bg-white/25 rounded-full overflow-hidden group-hover:h-1 transition-all">
+                <div className="h-full bg-white/90 rounded-full" style={{ width: `${progress * 100}%` }} />
+              </div>
+            </div>
+            <span className="text-[8px] text-white/50 font-mono tabular-nums shrink-0">{fmtTime(dur)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Block Card Player (mini video player with draggable audio range) ──
+
+function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, blockIndex, onClipsUpdated }: {
+  audioSrc: string;
+  durationMs: number | null;
+  clips: Array<{ assetPath: string; startSec: number; endSec: number | null; sourceDurationSec?: number; label?: string }>;
+  visualType: string;
+  docId: string;
+  blockIndex: number;
+  onClipsUpdated: () => void;
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [audioTime, setAudioTime] = useState(0);
+  const [audioDur, setAudioDur] = useState<number>(durationMs ? durationMs / 1000 : 0);
+  const [videoDur, setVideoDur] = useState<number>(0);
+  const rafRef = useRef<number | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [dragStartSec, setDragStartSec] = useState<number | null>(null);
+  const dragOffsetRef = useRef(0);
+
+  const firstClip = clips[0] ?? null;
+  const clipUrl = firstClip
+    ? (visualType === 'chart' ? `/cache/charts/` : `/cache/images/`) + firstClip.assetPath
+    : null;
+
+  // The video start offset where audio begins (use drag state if actively dragging)
+  const clipStartSec = dragStartSec ?? (firstClip?.startSec ?? 0);
+
+  // Sync video position with audio during playback
+  useEffect(() => {
+    const tick = () => {
+      const audio = audioRef.current;
+      const video = videoRef.current;
+      if (audio) {
+        setAudioTime(audio.currentTime);
+        // Keep video in sync: video time = clipStartSec + audio.currentTime
+        if (video && videoDur > 0 && !audio.paused) {
+          const targetVideoTime = clipStartSec + audio.currentTime;
+          if (Math.abs(video.currentTime - targetVideoTime) > 0.3) {
+            video.currentTime = targetVideoTime;
+          }
+        }
+        if (audio.ended) {
+          setPlaying(false);
+          setAudioTime(0);
+          if (video) { video.pause(); video.currentTime = clipStartSec; }
+        }
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    if (playing) rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [playing, clipStartSec, videoDur]);
+
+  // Seek video to clipStartSec when it changes
+  useEffect(() => {
+    if (videoRef.current && videoDur > 0 && !playing) {
+      videoRef.current.currentTime = clipStartSec;
+    }
+  }, [clipStartSec, videoDur, playing]);
+
+  const toggle = () => {
+    if (!audioRef.current) return;
+    if (playing) {
+      audioRef.current.pause();
+      videoRef.current?.pause();
+      setPlaying(false);
+    } else {
+      if (videoRef.current) {
+        videoRef.current.currentTime = clipStartSec + audioRef.current.currentTime;
+        videoRef.current.play().catch(() => {});
+      }
+      audioRef.current.play().catch(() => {});
+      setPlaying(true);
+    }
+  };
+
+  const formatTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+
+  // ── Draggable audio range on video timeline ──
+  const audioRangePct = videoDur > 0 && audioDur > 0 ? Math.min(100, (audioDur / videoDur) * 100) : 100;
+  const audioRangeLeftPct = videoDur > 0 ? Math.min(100 - audioRangePct, (clipStartSec / videoDur) * 100) : 0;
+
+  // Playback progress within the audio range
+  const audioProgressPct = audioDur > 0 ? Math.min(100, (audioTime / audioDur) * 100) : 0;
+
+  const handleRangeDragStart = (e: React.MouseEvent) => {
+    if (!timelineRef.current || videoDur <= 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const tlRect = timelineRef.current.getBoundingClientRect();
+    const clickFrac = (e.clientX - tlRect.left) / tlRect.width;
+    const currentStartFrac = clipStartSec / videoDur;
+    dragOffsetRef.current = clickFrac - currentStartFrac;
+    setDragging(true);
+
+    const calcStart = (ev: MouseEvent) => {
+      if (!timelineRef.current) return null;
+      const rect = timelineRef.current.getBoundingClientRect();
+      const frac = (ev.clientX - rect.left) / rect.width;
+      const newStartFrac = Math.max(0, Math.min(1 - audioDur / videoDur, frac - dragOffsetRef.current));
+      return parseFloat((newStartFrac * videoDur).toFixed(2));
+    };
+
+    const onMove = (ev: MouseEvent) => {
+      const newStart = calcStart(ev);
+      if (newStart == null) return;
+      setDragStartSec(newStart);
+      if (videoRef.current) videoRef.current.currentTime = newStart;
+    };
+
+    const onUp = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      setDragging(false);
+      const newStart = calcStart(ev);
+      if (newStart == null || !firstClip) { setDragStartSec(null); return; }
+      const newEnd = parseFloat((newStart + audioDur).toFixed(2));
+      setDragStartSec(null);
+      const updated = clips.map((c, i) => i === 0 ? { ...c, startSec: newStart, endSec: newEnd } : c);
+      scriptStudioApi.updateBlockClips(docId, blockIndex, updated).then(() => onClipsUpdated());
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  return (
+    <div className="px-3.5 pb-2.5">
+      <audio
+        ref={audioRef}
+        src={audioSrc}
+        preload="metadata"
+        className="hidden"
+        onLoadedMetadata={(e) => {
+          const d = (e.currentTarget as HTMLAudioElement).duration;
+          if (d && isFinite(d) && d > 0) setAudioDur(d);
+        }}
+      />
+
+      {clipUrl ? (
+        <div className="relative rounded-lg overflow-hidden bg-black group">
+          {/* Video */}
+          <video
+            ref={videoRef}
+            src={clipUrl}
+            muted
+            playsInline
+            preload="metadata"
+            className="w-full aspect-video object-cover cursor-pointer"
+            onClick={toggle}
+            onLoadedMetadata={(e) => {
+              const d = (e.currentTarget as HTMLVideoElement).duration;
+              if (d && isFinite(d) && d > 0) {
+                setVideoDur(d);
+                (e.currentTarget as HTMLVideoElement).currentTime = clipStartSec;
+              }
+            }}
+          />
+          {/* Play/pause overlay */}
+          <div
+            className={`absolute inset-0 flex items-center justify-center bg-black/20 transition-opacity duration-200 pointer-events-none ${playing ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'}`}
+          >
+            <div className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center">
+              {playing
+                ? <Square className="w-4 h-4 text-white fill-white" />
+                : <Play className="w-4 h-4 text-white fill-white ml-0.5" />}
+            </div>
+          </div>
+
+          {/* Bottom timeline with draggable audio range */}
+          <div
+            className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2.5 pt-5 pb-1.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] text-white/80 font-mono tabular-nums shrink-0">
+                {formatTime(clipStartSec + audioTime)}
+              </span>
+
+              {/* Timeline track (full video duration) */}
+              <div
+                ref={timelineRef}
+                className="flex-1 h-3 bg-white/10 rounded relative"
+              >
+                {/* Video duration faint ticks */}
+                <div className="absolute inset-0 rounded bg-white/5" />
+
+                {/* Draggable audio range rectangle */}
+                <div
+                  className={`absolute inset-y-0 rounded border transition-colors ${
+                    dragging
+                      ? 'bg-orange-400/40 border-orange-400/80'
+                      : 'bg-orange-400/25 border-orange-400/50 hover:bg-orange-400/35 hover:border-orange-400/70'
+                  }`}
+                  style={{
+                    left: `${audioRangeLeftPct}%`,
+                    width: `${audioRangePct}%`,
+                    cursor: videoDur > audioDur ? 'grab' : 'default',
+                  }}
+                  onMouseDown={videoDur > audioDur ? handleRangeDragStart : undefined}
+                >
+                  {/* Audio playback progress inside the range */}
+                  <div
+                    className="absolute inset-y-0 left-0 bg-orange-400/50 rounded-l transition-[width] duration-75"
+                    style={{ width: `${audioProgressPct}%` }}
+                  />
+                  {/* Drag handle lines */}
+                  {videoDur > audioDur && (
+                    <>
+                      <div className="absolute left-0.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-orange-300/70 rounded" />
+                      <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-orange-300/70 rounded" />
+                      <div className="absolute right-0.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-orange-300/70 rounded" />
+                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 w-px h-1.5 bg-orange-300/70 rounded" />
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <span className="text-[9px] text-white/50 font-mono tabular-nums shrink-0">
+                {formatTime(videoDur)}
+              </span>
+            </div>
+            {/* Labels */}
+            <div className="flex items-center justify-between mt-0.5 px-0.5">
+              <span className="text-[8px] text-orange-300/60 font-mono">
+                {audioDur > 0 ? `${formatTime(audioDur)} audio` : ''}
+              </span>
+              <span className="text-[8px] text-white/30 font-mono">
+                {videoDur > 0 ? `${formatTime(videoDur)} video` : ''}
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Audio-only fallback */
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-c-elevated/60 border border-c-border">
+          <button
+            onClick={toggle}
+            className="w-6 h-6 rounded-full bg-blue-500/15 hover:bg-blue-500/25 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+          >
+            {playing
+              ? <Square className="w-2.5 h-2.5 text-blue-400 fill-blue-400" />
+              : <Play className="w-2.5 h-2.5 text-blue-400 fill-blue-400 ml-px" />}
+          </button>
+          <div
+            className="flex-1 h-1.5 bg-c-border rounded-full cursor-pointer relative group"
+            onClick={(e) => {
+              if (!audioRef.current || !audioDur) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+              audioRef.current.currentTime = frac * audioDur;
+              setAudioTime(frac * audioDur);
+            }}
+            onMouseMove={(e) => {
+              if (e.buttons !== 1 || !audioRef.current || !audioDur) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+              audioRef.current.currentTime = frac * audioDur;
+              setAudioTime(frac * audioDur);
+            }}
+          >
+            <div
+              className="h-full bg-blue-500/50 rounded-full transition-[width] duration-75 relative"
+              style={{ width: `${audioDur > 0 ? Math.min(100, (audioTime / audioDur) * 100) : 0}%` }}
+            >
+              <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-blue-400 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+          </div>
+          <span className="text-[10px] text-c-dim font-mono tabular-nums shrink-0">
+            {audioTime.toFixed(1)}/{audioDur > 0 ? audioDur.toFixed(1) : '?'}s
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Block Card ──
+
+function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
+  block: ScriptBlock;
+  docId: string;
+  orientation: 'landscape' | 'portrait';
+  isProducing: boolean;
+  onBlockUpdated: () => void;
+}) {
+  const { t } = useTranslation();
+  const [editingQuery, setEditingQuery] = useState(false);
+  const [queryValue, setQueryValue] = useState(block.pexelsQuery ?? '');
+  const [editingMotion, setEditingMotion] = useState(false);
+  const [showAlts, setShowAlts] = useState(false);
+  const [alts, setAlts] = useState<any[]>([]);
+  const [loadingAlts, setLoadingAlts] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [fetchingStock, setFetchingStock] = useState<'pexels' | 'pixabay' | null>(null);
+  const [fetchLog, setFetchLog] = useState<string | null>(null);
+  const [editingAiPrompt, setEditingAiPrompt] = useState(false);
+  const [aiPromptValue, setAiPromptValue] = useState(block.aiPrompt ?? '');
+  const [generatingAi, setGeneratingAi] = useState(false);
+  const [visualTypeError, setVisualTypeError] = useState<string | null>(null);
+  // Optimistic local visual type — updates immediately on toggle, syncs with prop
+  const [localVisualType, setLocalVisualType] = useState(block.visualType);
+  useEffect(() => { setLocalVisualType(block.visualType); }, [block.visualType]);
+  const [aiGenLog, setAiGenLog] = useState<string[]>([]);
+
+  const saveQuery = async () => {
+    setSaving(true);
+    try {
+      await scriptStudioApi.updateBlock(docId, block.blockIndex, { pexelsQuery: queryValue || null });
+      onBlockUpdated();
+    } catch { /* ignore */ }
+    setSaving(false);
+    setEditingQuery(false);
+  };
+
+  const fetchStock = async (source: 'pexels' | 'pixabay') => {
+    setFetchingStock(source);
+    setFetchLog(null);
+    try {
+      const data = source === 'pexels'
+        ? await scriptStudioApi.fetchBlockPexels(docId, block.blockIndex, orientation)
+        : await scriptStudioApi.fetchBlockPixabay(docId, block.blockIndex, orientation);
+      setFetchLog(`${source === 'pexels' ? 'Pexels' : 'Pixabay'} clip fetched (${data.duration}s)`);
+      onBlockUpdated();
+    } catch (err: any) {
+      setFetchLog(`Error: ${err.response?.data?.error ?? err.message}`);
+    }
+    setFetchingStock(null);
+  };
+
+  const saveMotion = async (motion: string) => {
+    try {
+      await scriptStudioApi.updateBlock(docId, block.blockIndex, { motion });
+      onBlockUpdated();
+    } catch { /* ignore */ }
+    setEditingMotion(false);
+  };
+
+  const fetchAlts = async () => {
+    if (loadingAlts) return;
+    setLoadingAlts(true);
+    setShowAlts(true);
+    try {
+      const query = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 4).join(' ');
+      const data = await scriptStudioApi.getAlternatives(docId, query, orientation);
+      setAlts(data.candidates ?? []);
+    } catch { setAlts([]); }
+    setLoadingAlts(false);
+  };
+
+  const selectAlt = async (pexelsId: number) => {
+    try {
+      await scriptStudioApi.updateBlock(docId, block.blockIndex, { clipAssetPath: `pexels_id:${pexelsId}` });
+      onBlockUpdated();
+    } catch { /* ignore */ }
+    setShowAlts(false);
+  };
+
+  const saveAiPrompt = async () => {
+    setSaving(true);
+    try {
+      await scriptStudioApi.updateBlock(docId, block.blockIndex, {
+        visualType: 'ai',
+        aiPrompt: aiPromptValue.trim() || '__auto__',
+      });
+      onBlockUpdated();
+    } catch { /* ignore */ }
+    setSaving(false);
+    setEditingAiPrompt(false);
+  };
+
+  const setVisualType = async (vtype: 'pexels' | 'ai') => {
+    if (vtype === localVisualType) return;
+    setLocalVisualType(vtype); // optimistic
+    setVisualTypeError(null);
+    try {
+      if (vtype === 'ai') {
+        await scriptStudioApi.updateBlock(docId, block.blockIndex, {
+          visualType: 'ai',
+          aiPrompt: block.aiPrompt ?? '__auto__',
+        });
+      } else {
+        await scriptStudioApi.updateBlock(docId, block.blockIndex, { visualType: 'pexels' });
+      }
+      onBlockUpdated();
+    } catch (err: any) {
+      setLocalVisualType(block.visualType); // revert on error
+      setVisualTypeError(err.message ?? 'Failed to update visual type');
+    }
+  };
+
+  const generateAi = async () => {
+    setGeneratingAi(true);
+    setAiGenLog([]);
+    try {
+      const prompt = aiPromptValue.trim() || block.aiPrompt || null;
+      const result = await scriptStudioApi.generateBlockAi(docId, block.blockIndex, prompt, orientation);
+      if (result?.log) {
+        setAiGenLog(result.log.map((l: any) => `${l.level.toUpperCase()}: ${l.message}`));
+      }
+      onBlockUpdated();
+    } catch (err: any) {
+      setAiGenLog([`ERROR: ${err.message}`]);
+    }
+    setGeneratingAi(false);
+  };
+
+  const audioDurSec = block.audioDurationMs != null ? (block.audioDurationMs / 1000).toFixed(1) : null;
+  const isError = block.status === 'error';
+
+  return (
+    <div className={`rounded-xl border transition-all ${
+      isError
+        ? 'bg-red-500/5 border-red-500/25'
+        : block.status === 'rendered'
+          ? 'bg-green-500/3 border-green-500/15'
+          : 'bg-c-surface border-c-border hover:border-c-border-hover'
+    }`}>
+      {/* Header row */}
+      <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
+        {/* Block number badge */}
+        <span className="w-5 h-5 rounded bg-c-elevated border border-c-border text-xs font-mono font-bold text-c-muted flex items-center justify-center shrink-0">
+          {block.blockIndex + 1}
+        </span>
+        {/* Segment · Scene label */}
+        <span className="text-xs text-c-dim shrink-0 whitespace-nowrap tabular-nums">
+          Seg {block.segmentIndex} · Sc {block.sceneNumber}
+        </span>
+
+        {/* Status pipeline */}
+        <BlockStatusPipeline status={block.status} />
+
+        {/* Chart badge */}
+        {block.chartSpec && (
+          <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-400 border border-purple-500/20">
+            <BarChart2 className="w-3 h-3" />
+            {block.chartSpec.type}
+          </span>
+        )}
+        {/* AI badge */}
+        {localVisualType === 'ai' && !block.chartSpec && (
+          <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-violet-500/15 text-violet-400 border border-violet-500/20">
+            <Wand2 className="w-3 h-3" />
+            AI
+          </span>
+        )}
+
+        {/* Pace badge */}
+        {block.paceHint && (
+          <span className={`text-xs px-1.5 py-0.5 rounded-md border font-mono ${
+            block.paceHint === 'slow'
+              ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+              : 'bg-orange-500/10 text-orange-400 border-orange-500/20'
+          }`} title={t(`scriptStudio.studio.pace_${block.paceHint}`)}>
+            {block.paceHint === 'slow' ? t('scriptStudio.studio.paceSlow') : t('scriptStudio.studio.paceFast')}
+          </span>
+        )}
+
+        {/* Voice config badge */}
+        {block.voiceConfig && (() => {
+          const parts = block.voiceConfig.split('|').map(p => p.trim());
+          const groupPart = parts.find(p => p.startsWith('group:'));
+          const emotionPart = parts.find(p => p.startsWith('emotion:'));
+          const groupName = groupPart?.split(':')[1]?.trim();
+          const emotionName = emotionPart?.split(':')[1]?.trim();
+          return (
+            <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono" title={block.voiceConfig}>
+              <Mic className="w-3 h-3 shrink-0" />
+              {groupName ? `${groupName}${emotionName ? ' · ' + emotionName : ''}` : 'voice'}
+            </span>
+          );
+        })()}
+
+        <div className="flex-1" />
+
+        {/* Audio duration + engine */}
+        {audioDurSec && (
+          <span className="inline-flex items-center gap-1 text-xs text-blue-400/80">
+            <Volume2 className="w-3 h-3" />
+            {audioDurSec}s
+            {block.audioEngine && (
+              <span className={`px-1 py-px rounded text-[9px] font-mono ${block.audioEngine === 'omnivoice' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/20' : 'bg-sky-500/15 text-sky-400 border border-sky-500/20'}`}>
+                {block.audioEngine === 'omnivoice' ? 'OmniVoice' : 'edge-tts'}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+
+      {/* Narration text */}
+      <p className="text-sm text-c-text leading-relaxed px-3.5 pb-2.5 whitespace-pre-line">{block.narration}</p>
+
+      {/* Audio/Video player */}
+      {block.audioPath && (
+        <BlockCardPlayer
+          audioSrc={`/cache/block_audio/${block.audioPath}`}
+          durationMs={block.audioDurationMs}
+          clips={block.clips}
+          visualType={block.visualType}
+          docId={docId}
+          blockIndex={block.blockIndex}
+          onClipsUpdated={onBlockUpdated}
+        />
+      )}
+
+      {/* Error */}
+      {isError && block.errorMsg && (
+        <div className="mx-3.5 mb-2.5 px-2.5 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20">
+          <p className="text-xs text-red-400">{block.errorMsg}</p>
+        </div>
+      )}
+
+      {/* Overlays */}
+      {block.overlays.length > 0 && (
+        <div className="flex flex-wrap gap-1 px-3.5 pb-2.5">
+          {block.overlays.map((ov, i) => (
+            <span key={i} className="text-xs px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              &ldquo;{ov}&rdquo;
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Visual controls row */}
+      {!block.chartSpec && (
+        <div className="flex flex-col gap-1.5 px-3.5 pb-3">
+          {/* Stock / AI toggle */}
+          <div className="flex items-center gap-1">
+            <button
+              className={`text-xs px-2 py-1 rounded-l-lg border transition-all cursor-pointer ${
+                localVisualType !== 'ai'
+                  ? 'bg-c-accent/10 border-c-accent/30 text-c-accent font-medium'
+                  : 'bg-c-elevated border-c-border text-c-muted hover:text-c-text'
+              }`}
+              onClick={() => setVisualType('pexels')}
+              disabled={isProducing}
+              title={t('scriptStudio.studio.typeStock')}
+            >
+              <Video className="w-3 h-3 inline mr-1" />
+              {t('scriptStudio.studio.typeStock')}
+            </button>
+            <button
+              className={`text-xs px-2 py-1 rounded-r-lg border-t border-r border-b transition-all cursor-pointer ${
+                localVisualType === 'ai'
+                  ? 'bg-violet-500/10 border-violet-500/30 text-violet-400 font-medium'
+                  : 'bg-c-elevated border-c-border text-c-muted hover:text-c-text'
+              }`}
+              onClick={() => setVisualType('ai')}
+              disabled={isProducing}
+              title={t('scriptStudio.studio.typeAi')}
+            >
+              <Wand2 className="w-3 h-3 inline mr-1" />
+              {t('scriptStudio.studio.typeAi')}
+            </button>
+          </div>
+
+          {/* AI prompt editor */}
+          {localVisualType === 'ai' && (
+            <div className="flex flex-col gap-1.5">
+              {editingAiPrompt ? (
+                <div className="flex flex-col gap-1">
+                  <textarea
+                    className="input text-xs py-1 min-h-[60px] resize-none"
+                    value={aiPromptValue}
+                    onChange={(e) => setAiPromptValue(e.target.value)}
+                    placeholder={t('scriptStudio.studio.aiPromptPlaceholder')}
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-1">
+                    <button
+                      className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-c-accent text-white hover:bg-c-accent/80 transition-colors cursor-pointer"
+                      onClick={saveAiPrompt}
+                      disabled={saving}
+                    >
+                      {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                      {t('scriptStudio.studio.savePrompt')}
+                    </button>
+                    <button
+                      className="text-xs px-2 py-1 rounded-lg bg-c-elevated text-c-muted hover:text-c-text hover:bg-c-hover transition-colors cursor-pointer"
+                      onClick={() => { setEditingAiPrompt(false); setAiPromptValue(block.aiPrompt ?? ''); }}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-1">
+                  <button
+                    className="flex-1 text-left text-xs px-2 py-1 rounded-lg bg-violet-500/5 border border-violet-500/20 text-violet-300/80 hover:border-violet-500/40 transition-all cursor-pointer truncate"
+                    onClick={() => { setAiPromptValue(!block.aiPrompt || block.aiPrompt === '__auto__' ? autoFlowPrompt(block, orientation) : block.aiPrompt); setEditingAiPrompt(true); }}
+                    disabled={isProducing}
+                    title={block.aiPrompt || t('scriptStudio.studio.aiPromptAuto')}
+                  >
+                    <Pencil className="w-2.5 h-2.5 inline mr-1 opacity-60" />
+                    {!block.aiPrompt || block.aiPrompt === '__auto__'
+                      ? <em className="opacity-50">{t('scriptStudio.studio.aiPromptAuto')}</em>
+                      : <span className="truncate">{block.aiPrompt}</span>}
+                  </button>
+                  <button
+                    className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-all cursor-pointer shrink-0 ${
+                      generatingAi
+                        ? 'bg-violet-500/10 border-violet-500/30 text-violet-400'
+                        : 'bg-violet-500/15 border-violet-500/30 text-violet-400 hover:bg-violet-500/25'
+                    }`}
+                    onClick={generateAi}
+                    disabled={isProducing || generatingAi}
+                    title={t('scriptStudio.studio.generateAi')}
+                  >
+                    {generatingAi
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <Zap className="w-3 h-3" />}
+                    {t('scriptStudio.studio.generateAi')}
+                  </button>
+                </div>
+              )}
+              {/* Generation log */}
+              {aiGenLog.length > 0 && (
+                <div className="bg-black/30 rounded-lg px-2 py-1.5 space-y-0.5 max-h-20 overflow-y-auto">
+                  {aiGenLog.map((l, i) => (
+                    <p key={i} className={`text-xs font-mono ${l.startsWith('ERROR') ? 'text-red-400' : l.startsWith('SUCCESS') ? 'text-green-400' : 'text-c-dim'}`}>
+                      {l}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Visual type error */}
+          {visualTypeError && (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/20">
+              <AlertTriangle className="w-3 h-3 text-red-400 shrink-0" />
+              <span className="text-xs text-red-400">{visualTypeError}</span>
+            </div>
+          )}
+
+          {/* Stock controls (shown when not AI) */}
+          {localVisualType !== 'ai' && (
+          <><div className="flex items-center gap-1.5 flex-wrap">
+          {editingQuery ? (
+            <div className="flex items-center gap-1 flex-1 min-w-0">
+              <input
+                className="input flex-1 text-xs py-1 min-w-0"
+                value={queryValue}
+                onChange={(e) => setQueryValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveQuery(); if (e.key === 'Escape') setEditingQuery(false); }}
+                placeholder={t('scriptStudio.studio.pexelsQueryPlaceholder')}
+                autoFocus
+              />
+              <button
+                className="flex items-center justify-center w-7 h-7 rounded-lg bg-c-accent text-white hover:bg-c-accent/80 transition-colors cursor-pointer shrink-0"
+                onClick={saveQuery}
+                disabled={saving}
+              >
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                className="flex items-center justify-center w-7 h-7 rounded-lg bg-c-elevated hover:bg-c-hover transition-colors cursor-pointer shrink-0"
+                onClick={() => setEditingQuery(false)}
+              >
+                <X className="w-3.5 h-3.5 text-c-muted" />
+              </button>
+            </div>
+          ) : (
+            <button
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-c-elevated border border-c-border text-c-muted hover:text-c-text hover:border-c-border-hover transition-all cursor-pointer max-w-xs truncate"
+              onClick={() => { setQueryValue(block.pexelsQuery ?? ''); setEditingQuery(true); }}
+              disabled={isProducing}
+              title={block.pexelsQuery ?? t('scriptStudio.studio.noQuery')}
+            >
+              <Video className="w-3 h-3 shrink-0" />
+              <span className="truncate">{block.pexelsQuery || t('scriptStudio.studio.noQuery')}</span>
+              <Pencil className="w-2.5 h-2.5 shrink-0 opacity-60" />
+            </button>
+          )}
+
+          {/* Swap alternatives */}
+          {!editingQuery && (
+            <button
+              className="inline-flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg text-c-dim hover:text-c-accent hover:bg-c-accent/10 transition-all cursor-pointer"
+              onClick={fetchAlts}
+              disabled={isProducing}
+              title={t('scriptStudio.studio.swap')}
+            >
+              <RefreshCw className={`w-3 h-3 ${loadingAlts ? 'animate-spin' : ''}`} />
+              {t('scriptStudio.studio.swap')}
+            </button>
+          )}
+
+          {/* Fetch buttons */}
+          {!editingQuery && !isProducing && (
+            <>
+              <button
+                className="inline-flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg text-c-dim hover:text-c-accent hover:bg-c-accent/10 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => fetchStock('pexels')}
+                disabled={!!fetchingStock}
+                title="Fetch Pexels video"
+              >
+                {fetchingStock === 'pexels' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Video className="w-3 h-3" />}
+                Pexels
+              </button>
+              <button
+                className="inline-flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg text-c-dim hover:text-emerald-400 hover:bg-emerald-500/10 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => fetchStock('pixabay')}
+                disabled={!!fetchingStock}
+                title="Fetch Pixabay video"
+              >
+                {fetchingStock === 'pixabay' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Video className="w-3 h-3" />}
+                Pixabay
+              </button>
+            </>
+          )}
+
+          {/* Motion effect */}
+          {editingMotion ? (
+            <select
+              className="input text-xs py-1 h-7"
+              defaultValue={block.motion}
+              onChange={(e) => saveMotion(e.target.value)}
+              onBlur={() => setEditingMotion(false)}
+              autoFocus
+            >
+              {MOTION_EFFECTS.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          ) : (
+            <button
+              className="inline-flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-c-elevated border border-c-border text-c-dim hover:text-c-text hover:border-c-border-hover transition-all cursor-pointer"
+              onClick={() => setEditingMotion(true)}
+              disabled={isProducing}
+              title={t('scriptStudio.studio.motion')}
+            >
+              <Film className="w-3 h-3" />
+              {block.motion}
+            </button>
+          )}
+          </div>
+
+          {/* Fetch result log */}
+          {fetchLog && (
+            <p className={`text-xs mt-0.5 ${fetchLog.startsWith('Error') ? 'text-red-400' : 'text-green-400'}`}>
+              {fetchLog}
+            </p>
+          )}
+          </>
+          )}
+        </div>
+      )}
+
+      {/* Alternatives grid */}
+      {showAlts && (
+        <div className="px-3.5 pb-3 space-y-2 border-t border-c-border pt-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-c-muted">{t('scriptStudio.studio.alternatives')}</span>
+            <button className="text-xs text-c-dim hover:text-c-text cursor-pointer p-0.5 rounded hover:bg-c-elevated" onClick={() => setShowAlts(false)}>
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {loadingAlts && (
+            <div className="flex items-center gap-2 text-xs text-c-muted py-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              {t('common.loading')}
+            </div>
+          )}
+          {!loadingAlts && alts.length === 0 && (
+            <p className="text-xs text-c-dim py-1">{t('scriptStudio.studio.noAlternatives')}</p>
+          )}
+          {alts.length > 0 && (
+            <div className="grid grid-cols-3 gap-2">
+              {alts.map((alt) => (
+                <button
+                  key={alt.pexelsId}
+                  className="relative aspect-video rounded-lg overflow-hidden border border-c-border hover:border-c-accent transition-all cursor-pointer group"
+                  onClick={() => selectAlt(alt.pexelsId)}
+                >
+                  <img src={alt.thumbnail} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent text-white text-xs px-1.5 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {alt.duration}s
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Settings Panel (Step 2) ──
+
+const RATE_OPTIONS = [
+  { value: '-20%', label: '-20%' },
+  { value: '-10%', label: '-10%' },
+  { value: '+0%',  label: '+0% (normal)' },
+  { value: '+10%', label: '+10%' },
+  { value: '+20%', label: '+20%' },
+];
+
+function SettingsPanel({ options, onChange, onClose }: {
+  options: Record<string, any>;
+  onChange: (k: string, v: any) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [langFilter, setLangFilter] = useState('en');
+
+  const { data: voiceData } = useQuery({ queryKey: ['tts-voices'], queryFn: ttsApi.voices });
+  const { data: cachedTracks } = useQuery({ queryKey: ['music-cached'], queryFn: musicApi.cached });
+
+  const allVoices = Object.entries(voiceData?.voices ?? {}) as [string, { lang: string; label: string; flag: string; gender: string }][];
+  const langs = [...new Set(allVoices.map(([, v]) => v.lang))].sort();
+  const filteredVoices = (langFilter ? allVoices.filter(([, v]) => v.lang === langFilter) : allVoices)
+    .sort((a, b) => a[0].localeCompare(b[0]));
+
+  const musicEnabled = options.music?.enabled ?? false;
+  const musicTrackId = options.music?.trackId ?? '';
+  const musicVolumeDb = options.music?.volumeDb ?? -21;
+  const setMusic = (patch: Record<string, unknown>) =>
+    onChange('music', { enabled: musicEnabled, trackId: musicTrackId, volumeDb: musicVolumeDb, ...patch });
+
+  return (
+    <div className="border-b border-c-border bg-c-elevated shrink-0">
+      <div className="px-4 py-3">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-5 h-5 rounded-full bg-c-accent flex items-center justify-center text-xs font-bold text-white">1</div>
+            <h3 className="text-sm font-semibold text-c-text">{t('scriptStudio.studio.produceSettings')}</h3>
+          </div>
+          <button className="text-c-dim hover:text-c-text cursor-pointer p-1 rounded hover:bg-c-surface transition-colors" onClick={onClose}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          {/* Row 1: Voice language + Voice + Rate + Speed + Orientation */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {/* Voice language filter */}
+            <div>
+              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.voiceLang')}</label>
+              <select className="input w-full text-sm" value={langFilter} onChange={(e) => setLangFilter(e.target.value)}>
+                <option value="">{t('scriptStudio.produce.voiceLangAll')}</option>
+                {langs.map((lang) => (
+                  <option key={lang} value={lang}>{lang.toUpperCase()}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Voice select */}
+            <div>
+              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.voice')}</label>
+              <select className="input w-full text-sm" value={options.voice ?? 'en-US-GuyNeural'} onChange={(e) => onChange('voice', e.target.value)}>
+                <option value="">{t('scriptStudio.produce.voiceDefault')}</option>
+                {filteredVoices.map(([name, v]) => (
+                  <option key={name} value={name}>{v.flag} {v.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* TTS Rate */}
+            <div>
+              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.rate')}</label>
+              <select className="input w-full text-sm" value={options.rate ?? '+0%'} onChange={(e) => onChange('rate', e.target.value)}>
+                {RATE_OPTIONS.map((r) => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Speed Rate */}
+            <div>
+              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.speedRate')}</label>
+              <select className="input w-full text-sm" value={options.speedRate ?? 1} onChange={(e) => onChange('speedRate', Number(e.target.value))}>
+                {[1, 2.5, 5, 7.5, 10].map((r) => (
+                  <option key={r} value={r}>{r}x</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Orientation */}
+            <div>
+              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.orientation')}</label>
+              <select className="input w-full text-sm" value={options.orientation ?? 'landscape'} onChange={(e) => onChange('orientation', e.target.value)}>
+                <option value="landscape">{t('scriptStudio.produce.landscape')}</option>
+                <option value="portrait">{t('scriptStudio.produce.portrait')}</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Row 2: Background music */}
+          <div className="rounded-lg border border-c-border bg-c-surface p-2.5 space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={musicEnabled}
+                onChange={(e) => setMusic({ enabled: e.target.checked })}
+                className="cursor-pointer accent-c-accent"
+              />
+              <Music2 className="w-3.5 h-3.5 text-c-muted" />
+              <span className="text-sm font-medium text-c-text">{t('scriptStudio.produce.musicLabel')}</span>
+            </label>
+            {musicEnabled && (
+              <div className="grid grid-cols-2 gap-2 pl-1">
+                <div>
+                  <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.musicTrack')}</label>
+                  <select
+                    className="input w-full text-sm"
+                    value={musicTrackId}
+                    onChange={(e) => setMusic({ trackId: e.target.value })}
+                  >
+                    <option value="">{t('scriptStudio.produce.musicNoTrack')}</option>
+                    {(cachedTracks ?? []).map((tr: any) => (
+                      <option key={tr.filename} value={tr.filename}>
+                        {tr.filename} ({Math.round(tr.duration)}s)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.musicVolume')} ({musicVolumeDb} dB)</label>
+                  <input
+                    type="range"
+                    min={-40}
+                    max={0}
+                    step={1}
+                    value={musicVolumeDb}
+                    onChange={(e) => setMusic({ volumeDb: Number(e.target.value) })}
+                    className="w-full accent-c-accent cursor-pointer"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Row 3: Subtitles */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={options.subtitles === true}
+              onChange={(e) => onChange('subtitles', e.target.checked)}
+              className="cursor-pointer accent-c-accent"
+            />
+            <span className="text-sm text-c-text">{t('scriptStudio.produce.subtitles')}</span>
+            <span className="text-xs text-c-dim">— {t('scriptStudio.produce.subtitlesHint')}</span>
+          </label>
+
+          {/* Row 4: AI fallback */}
+          <label className="flex items-center gap-2 cursor-pointer" title={t('scriptStudio.produce.aiFallbackHint')}>
+            <input
+              type="checkbox"
+              checked={options.aiFallback === true}
+              onChange={(e) => onChange('aiFallback', e.target.checked)}
+              className="cursor-pointer accent-violet-500"
+            />
+            <Wand2 className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+            <span className="text-sm text-c-text">{t('scriptStudio.produce.aiFallback')}</span>
+            <span className="text-xs text-c-dim">— {t('scriptStudio.produce.aiFallbackHint')}</span>
+          </label>
+
+          {/* Row 5: AI long scene mode */}
+          <div className="flex items-center gap-2">
+            <Video className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="text-sm text-c-text">{t('scriptStudio.produce.aiLongScene')}</span>
+            <select
+              value={options.aiLongSceneMode ?? 'freeze_hold'}
+              onChange={(e) => onChange('aiLongSceneMode', e.target.value)}
+              className="ml-auto text-xs bg-c-elevated border border-c-border rounded px-2 py-1 text-c-text cursor-pointer"
+            >
+              <option value="freeze_hold">{t('scriptStudio.produce.aiLongFreezeHold')}</option>
+              <option value="multi_generate">{t('scriptStudio.produce.aiLongMultiGen')}</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Result View (Step 4) ──
+
+function ResultView({ jobResult, orientation, onRerun }: {
+  jobResult: any;
+  orientation: 'landscape' | 'portrait';
+  onRerun: () => void;
+}) {
+  const { t } = useTranslation();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const SPEED_OPTIONS = [1, 2.5, 5, 7.5, 10];
+
+  const handleSpeedChange = (rate: number) => {
+    setPlaybackRate(rate);
+    if (videoRef.current) videoRef.current.playbackRate = rate;
+  };
+
+  if (!jobResult?.resultUrl) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 text-c-muted">
+        <Film className="w-12 h-12 opacity-20" />
+        <p className="text-sm">{t('scriptStudio.studio.noResult')}</p>
+      </div>
+    );
+  }
+  const isPortrait = orientation === 'portrait';
+  return (
+    <div className="flex flex-col items-center justify-start p-6 gap-4 overflow-y-auto h-full">
+      <div className="flex items-center gap-2">
+        <Check className="w-5 h-5 text-green-400 shrink-0" />
+        <p className="text-sm text-green-400 font-medium truncate">
+          {jobResult.resultFilename}
+          {jobResult.resultSizeKB ? ` — ${(jobResult.resultSizeKB / 1024).toFixed(1)} MB` : ''}
+        </p>
+      </div>
+      <video
+        ref={videoRef}
+        key={jobResult.resultUrl}
+        src={jobResult.resultUrl}
+        controls
+        autoPlay
+        onLoadedMetadata={() => { if (videoRef.current) videoRef.current.playbackRate = playbackRate; }}
+        className={`rounded-xl border border-green-500/20 shadow-xl bg-black ${
+          isPortrait ? 'max-h-[70vh] max-w-[360px] w-full' : 'w-full max-w-4xl'
+        }`}
+      />
+      <div className="flex items-center gap-3">
+        {/* Speed rate buttons */}
+        <div className="flex items-center gap-1 bg-c-elevated rounded-lg border border-c-border px-1.5 py-1">
+          {SPEED_OPTIONS.map((rate) => (
+            <button
+              key={rate}
+              className={`text-xs px-2 py-0.5 rounded cursor-pointer transition-all ${
+                playbackRate === rate
+                  ? 'bg-c-accent text-white font-semibold'
+                  : 'text-c-muted hover:text-c-text hover:bg-c-surface'
+              }`}
+              onClick={() => handleSpeedChange(rate)}
+            >
+              {rate}x
+            </button>
+          ))}
+        </div>
+        <a
+          href={jobResult.resultUrl}
+          download={jobResult.resultFilename}
+          className="btn-primary flex items-center gap-2 text-sm px-4 py-2"
+        >
+          {t('scriptStudio.studio.download')}
+        </a>
+        <button
+          className="btn-secondary flex items-center gap-2 text-sm px-4 py-2"
+          onClick={onRerun}
+        >
+          {t('scriptStudio.studio.rerun')}
+        </button>
+      </div>
+
+      {/* Synthetic content disclosure notice */}
+      {(jobResult.aiShotCount ?? 0) > 0 && (
+        <div className="flex items-start gap-2 px-4 py-3 rounded-xl bg-violet-500/8 border border-violet-500/20 max-w-2xl w-full">
+          <Wand2 className="w-4 h-4 text-violet-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-violet-300/80 leading-relaxed">
+            <strong className="text-violet-300">{t('scriptStudio.studio.aiDisclosureTitle')}</strong>
+            {' '}{t('scriptStudio.studio.aiDisclosureMsg', { count: jobResult.aiShotCount })}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Produce Panel (Step 3 — sticky bottom) ──
+
+function ProducePanel({
+  isProducing,
+  producing,
+  activeProduceJob,
+  jobResult,
+  showSettings,
+  onToggleSettings,
+  onProduce,
+  onStop,
+}: {
+  isProducing: boolean;
+  producing: boolean;
+  activeProduceJob: any;
+  jobResult: any;
+  showSettings: boolean;
+  onToggleSettings: () => void;
+  onProduce: () => void;
+  onStop: () => void;
+}) {
+  const { t } = useTranslation();
+  // progress is a flat number, progressMessage is a separate field
+  const pct = activeProduceJob?.progress ?? 0;
+  const progressMsg = activeProduceJob?.progressMessage ?? null;
+
+  return (
+    <div className="border-t border-c-border bg-c-surface shrink-0">
+      {/* Result ready indicator (video only shown on step 4) */}
+      {jobResult?.resultUrl && (
+        <div className="px-4 py-2 border-b border-c-border bg-green-500/5 flex items-center gap-2">
+          <Check className="w-4 h-4 text-green-400 shrink-0" />
+          <p className="text-xs text-green-400 font-medium truncate flex-1">
+            {t('scriptStudio.studio.videoReady')}: {jobResult.resultFilename}
+            {jobResult.resultSizeKB ? ` (${(jobResult.resultSizeKB / 1024).toFixed(1)} MB)` : ''}
+          </p>
+        </div>
+      )}
+
+      {/* Progress bar */}
+      {isProducing && activeProduceJob && (
+        <div className="px-4 py-2.5 border-b border-c-border bg-orange-500/5">
+          <div className="flex items-center gap-2 text-sm text-orange-400 mb-1.5">
+            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+            <span className="flex-1 text-xs truncate">{progressMsg ?? t('scriptStudio.studio.producing')}</span>
+            <span className="text-xs font-mono">{pct}%</span>
+          </div>
+          <div className="h-1.5 bg-c-border rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-orange-500 to-amber-400 rounded-full transition-all duration-500"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Action row */}
+      <div className="flex items-center gap-2 px-4 py-3">
+        {/* Step 2 — Settings toggle */}
+        <button
+          className={`flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border transition-all cursor-pointer ${
+            showSettings
+              ? 'bg-c-accent/10 border-c-accent/30 text-c-accent'
+              : 'bg-c-elevated border-c-border text-c-muted hover:text-c-text hover:border-c-border-hover'
+          }`}
+          onClick={onToggleSettings}
+        >
+          <Settings className="w-4 h-4" />
+          <span className="hidden sm:inline">{t('scriptStudio.studio.settings')}</span>
+          <div className="w-5 h-5 rounded-full border border-current/30 flex items-center justify-center text-xs font-bold opacity-60">2</div>
+        </button>
+
+        <div className="flex-1" />
+
+        {/* Step 3 — Produce / Stop */}
+        {isProducing ? (
+          <button
+            className="flex items-center gap-2 text-sm px-5 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-all cursor-pointer font-medium"
+            onClick={onStop}
+          >
+            <Square className="w-4 h-4 fill-current" />
+            {t('scriptStudio.produce.stop')}
+          </button>
+        ) : (
+          <button
+            className="flex items-center gap-2 text-sm px-5 py-2 rounded-lg bg-c-accent hover:bg-c-accent/90 text-white transition-all cursor-pointer font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={onProduce}
+            disabled={producing}
+          >
+            {producing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
+            <span>{t('scriptStudio.studio.produce')}</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ──
+
+export default function ScriptDoc() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const { liveJobs, pushNotification } = useAppStore();
+
+  const [logExpanded, setLogExpanded] = useState(false);
+  const [logsClearedAt, setLogsClearedAt] = useState('');
+  const [streamLogs, setStreamLogs] = useState<LogEntry[]>([]);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [viewMode, setViewMode] = useState<'step' | 'list' | 'markdown'>('step');
+  const [produceOptions, setProduceOptions] = useState<Record<string, any>>({});
+  const [producing, setProducing] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
+  const prevResultUrlRef = useRef<string | null>(null);
+
+  // Queries
+  const docQ = useQuery({
+    queryKey: ['script-studio-doc', id],
+    queryFn: () => scriptStudioApi.get(id!),
+    enabled: !!id,
+    refetchInterval: 10_000,
+  });
+
+  const blocksQ = useQuery({
+    queryKey: ['script-studio-blocks', id],
+    queryFn: () => scriptStudioApi.getBlocks(id!),
+    enabled: !!id,
+    refetchInterval: 3_000,
+  });
+
+  const statusQ = useQuery({
+    queryKey: ['script-studio-produce-status', id],
+    queryFn: () => scriptStudioApi.getProduceStatus(id!),
+    enabled: !!id,
+    refetchInterval: 2_000,
+  });
+
+  const logsQ = useQuery({
+    queryKey: ['script-studio-logs', id],
+    queryFn: () => scriptStudioApi.getLogs(id!, 300),
+    enabled: !!id,
+    refetchInterval: 3_000,
+  });
+
+  const doc = docQ.data;
+
+  // Only check OmniVoice health if the doc uses omnivoice voice groups
+  const docUsesOmnivoice = !!(doc?.parsed?.voiceGroups as any[])?.some((g: any) => g.engine === 'omnivoice');
+  const omnivoiceQ = useQuery({
+    queryKey: ['omnivoice-health'],
+    queryFn: scriptStudioApi.omnivoiceHealth,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+    enabled: docUsesOmnivoice,
+  });
+  const omnivoiceReachable = docUsesOmnivoice ? (omnivoiceQ.data?.reachable ?? null) : null;
+  const blocks: ScriptBlock[] = blocksQ.data ?? [];
+  const produceStatus = statusQ.data;
+  const storedLogs: LogEntry[] = logsQ.data ?? [];
+
+  const activeProduceJob = produceStatus?.job ?? null;
+  const isProducing = doc?.status === 'producing' || activeProduceJob?.status === 'running' || activeProduceJob?.status === 'queued';
+
+  const displayLogs = [...storedLogs, ...streamLogs]
+    .filter((l) => !logsClearedAt || l.ts > logsClearedAt)
+    .sort((a, b) => a.ts.localeCompare(b.ts));
+
+  const handleProduce = async () => {
+    if (!id || producing || isProducing) return;
+    setProducing(true);
+    setStep(3);
+    try {
+      await scriptStudioApi.produce(id, produceOptions);
+      qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
+      qc.invalidateQueries({ queryKey: ['script-studio-doc', id] });
+    } catch (err) {
+      console.error(err);
+    }
+    setProducing(false);
+  };
+
+  const handleStop = async () => {
+    if (!activeProduceJob) return;
+    try {
+      await queueApi.cancel(activeProduceJob.id);
+      qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
+      qc.invalidateQueries({ queryKey: ['script-studio-doc', id] });
+    } catch { /* ignore */ }
+  };
+
+  const handleBlockUpdated = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ['script-studio-blocks', id] });
+  }, [qc, id]);
+
+  const handleResyncBlocks = async () => {
+    if (!id || resyncing) return;
+    setResyncing(true);
+    try {
+      await scriptStudioApi.syncBlocks(id);
+      qc.invalidateQueries({ queryKey: ['script-studio-blocks', id] });
+    } catch (err: any) {
+      pushNotification({ id: `resync-err-${Date.now()}`, type: 'error', title: err.message ?? 'Sync failed' });
+    }
+    setResyncing(false);
+  };
+
+  const totalBlocks = blocks.length;
+  const audioReady = blocks.filter((b) => b.status !== 'pending' && b.status !== 'error').length;
+  const rendered = blocks.filter((b) => b.status === 'rendered').length;
+
+  const jobResult = activeProduceJob?.result;
+  const hasResult = !!jobResult?.resultUrl;
+
+  // Auto-advance to step 4 when production completes with a result
+  useEffect(() => {
+    const url = jobResult?.resultUrl;
+    if (url && url !== prevResultUrlRef.current) {
+      prevResultUrlRef.current = url;
+      setStep(4);
+    }
+  }, [jobResult?.resultUrl]);
+
+  // Advance to step 3 when production starts
+  useEffect(() => {
+    if (isProducing) setStep(3);
+  }, [isProducing]);
+
+  const handleStepClick = (s: 1 | 2 | 3 | 4) => {
+    if (s === 4 && !hasResult) return;
+    setStep(s);
+  };
+
+  const showSettings = step === 1;
+  const notes = doc?.parsed?.productionNotes;
+  const hasNotes = !!(notes?.sourcesText || notes?.chaptersText || notes?.thumbnailText);
+  const [notesOpen, setNotesOpen] = useState(false);
+
+  // Segment grouping
+  const segmentGroups: Array<{ name: string; segIndex: number; blocks: ScriptBlock[] }> = [];
+  for (const block of blocks) {
+    const last = segmentGroups[segmentGroups.length - 1];
+    if (!last || last.segIndex !== block.segmentIndex) {
+      segmentGroups.push({ name: block.segmentName, segIndex: block.segmentIndex, blocks: [block] });
+    } else {
+      last.blocks.push(block);
+    }
+  }
+  const orientation = (produceOptions.orientation ?? 'landscape') as 'landscape' | 'portrait';
+
+  if (docQ.isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="w-6 h-6 animate-spin text-c-accent" />
+      </div>
+    );
+  }
+
+  if (!doc) {
+    return (
+      <div className="flex items-center justify-center h-full text-c-muted">
+        {t('scriptStudio.docNotFound')}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* ── Top bar ── */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-c-border bg-c-surface shrink-0">
+        <button
+          className="text-c-muted hover:text-c-text transition-colors cursor-pointer p-1 -ml-1 rounded-lg hover:bg-c-elevated"
+          onClick={() => navigate('/script-studio')}
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h1 className="text-base font-semibold text-c-text truncate">{doc.title}</h1>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${STATUS_CLASSES[doc.status] ?? 'bg-gray-500/15 text-gray-400'}`}>
+              {doc.status}
+            </span>
+          </div>
+        </div>
+        <button
+          className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-c-border bg-c-elevated text-c-muted hover:text-c-text hover:border-c-border-hover transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          onClick={handleResyncBlocks}
+          disabled={resyncing || isProducing}
+          title={t('scriptStudio.studio.resyncTitle')}
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${resyncing ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">{t('scriptStudio.studio.resync')}</span>
+        </button>
+      </div>
+
+      {/* ── Production Notes ── */}
+      {hasNotes && (
+        <div className="border-b border-c-border shrink-0">
+          <button
+            className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-c-elevated/50 transition-colors cursor-pointer"
+            onClick={() => setNotesOpen((v) => !v)}
+          >
+            <span className="text-xs font-semibold text-red-400 uppercase tracking-widest">
+              # PRODUCTION NOTES
+            </span>
+            <div className="flex-1 h-px bg-c-border" />
+            {notesOpen ? <ChevronUp className="w-3.5 h-3.5 text-c-dim shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-c-dim shrink-0" />}
+          </button>
+          {notesOpen && (
+            <div className="px-4 pb-3 space-y-2.5">
+              {notes?.chaptersText && (
+                <div>
+                  <p className="text-xs font-semibold text-c-muted mb-1">Chapter markers</p>
+                  <pre className="font-mono text-xs text-c-text whitespace-pre-wrap leading-relaxed">{notes.chaptersText}</pre>
+                </div>
+              )}
+              {notes?.thumbnailText && (
+                <div>
+                  <p className="text-xs font-semibold text-c-muted mb-1">Thumbnail concept</p>
+                  <p className="text-xs text-c-text leading-relaxed">{notes.thumbnailText}</p>
+                </div>
+              )}
+              {notes?.sourcesText && (
+                <div>
+                  <p className="text-xs font-semibold text-c-muted mb-1">Stats &amp; sources</p>
+                  <pre className="font-mono text-xs text-c-text whitespace-pre-wrap leading-relaxed">{notes.sourcesText}</pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Step indicator ── */}
+      <StepIndicator
+        step={step}
+        totalBlocks={totalBlocks}
+        audioReady={audioReady}
+        rendered={rendered}
+        isProducing={isProducing}
+        hasResult={hasResult}
+        onStepClick={handleStepClick}
+      />
+
+      {/* ── OmniVoice health banner (only on Settings step) ── */}
+      {showSettings && omnivoiceReachable === false && (
+        <div className="mx-3 mb-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+          <span className="text-xs text-amber-400">{t('scriptStudio.studio.omnivoiceOffline')}</span>
+        </div>
+      )}
+      {showSettings && omnivoiceReachable === true && (
+        <div className="mx-3 mb-2 px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center gap-2">
+          <Check className="w-3.5 h-3.5 text-green-400 shrink-0" />
+          <span className="text-xs text-green-400">{t('scriptStudio.studio.omnivoiceOnline')}</span>
+        </div>
+      )}
+
+      {/* ── Step 2: Settings panel ── */}
+      {showSettings && (
+        <SettingsPanel
+          options={produceOptions}
+          onChange={(k, v) => setProduceOptions((prev) => ({ ...prev, [k]: v }))}
+          onClose={() => setStep(2)}
+        />
+      )}
+
+      {/* ── Step 4: Result view ── */}
+      {step === 4 ? (
+        <div className="flex-1 overflow-hidden">
+          <ResultView
+            jobResult={jobResult}
+            orientation={orientation}
+            onRerun={() => setStep(3)}
+          />
+        </div>
+      ) : blocks.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-2 text-c-muted">
+          <Film className="w-8 h-8 opacity-30" />
+          <p className="text-sm">{t('scriptStudio.studio.noBlocks')}</p>
+        </div>
+      ) : (
+        /* ── Steps 1/2/3: Block content ── */
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {/* View-mode toggle (step 1 only) */}
+          {step === 2 && !isProducing && (
+            <div className="flex items-center justify-between px-4 py-1.5 border-b border-c-border bg-c-surface/50 shrink-0">
+              <span className="text-xs text-c-dim">
+                {viewMode === 'step' ? t('scriptStudio.studio.viewStep') : viewMode === 'markdown' ? t('scriptStudio.studio.viewMarkdown') : t('scriptStudio.studio.viewList')}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${viewMode === 'markdown' ? 'border-c-accent/40 bg-c-accent/10 text-c-accent' : 'border-c-border bg-c-elevated text-c-muted hover:text-c-text hover:border-c-border-hover'}`}
+                  onClick={() => setViewMode((v) => v === 'markdown' ? 'step' : 'markdown')}
+                >
+                  <FileText className="w-3.5 h-3.5" />{t('scriptStudio.studio.switchMarkdown')}
+                </button>
+                {viewMode !== 'markdown' && (
+                  <button
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-c-border bg-c-elevated text-c-muted hover:text-c-text hover:border-c-border-hover transition-all cursor-pointer"
+                    onClick={() => setViewMode((v) => v === 'step' ? 'list' : 'step')}
+                  >
+                    {viewMode === 'step'
+                      ? <><List className="w-3.5 h-3.5" />{t('scriptStudio.studio.switchList')}</>
+                      : <><Rows3 className="w-3.5 h-3.5" />{t('scriptStudio.studio.switchStep')}</>
+                    }
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Markdown raw view (step 1 + markdown mode) */}
+          {step === 2 && viewMode === 'markdown' ? (
+            <div className="flex-1 overflow-y-auto p-4">
+              <pre className="font-mono text-xs text-c-text leading-relaxed whitespace-pre-wrap break-words bg-c-elevated border border-c-border rounded-xl p-4">
+                {doc.rawMarkdown ?? ''}
+              </pre>
+            </div>
+          ) : /* Step-by-step editor (step 1 + step mode) */
+          step === 2 && viewMode === 'step' && !isProducing ? (
+            <div className="flex-1 overflow-hidden">
+              <BlockStepEditor
+                blocks={blocks}
+                docId={id!}
+                orientation={orientation}
+                onBlockUpdated={handleBlockUpdated}
+              />
+            </div>
+          ) : (
+            /* List view (step 1 list mode, step 2 settings overlay, step 3) */
+            <div className="flex-1 overflow-y-auto">
+              <div className="p-4 space-y-5">
+                {segmentGroups.map((group) => (
+                  <div key={group.segIndex}>
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <div className="w-1.5 h-4 rounded-full bg-c-accent/50 shrink-0" />
+                      <span className="text-xs font-semibold text-c-accent uppercase tracking-widest">
+                        {group.name}
+                      </span>
+                      <div className="flex-1 h-px bg-c-border" />
+                      <span className="text-xs text-c-dim">{group.blocks.length} {t('scriptStudio.studio.blocks')}</span>
+                    </div>
+                    <div className="space-y-2 ml-1">
+                      {group.blocks.map((block) => (
+                        <BlockCard
+                          key={block.id}
+                          block={block}
+                          docId={id!}
+                          orientation={orientation}
+                          isProducing={isProducing}
+                          onBlockUpdated={handleBlockUpdated}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Produce panel (step 3 only) ── */}
+      {step === 3 && (
+        <>
+          <ProducePanel
+            isProducing={isProducing}
+            producing={producing}
+            activeProduceJob={activeProduceJob}
+            jobResult={jobResult}
+            showSettings={showSettings}
+            onToggleSettings={() => setStep(step === 1 ? 2 : 1)}
+            onProduce={handleProduce}
+            onStop={handleStop}
+          />
+          <ActivityLog
+            logs={displayLogs}
+            expanded={logExpanded}
+            onToggle={() => setLogExpanded((v) => !v)}
+            onClear={() => { setStreamLogs([]); setLogsClearedAt(new Date().toISOString()); }}
+          />
+        </>
+      )}
+    </div>
+  );
+}

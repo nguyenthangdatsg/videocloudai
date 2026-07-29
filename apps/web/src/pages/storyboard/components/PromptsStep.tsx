@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Wand2, ArrowRight, Trash2, Copy, Download, Pencil, Merge, RefreshCw, Square } from 'lucide-react';
+import { Wand2, ArrowRight, Trash2, Copy, Download, Pencil, Merge, RefreshCw, Square, Video } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
 import { StagePromptEditor } from './StagePromptEditor';
@@ -82,6 +82,12 @@ export function PromptsStep() {
           {generatingPrompts ? <Spinner size="sm" /> : <Wand2 className="w-3.5 h-3.5" />}
           {generatingPrompts ? t('storyboard.generatingPrompts') : t('storyboard.generatePrompts')}
         </button>
+        {prompts.some(p => p.mediaType === 'video') && !generatingPrompts && (
+          <span className="text-[10px] text-violet-400 flex items-center gap-1 shrink-0">
+            <Video className="w-3 h-3" />
+            {prompts.filter(p => p.mediaType === 'video').length} video queries
+          </span>
+        )}
         {generatingPrompts && (
           <button onClick={handleStopPrompts} className="text-xs py-1.5 px-3 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white">
             <Square className="w-3 h-3 fill-current" /> {t('storyboard.stopGeneration')}
@@ -154,6 +160,11 @@ export function PromptsStep() {
                   onClick={() => { const si = promptToSegIdx.get(i); if (si !== undefined) scrollToEl(`seg-${si}`); }}
                 >{i + 1}</span>
                 <span className="text-[10px] font-mono text-cyan-300/70">[{p.timestamp}]</span>
+                {p.mediaType === 'video' && (
+                  <span className="shrink-0 flex items-center gap-0.5 text-[8px] text-violet-400 bg-violet-900/20 rounded px-1 py-0.5">
+                    <Video className="w-2.5 h-2.5" /> video
+                  </span>
+                )}
                 <span className="text-[10px] text-c-dim italic truncate flex-1">{p.text}</span>
                 {p.model && <span className="text-[9px] font-mono text-emerald-400/60 shrink-0">{p.model}</span>}
                 <button onClick={() => handleRegenPrompt(i)} disabled={regenPromptIdx === i}
@@ -166,6 +177,9 @@ export function PromptsStep() {
                 </button>
               </div>
               <div className="px-3 py-2">
+                {p.mediaType === 'video' && p.prompt && (
+                  <div className="text-[8px] text-violet-400/70 mb-1 flex items-center gap-1"><Video className="w-2.5 h-2.5" /> search query</div>
+                )}
                 {editingPromptIdx === i ? (
                   <textarea value={p.prompt}
                     onChange={(e) => setPrompts((prev) => prev.map((pp, j) => j === i ? { ...pp, prompt: e.target.value } : pp))}

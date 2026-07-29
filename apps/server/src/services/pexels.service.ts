@@ -204,6 +204,34 @@ export async function searchAndDownloadPexelsVideo(
 }
 
 /**
+ * Fetch a specific Pexels video by ID, download the best quality file,
+ * and return cached file info. Returns null if not found.
+ */
+export async function downloadPexelsVideoById(id: number): Promise<PexelsResult | null> {
+  const apiKey = getApiKey();
+  const res = await fetch(`https://api.pexels.com/videos/videos/${id}`, {
+    headers: { Authorization: apiKey },
+  });
+  if (!res.ok) return null;
+
+  const video = (await res.json()) as PexelsVideo;
+  const bestFile = pickBestFile(video);
+  if (!bestFile) return null;
+
+  const cacheDir = resolveImageCacheDir();
+  const filename = await downloadVideoFile(bestFile.link, cacheDir);
+
+  return {
+    filename,
+    url: `/api/image/file/${filename}`,
+    pexelsUrl: video.url,
+    duration: video.duration,
+    width: bestFile.width,
+    height: bestFile.height,
+  };
+}
+
+/**
  * Search and download multiple videos for a batch of queries.
  * Yields progress events for NDJSON streaming.
  */
