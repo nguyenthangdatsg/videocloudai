@@ -1268,16 +1268,18 @@ export async function produceBlocks(
 
       try {
         if (bgClipPath) {
-          // Composite: darkened Pexels background + chart overlay via colorkey
+          // Composite: darkened Pexels video + chart via "screen" blend
+          // Screen blend: bright chart elements show over the darkened video,
+          // dark chart background (#0d0e12) becomes transparent naturally
           const shotDurSec = (block.audioDurationMs ?? 6000) / 1000;
           const scaleVf = `scale=w=${w}:h=${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
           await execFileAsync(ffmpeg, [
             '-i', bgClipPath,
             '-i', primaryClipPath,
             '-filter_complex', [
-              `[0:v]${scaleVf},eq=brightness=-0.15:saturation=0.6[bg]`,
-              `[1:v]${scaleVf},colorkey=0x0d0e12:0.18:0.15[chart]`,
-              `[bg][chart]overlay=0:0:format=auto[out]`,
+              `[0:v]${scaleVf},eq=brightness=-0.12:saturation=0.5[bg]`,
+              `[1:v]${scaleVf}[chart]`,
+              `[bg][chart]blend=all_mode=screen:all_opacity=1[out]`,
             ].join(';'),
             '-map', '[out]',
             '-t', shotDurSec.toFixed(3),
