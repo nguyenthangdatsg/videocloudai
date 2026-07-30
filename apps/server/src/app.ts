@@ -70,11 +70,17 @@ export function createApp() {
   const subtitleService = new SubtitleService();
   const videoService = new VideoService(libraryService, narrationService, subtitleService);
 
-  // Register job handlers, THEN resume any pending jobs from the database. The order
-  // matters — resuming first runs jobs with no handlers attached and fails them as
-  // "No handler registered for job type: ...".
   registerHandlers(generationService, videoService, platformUploadService, narrationService, subtitleService);
   getJobQueue().resumePendingJobs();
+
+  // Self-heal: reset any script documents stuck in "producing" state on startup
+  try {
+    const { dbRun } = require('./db');
+    dbRun("UPDATE script_docs SET status = 'parsed' WHERE status = 'producing'");
+    console.log('[Startup] Reset stuck "producing" script documents to "parsed".');
+  } catch (err) {
+    console.error('[Startup] Failed to reset stuck producing documents:', err);
+  }
 
   // Routes
   app.use('/api/videos', createVideosRouter(videoService, generationService, libraryService));
