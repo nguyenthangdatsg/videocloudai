@@ -1081,7 +1081,7 @@ export async function produceBlocks(
       .slice(0, 16);
 
     if (block.contentHash === contentHash && block.audioPath && (block.audioDurationMs ?? 0) > 0 && fs.existsSync(path.join(audioDir, block.audioPath))) {
-      emit('info', `${ref(block)}: audio cached (${(block.audioDurationMs! / 1000).toFixed(1)}s)`, pct);
+      emit('info', `${ref(block)}: audio loaded (${(block.audioDurationMs! / 1000).toFixed(1)}s)`, pct);
       continue;
     }
 
@@ -1297,7 +1297,7 @@ export async function produceBlocks(
       // Check if already cached (aiAssetPath file still exists)
       const cachedAiPath = block.aiAssetPath ? path.join(imageDir, block.aiAssetPath) : null;
       if (block.aiAssetPath && cachedAiPath && fs.existsSync(cachedAiPath) && block.clipAssetPath === block.aiAssetPath) {
-        emit('info', `${ref(block)}: AI clip cached`, pct);
+        emit('info', `${ref(block)}: AI clip loaded`, pct);
         lastGoodClip = block.clipAssetPath!;
         lastGoodVisualType = 'ai';
         aiShotCount++;
@@ -1433,7 +1433,7 @@ export async function produceBlocks(
     if (block.clipAssetPath && block.visualType !== 'ai') {
       const fullPath = path.join(imageDir, block.clipAssetPath);
       if (fs.existsSync(fullPath)) {
-        emit('info', `${ref(block)}: visual cached`, pct);
+        emit('info', `${ref(block)}: stock video loaded`, pct);
         lastGoodClip = block.clipAssetPath;
         lastGoodVisualType = block.visualType;
         continue;
@@ -1557,7 +1557,7 @@ export async function produceBlocks(
 
     // Check if already rendered and file exists (skip cache for chart blocks — always re-composite)
     if (block.visualType !== 'chart' && fs.existsSync(persistentPath)) {
-      emit('info', `${ref(block)}: clip cached`, pct);
+      emit('info', `${ref(block)}: block video loaded`, pct);
       if (block.renderedClipPath !== persistentPath) {
         updateBlockRendered(docId, i, persistentPath);
       }
