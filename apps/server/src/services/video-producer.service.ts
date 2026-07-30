@@ -1383,27 +1383,16 @@ export async function produceBlocks(
         const darkChartPath = path.join(chartDir, darkResult.filename);
         emit('info', `${ref(block)}: chart rendered → ${darkResult.filename}`, pct);
 
-        // Fetch Pexels background clip — try chart title, segment name, then narration excerpt
-        const bgQueries: string[] = [];
-        if (block.pexelsQuery) bgQueries.push(block.pexelsQuery);
-        if (block.chartSpec.title) bgQueries.push(block.chartSpec.title);
-        if (block.segmentName) bgQueries.push(block.segmentName);
-        if (block.narration) bgQueries.push(block.narration.split(/\s+/).slice(0, 5).join(' '));
-        if (bgQueries.length === 0) bgQueries.push('abstract background');
-        addLog(docId, 'info', 'produce', `${ref(block)}: chart bg queries=[${bgQueries.map(q => `"${q}"`).join(', ')}]`);
         let composited = false;
-        for (const bgQuery of bgQueries) {
-          if (composited) break;
-          try {
-            const bgCandidates = await fetchBlockCandidates(bgQuery, pexelsOrientation, 1, imageDir);
-            if (bgCandidates.length > 0) {
-              blockCandidates.set(i, bgCandidates);
-              const bgClipPath = path.join(imageDir, bgCandidates[0].filename);
-              emit('info', `${ref(block)}: compositing chart rectangle over bg video...`, pct);
 
-              // Overlay dark-bg chart as a centered rectangle (82% size, 50% opacity) on dimmed bg video
+        // Try direct clipAssetPath background first
+        if (block.clipAssetPath) {
+          const directBgPath = path.join(imageDir, block.clipAssetPath);
+          if (fs.existsSync(directBgPath)) {
+            try {
+              emit('info', `${ref(block)}: compositing chart rectangle over direct bg video ${block.clipAssetPath}...`, pct);
               const chartOp = (options.chartOpacity ?? 0.5).toFixed(2);
-              const bgHash = crypto.createHash('sha256').update(bgCandidates[0].filename).digest('hex').slice(0, 8);
+              const bgHash = crypto.createHash('sha256').update(block.clipAssetPath).digest('hex').slice(0, 8);
               const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${darkResult.filename}`;
               const compositePath = path.join(chartDir, compositeFilename);
               const bgScaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
@@ -1412,7 +1401,7 @@ export async function produceBlocks(
               const chartX = Math.round((w - chartW) / 2);
               const chartY = Math.round((h - chartH) / 2);
               await execFileWithCancel(ffmpeg, [
-                '-stream_loop', '-1', '-i', bgClipPath,
+                '-stream_loop', '-1', '-i', directBgPath,
                 '-i', darkChartPath,
                 '-filter_complex', [
                   `[0:v]${bgScaleVf},eq=brightness=-0.15:saturation=0.4[bg]`,
@@ -1432,10 +1421,67 @@ export async function produceBlocks(
               lastGoodClip = compositeFilename;
               lastGoodVisualType = 'chart';
               composited = true;
-              emit('info', `${ref(block)}: chart composited on video background`, pct);
+              emit('info', `${ref(block)}: chart composited on direct video background`, pct);
+            } catch (bgErr) {
+              addLog(docId, 'warn', 'produce', `${ref(block)}: chart direct bg composite failed: ${(bgErr as Error).message?.slice(0, 120)}`);
             }
-          } catch (bgErr) {
-            addLog(docId, 'warn', 'produce', `${ref(block)}: chart composite/bg fetch failed: ${(bgErr as Error).message?.slice(0, 120)}`);
+          }
+        }
+
+        if (!composited) {
+          // Fetch Pexels background clip — try chart title, segment name, then narration excerpt
+          const bgQueries: string[] = [];
+          if (block.pexelsQuery) bgQueries.push(block.pexelsQuery);
+          if (block.chartSpec.title) bgQueries.push(block.chartSpec.title);
+          if (block.segmentName) bgQueries.push(block.segmentName);
+          if (block.narration) bgQueries.push(block.narration.split(/\s+/).slice(0, 5).join(' '));
+          if (bgQueries.length === 0) bgQueries.push('abstract background');
+          addLog(docId, 'info', 'produce', `${ref(block)}: chart bg queries=[${bgQueries.map(q => `"${q}"`).join(', ')}]`);
+          for (const bgQuery of bgQueries) {
+            if (composited) break;
+            try {
+              const bgCandidates = await fetchBlockCandidates(bgQuery, pexelsOrientation, 1, imageDir);
+              if (bgCandidates.length > 0) {
+                blockCandidates.set(i, bgCandidates);
+                const bgClipPath = path.join(imageDir, bgCandidates[0].filename);
+                emit('info', `${ref(block)}: compositing chart rectangle over bg video...`, pct);
+
+                // Overlay dark-bg chart as a centered rectangle (82% size, 50% opacity) on dimmed bg video
+                const chartOp = (options.chartOpacity ?? 0.5).toFixed(2);
+                const bgHash = crypto.createHash('sha256').update(bgCandidates[0].filename).digest('hex').slice(0, 8);
+                const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${darkResult.filename}`;
+                const compositePath = path.join(chartDir, compositeFilename);
+                const bgScaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+                const chartW = Math.round(w * 0.82);
+                const chartH = Math.round(h * 0.82);
+                const chartX = Math.round((w - chartW) / 2);
+                const chartY = Math.round((h - chartH) / 2);
+                await execFileWithCancel(ffmpeg, [
+                  '-stream_loop', '-1', '-i', bgClipPath,
+                  '-i', darkChartPath,
+                  '-filter_complex', [
+                    `[0:v]${bgScaleVf},eq=brightness=-0.15:saturation=0.4[bg]`,
+                    `[1:v]scale=${chartW}:${chartH}:flags=bicubic,format=rgba,colorchannelmixer=aa=${chartOp}[chart]`,
+                    `[bg][chart]overlay=${chartX}:${chartY}:shortest=1:format=auto[out]`,
+                  ].join(';'),
+                  '-map', '[out]',
+                  '-t', String(chartDur),
+                  '-r', '24',
+                  '-c:v', 'libx264', '-preset', preset, '-crf', '23',
+                  '-pix_fmt', 'yuv420p',
+                  '-an', '-y', compositePath,
+                ], { timeout: 300_000 });
+
+                updateBlockClip(docId, i, compositeFilename, 'chart');
+                blocksAfterAudio[i] = { ...block, clipAssetPath: compositeFilename, visualType: 'chart', status: 'clip_ready' };
+                lastGoodClip = compositeFilename;
+                lastGoodVisualType = 'chart';
+                composited = true;
+                emit('info', `${ref(block)}: chart composited on video background`, pct);
+              }
+            } catch (bgErr) {
+              addLog(docId, 'warn', 'produce', `${ref(block)}: chart composite/bg fetch failed: ${(bgErr as Error).message?.slice(0, 120)}`);
+            }
           }
         }
 
@@ -1460,7 +1506,7 @@ export async function produceBlocks(
     }
 
     // Skip if clip already assigned and file exists (pexels/upload — NOT chart, handled above)
-    if (block.clipAssetPath && block.visualType !== 'ai') {
+    if (block.clipAssetPath && block.visualType !== 'ai' && block.visualType !== 'chart') {
       const fullPath = path.join(imageDir, block.clipAssetPath);
       if (fs.existsSync(fullPath)) {
         emit('info', `${ref(block)}: stock video loaded`, pct);
