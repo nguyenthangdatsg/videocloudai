@@ -93,13 +93,21 @@ export async function searchPixabayVideos(
     safesearch: 'true',
   });
 
-  const res = await fetch(`https://pixabay.com/api/videos/?${params}`);
+  const res = await fetch(`https://pixabay.com/api/videos/?${params}`, {
+    signal: AbortSignal.timeout(8000),
+  });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Pixabay API error ${res.status}: ${body}`);
   }
 
-  const data = (await res.json()) as PixabaySearchResponse;
+  const text = await res.text();
+  // Detect Cloudflare challenge page (returns HTML instead of JSON)
+  if (text.startsWith('<!DOCTYPE') || text.startsWith('<html')) {
+    throw new Error('Pixabay API blocked by Cloudflare challenge');
+  }
+
+  const data = JSON.parse(text) as PixabaySearchResponse;
   return data.hits ?? [];
 }
 
@@ -125,7 +133,7 @@ export async function searchPixabayCandidates(
   try {
     const hits = await searchPixabayVideos(query, { orientation, perPage });
     return hits
-      .map((hit) => {
+      .map((hit): PixabayCandidate | null => {
         const best = hit.videos.large?.url ? hit.videos.large : hit.videos.medium;
         const preview = hit.videos.small?.url ? hit.videos.small : hit.videos.tiny;
         const thumb =
@@ -146,8 +154,9 @@ export async function searchPixabayCandidates(
         };
       })
       .filter((c): c is PixabayCandidate => c !== null);
-  } catch {
-    return [];
+  } catch (err) {
+    console.warn('[pixabay] Search failed:', (err as Error).message);
+    throw err;
   }
 }
 
@@ -159,14 +168,15 @@ export async function downloadPixabayVideoFromUrl(
   duration = 0,
   width = 0,
   height = 0,
+  destDir?: string,
 ): Promise<PixabayResult> {
-  const cacheDir = resolveImageCacheDir();
+  const cacheDir = destDir ?? resolveImageCacheDir();
   const hash = hashUrl(downloadUrl);
   const filename = `pixabay_${hash}.mp4`;
   const destPath = path.join(cacheDir, filename);
 
   if (!fs.existsSync(destPath)) {
-    const resp = await fetch(downloadUrl);
+    const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(30000) });
     if (!resp.ok) throw new Error(`Failed to download Pixabay video: ${resp.status}`);
     fs.writeFileSync(destPath, Buffer.from(await resp.arrayBuffer()));
   }
@@ -180,9 +190,9 @@ export async function downloadPixabayVideoFromUrl(
  */
 export async function searchAndDownloadPixabayVideo(
   query: string,
-  opts?: { orientation?: 'landscape' | 'portrait' },
+  opts?: { orientation?: 'landscape' | 'portrait'; destDir?: string },
 ): Promise<PixabayResult | null> {
-  const cacheDir = resolveImageCacheDir();
+  const cacheDir = opts?.destDir ?? resolveImageCacheDir();
   const hits = await searchPixabayVideos(query, opts);
   if (hits.length === 0) return null;
 

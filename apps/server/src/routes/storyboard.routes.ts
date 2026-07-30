@@ -1421,6 +1421,7 @@ Rules:
     // Inject aspect ratio guidance
     const ar = aspectRatio || '16:9';
     const arSuffix = ar === '9:16' ? 'vertical portrait layout, 9:16' : ar === '1:1' ? 'square layout, 1:1' : 'landscape layout, 16:9';
+    const arTag = `, ${arSuffix}`;
 
     // Inject media type guidance when segments have mixed image/video types
     const hasVideoSegments = expandedSegments.some(s => s.mediaType === 'video');
@@ -1602,7 +1603,6 @@ Rules:
     // Programmatically append aspect ratio to every prompt (LLM often ignores instructions)
     // Skip for Pexels mode — search queries don't need aspect ratio
     if (!isPexelsMode) {
-      const arTag = `, ${arSuffix}`;
       for (let j = 0; j < allPrompts.length; j++) {
         if (!allPrompts[j].prompt.includes(arSuffix)) {
           allPrompts[j].prompt = allPrompts[j].prompt.replace(/\.?\s*$/, '') + arTag;

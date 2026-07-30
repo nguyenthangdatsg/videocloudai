@@ -11,11 +11,12 @@ export function ChartBars(props: ChartBarsConfig) {
     bgColor = '#0d0e12',
     sortOrder = 'scripted',
     durationInFrames,
+    animationFrames,
   } = props;
 
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const holdAt = Math.floor(durationInFrames * 0.55);
+  const holdAt = animationFrames ?? Math.floor(durationInFrames * 0.95);
 
   const progress = interpolate(frame, [0, holdAt], [0, 1], {
     easing: Easing.out(Easing.cubic),

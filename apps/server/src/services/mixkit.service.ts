@@ -57,6 +57,7 @@ async function fetchMixkitPage(slug: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT, Accept: 'text/html', 'Accept-Language': 'en-US,en;q=0.9' },
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return null;
     return res.text();
@@ -159,8 +160,9 @@ export async function downloadMixkitVideo(
   duration = 0,
   width = 0,
   height = 0,
+  destDir?: string,
 ): Promise<{ filename: string; url: string; duration: number }> {
-  const cacheDir = resolveImageCacheDir();
+  const cacheDir = destDir ?? resolveImageCacheDir();
   const hash = hashUrl(downloadUrl);
   const filename = `mixkit_${hash}.mp4`;
   const destPath = path.join(cacheDir, filename);
@@ -168,6 +170,7 @@ export async function downloadMixkitVideo(
   if (!fs.existsSync(destPath)) {
     const resp = await fetch(downloadUrl, {
       headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(60000),
     });
     if (!resp.ok) throw new Error(`Failed to download Mixkit video: ${resp.status} ${resp.statusText}`);
     fs.writeFileSync(destPath, Buffer.from(await resp.arrayBuffer()));

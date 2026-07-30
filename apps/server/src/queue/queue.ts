@@ -199,6 +199,18 @@ export class JobQueue extends EventEmitter {
     try {
       const result = await handler(updatedJob, onProgress);
 
+      // Check if job was cancelled
+      const currentJob = this.getJob(jobId);
+      if (currentJob?.status === 'cancelled') {
+        dbRun(
+          "UPDATE jobs SET status = 'cancelled', progress_message = 'Job cancelled by user' WHERE id = ?",
+          [jobId]
+        );
+        this.running.delete(jobId);
+        this.emit('job:cancelled', { jobId });
+        return;
+      }
+
       dbRun(
         "UPDATE jobs SET status = 'completed', progress = 100, result = ?, completed_at = ? WHERE id = ?",
         [JSON.stringify(result ?? {}), new Date().toISOString(), jobId]
@@ -208,6 +220,17 @@ export class JobQueue extends EventEmitter {
       this.emit('job:completed', { jobId, result });
     } catch (err) {
       const error = err as Error & { __reviewPause?: boolean; checkpoint?: string };
+
+      // Check if job was cancelled
+      if (error.message === 'JOB_CANCELLED') {
+        dbRun(
+          "UPDATE jobs SET status = 'cancelled', progress_message = 'Job cancelled by user' WHERE id = ?",
+          [jobId]
+        );
+        this.running.delete(jobId);
+        this.emit('job:cancelled', { jobId });
+        return;
+      }
 
       // ReviewPauseSignal: job is intentionally paused for human review, not a failure.
       if (error.__reviewPause) {
@@ -265,7 +288,7 @@ export class JobQueue extends EventEmitter {
   }
 
   cancelJob(jobId: string): void {
-    dbRun("UPDATE jobs SET status = 'cancelled' WHERE id = ? AND status = 'queued'", [jobId]);
+    dbRun("UPDATE jobs SET status = 'cancelled' WHERE id = ? AND status IN ('queued', 'running', 'waiting_review')", [jobId]);
     this.emit('job:cancelled', { jobId });
   }
 

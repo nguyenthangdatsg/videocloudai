@@ -714,6 +714,7 @@ export interface StoryboardProject extends StoryboardProjectSummary {
   compRoundPanels?: boolean;
   compBgSource?: 'color' | 'pexels';
   compBgQuery?: string;
+  frameTemplateId?: string;
 }
 
 export interface StoryboardTemplateSummary {
@@ -1054,6 +1055,14 @@ export const scriptStudioApi = {
   delete: async (id: string) => {
     await api.delete(`/script-studio/docs/${id}`);
   },
+  updateSubtitleStyle: async (id: string, subtitleStyle: any) => {
+    const res = await api.put(`/script-studio/docs/${id}/subtitle-style`, { subtitleStyle });
+    return res.data as { ok: boolean };
+  },
+  deleteProduce: async (id: string) => {
+    const res = await api.delete(`/script-studio/docs/${id}/produce`);
+    return res.data as { ok: boolean };
+  },
   getNarration: async (id: string) => {
     const res = await api.get(`/script-studio/docs/${id}/narration`);
     return (res.data as { narration: string }).narration;
@@ -1125,6 +1134,49 @@ export const scriptStudioApi = {
   ttsBlock: async (id: string, blockIndex: number, opts?: { voice?: string; rate?: string; force?: boolean; engine?: string }) => {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/tts`, opts ?? {});
     return res.data as { cached: boolean; audioDurationMs: number; wordCount?: number; engine?: string };
+  },
+  reproduceBlock: async (
+    id: string,
+    blockIndex: number,
+    orientation: 'landscape' | 'portrait' = 'landscape',
+    chartOpacity = 0.5,
+    animationDurationSec?: number,
+    onLog?: (msg: string) => void,
+  ) => {
+    const res = await fetch(`/api/script-studio/docs/${id}/blocks/${blockIndex}/reproduce`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orientation, chartOpacity, animationDurationSec }),
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error((errBody as any).error ?? `HTTP ${res.status}`);
+    }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: any = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const parsed = JSON.parse(line);
+        if (parsed.type === 'log' && onLog) onLog(parsed.message);
+        if (parsed.type === 'result') result = parsed;
+        if (parsed.type === 'error') throw new Error(parsed.error);
+      }
+    }
+    if (buffer.trim()) {
+      const parsed = JSON.parse(buffer);
+      if (parsed.type === 'log' && onLog) onLog(parsed.message);
+      if (parsed.type === 'result') result = parsed;
+      if (parsed.type === 'error') throw new Error(parsed.error);
+    }
+    return result;
   },
   produce: async (id: string, options: Record<string, unknown> = {}) => {
     const res = await api.post(`/script-studio/docs/${id}/produce`, options);

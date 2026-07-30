@@ -10,11 +10,12 @@ export function ChartLine(props: ChartLineConfig) {
     accentColor = '#7c6af5',
     bgColor = '#0d0e12',
     durationInFrames,
+    animationFrames,
   } = props;
 
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const holdAt = Math.floor(durationInFrames * 0.55);
+  const holdAt = animationFrames ?? Math.floor(durationInFrames * 0.95);
 
   const drawProgress = interpolate(frame, [0, holdAt], [0, 1], {
     easing: Easing.out(Easing.cubic),

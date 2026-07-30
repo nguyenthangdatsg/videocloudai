@@ -24,16 +24,18 @@ import {
   syncBlocksFromParsed,
   DocStatus,
   type ParsedScript,
+  updateDocSubtitleStyle,
+  deleteDocProduceJob,
   resolveBlockVoice,
   type VoiceGroup,
 } from '../services/script-studio.service';
 import { getJobQueue } from '../queue/queue';
 import type { ProduceOptions } from '../services/video-producer.service';
-import { searchPexelsCandidates, runBlockTts, runOmnivoiceTts, normalizeTtsText } from '../services/video-producer.service';
+import { searchPexelsCandidates, runBlockTts, runOmnivoiceTts, normalizeTtsText, reproduceSingleBlock } from '../services/video-producer.service';
 import { getSettings } from '../services/settings.service';
 import { generateVideoClip } from '../services/image-providers';
 import { resolveImageCacheDir, downloadPexelsVideoById } from '../services/pexels.service';
-import { dbGet } from '../db';
+import { dbGet, dbRun } from '../db';
 import { isReachable as omnivoiceReachable, getBaseUrl as omnivoiceBaseUrl, listVoices as omnivoiceListVoices } from '../providers/omnivoice.provider';
 
 function setupNDJSON(res: Response) {
@@ -44,6 +46,71 @@ function setupNDJSON(res: Response) {
 
 function ndLine(res: Response, data: Record<string, unknown>) {
   res.write(JSON.stringify(data) + '\n');
+}
+
+/**
+ * Composite a chart overlay on a background video clip.
+ * Returns the composited filename (in chartDir) or null on failure.
+ */
+async function compositeChartOnBg(
+  block: { chartSpec: any; audioDurationMs: number | null },
+  bgClipPath: string,
+  orientation: 'landscape' | 'portrait',
+  chartOpacity = 0.5,
+  animationDurationSec?: number,
+): Promise<string | null> {
+  try {
+    const { renderChart } = await import('../services/chart-renderer.service');
+    const { promisify } = await import('util');
+    const { execFile } = await import('child_process');
+    const execFileAsync = promisify(execFile);
+    const { resolveFfmpegPathSync } = await import('../services/import.service');
+    const ffmpeg = resolveFfmpegPathSync('ffmpeg');
+
+    const audioDurSec = (block.audioDurationMs ?? 6000) / 1000;
+    const chartDur = Math.max(audioDurSec, 4);
+    const animDur = animationDurationSec ?? audioDurSec / 2;
+    const accentColor = '#7c6af5';
+    const chartDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'charts');
+    fs.mkdirSync(chartDir, { recursive: true });
+
+    const darkResult = await renderChart(block.chartSpec, orientation, accentColor, '#0d0e12', chartDur, undefined, animDur);
+    const darkChartPath = path.join(chartDir, darkResult.filename);
+
+    const isPortrait = orientation === 'portrait';
+    const w = isPortrait ? 1080 : 1920;
+    const h = isPortrait ? 1920 : 1080;
+    const chartOp = chartOpacity.toFixed(2);
+    const { createHash } = await import('crypto');
+    const bgHash = createHash('sha256').update(path.basename(bgClipPath)).digest('hex').slice(0, 8);
+    const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${darkResult.filename}`;
+    const compositePath = path.join(chartDir, compositeFilename);
+    const bgScaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+    const chartMargin = Math.round(Math.min(w, h) * 0.06);
+    const chartW = w - chartMargin * 2;
+    const chartH = h - chartMargin * 2;
+
+    await execFileAsync(ffmpeg, [
+      '-stream_loop', '-1', '-i', bgClipPath,
+      '-i', darkChartPath,
+      '-filter_complex', [
+        `[0:v]${bgScaleVf},eq=brightness=-0.15:saturation=0.4[bg]`,
+        `[1:v]crop=${chartW}:${chartH}:(in_w-${chartW})/2:(in_h-${chartH})/2,format=rgba,colorchannelmixer=aa=${chartOp}[chart]`,
+        `[bg][chart]overlay=${chartMargin}:${chartMargin}:shortest=1:format=auto[out]`,
+      ].join(';'),
+      '-map', '[out]',
+      '-t', String(chartDur),
+      '-r', '24',
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+      '-pix_fmt', 'yuv420p',
+      '-an', '-y', compositePath,
+    ], { timeout: 300_000 });
+
+    return compositeFilename;
+  } catch (err) {
+    console.error('[compositeChartOnBg] Failed:', (err as Error).message);
+    return null;
+  }
 }
 
 export function createScriptStudioRouter(): Router {
@@ -109,6 +176,18 @@ export function createScriptStudioRouter(): Router {
     res.end();
   });
 
+  router.put('/docs/:id/subtitle-style', (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const doc = getDoc(docId);
+    if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
+
+    const { subtitleStyle } = req.body;
+    if (!subtitleStyle) { res.status(400).json({ error: 'subtitleStyle is required' }); return; }
+
+    updateDocSubtitleStyle(docId, subtitleStyle);
+    res.json({ ok: true });
+  });
+
   router.delete('/docs/:id', (req: Request, res: Response) => {
     deleteDoc(req.params.id as string);
     res.json({ ok: true });
@@ -149,6 +228,24 @@ export function createScriptStudioRouter(): Router {
         syncBlocksFromParsed(docId, doc.parsed as ParsedScript);
         blocks = listBlocks(docId);
       }
+      
+      // Self-heal: reset blocks whose rendered video files are missing on disk
+      let changed = false;
+      for (const block of blocks) {
+        if (block.status === 'rendered' && block.renderedClipPath && !fs.existsSync(block.renderedClipPath)) {
+          dbRun(
+            `UPDATE script_blocks SET rendered_clip_path = NULL, status = 'clip_ready', updated_at = ? WHERE id = ?`,
+            [new Date().toISOString(), block.id]
+          );
+          block.renderedClipPath = null;
+          block.status = 'clip_ready';
+          changed = true;
+        }
+      }
+      if (changed) {
+        blocks = listBlocks(docId);
+      }
+
       res.json({ blocks });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -207,6 +304,18 @@ export function createScriptStudioRouter(): Router {
       const result = await searchAndDownloadPixabayVideo(query, { orientation: orient });
       if (!result) { res.status(422).json({ error: 'No Pixabay results for this query' }); return; }
 
+      if (block.chartSpec) {
+        const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+        const imageDir = path.join(rendersDir, `doc_${docId}`);
+        const bgPath = path.join(imageDir, result.filename);
+        const composited = await compositeChartOnBg(block, bgPath, orient);
+        if (composited) {
+          updateBlockClip(docId, blockIndex, composited, 'chart');
+          res.json({ ok: true, filename: composited, duration: result.duration });
+          return;
+        }
+      }
+
       updateBlockClip(docId, blockIndex, result.filename, 'pexels');
       res.json({ ok: true, filename: result.filename, duration: result.duration });
     } catch (err) {
@@ -229,7 +338,8 @@ export function createScriptStudioRouter(): Router {
 
     const { searchPexelsVideos } = await import('../services/pexels.service');
     const crypto = await import('crypto');
-    const imageDir = resolveImageCacheDir();
+    const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+    const imageDir = path.join(rendersDir, `doc_${docId}`);
     fs.mkdirSync(imageDir, { recursive: true });
 
     try {
@@ -258,6 +368,16 @@ export function createScriptStudioRouter(): Router {
         fs.writeFileSync(destPath, Buffer.from(await response.arrayBuffer()));
       }
 
+      // Chart block: composite chart overlay on the new bg video
+      if (block.chartSpec) {
+        const composited = await compositeChartOnBg(block, destPath, orient);
+        if (composited) {
+          updateBlockClip(docId, blockIndex, composited, 'chart');
+          res.json({ ok: true, filename: composited, pexelsId: video.id, duration: video.duration });
+          return;
+        }
+      }
+
       updateBlockClip(docId, blockIndex, filename, 'pexels');
       res.json({ ok: true, filename, pexelsId: video.id, duration: video.duration });
     } catch (err) {
@@ -275,8 +395,24 @@ export function createScriptStudioRouter(): Router {
     if (!pexelsId) { res.status(400).json({ error: 'pexelsId is required' }); return; }
 
     try {
-      const result = await downloadPexelsVideoById(pexelsId);
+      const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+      const docDir = path.join(rendersDir, `doc_${docId}`);
+      fs.mkdirSync(docDir, { recursive: true });
+
+      const result = await downloadPexelsVideoById(pexelsId, docDir);
       if (!result) { res.status(422).json({ error: 'Video not found or no downloadable files' }); return; }
+
+      const block = getBlock(docId, blockIndex);
+      if (block?.chartSpec) {
+        const bgPath = path.join(docDir, result.filename);
+        const orient = 'landscape' as const; // TODO: pass from request
+        const composited = await compositeChartOnBg(block, bgPath, orient);
+        if (composited) {
+          updateBlockClip(docId, blockIndex, composited, 'chart');
+          res.json({ ok: true, filename: composited, pexelsId, duration: result.duration });
+          return;
+        }
+      }
 
       updateBlockClip(docId, blockIndex, result.filename, 'pexels');
       res.json({ ok: true, filename: result.filename, pexelsId, duration: result.duration });
@@ -311,7 +447,9 @@ export function createScriptStudioRouter(): Router {
 
       const promptHash = createHash('sha256').update(prompt).digest('hex').slice(0, 16);
       const aiFilename = `ai_${docId.slice(0, 8)}_${blockIndex}_${promptHash}.mp4`;
-      const imageDir = resolveImageCacheDir();
+      const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+      const imageDir = path.join(rendersDir, `doc_${docId}`);
+      fs.mkdirSync(imageDir, { recursive: true });
       const aiDestPath = path.join(imageDir, aiFilename);
 
       if (fs.existsSync(aiDestPath)) {
@@ -374,8 +512,24 @@ export function createScriptStudioRouter(): Router {
     if (!downloadUrl) { res.status(400).json({ error: 'downloadUrl is required' }); return; }
 
     try {
+      const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+      const docDir = path.join(rendersDir, `doc_${docId}`);
+      fs.mkdirSync(docDir, { recursive: true });
+
       const { downloadPixabayVideoFromUrl } = await import('../services/pixabay.service');
-      const result = await downloadPixabayVideoFromUrl(downloadUrl, duration ?? 0, width ?? 0, height ?? 0);
+      const result = await downloadPixabayVideoFromUrl(downloadUrl, duration ?? 0, width ?? 0, height ?? 0, docDir);
+
+      const block = getBlock(docId, blockIndex);
+      if (block?.chartSpec) {
+        const bgPath = path.join(docDir, result.filename);
+        const composited = await compositeChartOnBg(block, bgPath, 'landscape');
+        if (composited) {
+          updateBlockClip(docId, blockIndex, composited, 'chart');
+          res.json({ ok: true, filename: composited, duration: result.duration });
+          return;
+        }
+      }
+
       updateBlockClip(docId, blockIndex, result.filename, 'pexels');
       res.json({ ok: true, filename: result.filename, duration: result.duration });
     } catch (err) {
@@ -395,8 +549,24 @@ export function createScriptStudioRouter(): Router {
     if (!downloadUrl) { res.status(400).json({ error: 'downloadUrl is required' }); return; }
 
     try {
+      const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+      const docDir = path.join(rendersDir, `doc_${docId}`);
+      fs.mkdirSync(docDir, { recursive: true });
+
       const { downloadMixkitVideo } = await import('../services/mixkit.service');
-      const result = await downloadMixkitVideo(downloadUrl, duration ?? 0, width ?? 0, height ?? 0);
+      const result = await downloadMixkitVideo(downloadUrl, duration ?? 0, width ?? 0, height ?? 0, docDir);
+
+      const block = getBlock(docId, blockIndex);
+      if (block?.chartSpec) {
+        const bgPath = path.join(docDir, result.filename);
+        const composited = await compositeChartOnBg(block, bgPath, 'landscape');
+        if (composited) {
+          updateBlockClip(docId, blockIndex, composited, 'chart');
+          res.json({ ok: true, filename: composited, duration: result.duration });
+          return;
+        }
+      }
+
       updateBlockClip(docId, blockIndex, result.filename, 'pexels');
       res.json({ ok: true, filename: result.filename, duration: result.duration });
     } catch (err) {
@@ -588,6 +758,33 @@ export function createScriptStudioRouter(): Router {
     res.json({ jobId: job.id, status: 'queued' });
   });
 
+  // ── Reproduce single block (NDJSON streaming) ──
+  router.post('/docs/:id/blocks/:blockIndex/reproduce', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string, 10);
+    const doc = getDoc(docId);
+    if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
+    const orientation = (req.body?.orientation as 'landscape' | 'portrait') || 'landscape';
+    const chartOpacity = Math.min(1, Math.max(0, parseFloat(req.body?.chartOpacity) || 0.5));
+    const animationDurationSec = req.body?.animationDurationSec != null
+      ? Math.max(0.5, parseFloat(req.body.animationDurationSec))
+      : undefined;
+
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-cache');
+    const send = (obj: Record<string, unknown>) => { try { res.write(JSON.stringify(obj) + '\n'); } catch {} };
+
+    try {
+      const result = await reproduceSingleBlock(docId, blockIndex, orientation, chartOpacity, animationDurationSec, (msg) => {
+        send({ type: 'log', message: msg });
+      });
+      send({ type: 'result', ...result });
+    } catch (err) {
+      send({ type: 'error', error: (err as Error).message });
+    }
+    res.end();
+  });
+
   router.get('/docs/:id/produce/status', (req: Request, res: Response) => {
     const doc = getDoc(req.params.id as string);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
@@ -606,6 +803,15 @@ export function createScriptStudioRouter(): Router {
     }
 
     res.json({ job, docStatus: doc.status });
+  });
+
+  router.delete('/docs/:id/produce', (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const doc = getDoc(docId);
+    if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
+
+    deleteDocProduceJob(docId);
+    res.json({ ok: true });
   });
 
   return router;

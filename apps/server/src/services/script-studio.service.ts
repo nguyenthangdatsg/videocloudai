@@ -1,5 +1,7 @@
 import { randomUUID, createHash } from 'crypto';
 import { dbGet, dbAll, dbRun } from '../db';
+import * as path from 'path';
+import * as fs from 'fs';
 
 // ── Types ──
 
@@ -176,6 +178,7 @@ export interface ScriptBlockRecord {
   visualType: string;
   clipAssetPath: string | null;
   clips: BlockClip[];
+  clipsJson: string | null;
   motion: string;
   renderedClipPath: string | null;
   status: BlockStatus;
@@ -225,6 +228,7 @@ interface ScriptDocRow {
   blocks_count: number;
   words_count: number;
   est_duration_seconds: number;
+  subtitle_style?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -258,6 +262,9 @@ export function ensureScriptStudioTables(): void {
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     )`);
+    try {
+      dbRun(`ALTER TABLE script_docs ADD COLUMN subtitle_style TEXT`);
+    } catch { /* ignore if column exists */ }
     dbRun(`CREATE INDEX IF NOT EXISTS idx_script_docs_status ON script_docs(status)`);
     dbRun(`CREATE INDEX IF NOT EXISTS idx_script_docs_updated ON script_docs(updated_at)`);
 
@@ -1236,9 +1243,25 @@ export function createDoc(rawMarkdown: string, titleOverride?: string, sourceRef
   const estDuration = Math.round((wc / 140) * 60);
 
   dbRun(
-    `INSERT INTO script_docs (id, title, raw_markdown, parsed_json, source_ref, status, warnings_count, segments_count, blocks_count, words_count, est_duration_seconds, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?, ?, ?)`,
-    [id, finalTitle, rawMarkdown, JSON.stringify(parsed), sourceRef ?? null, parsed.warnings.length, parsed.segments.length, blocksCount, wc, estDuration, now, now],
+    `INSERT INTO script_docs (id, title, raw_markdown, parsed_json, source_ref, status, warnings_count, segments_count, blocks_count, words_count, est_duration_seconds, subtitle_style, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, finalTitle, rawMarkdown, JSON.stringify(parsed), sourceRef ?? null, parsed.warnings.length, parsed.segments.length, blocksCount, wc, estDuration, JSON.stringify({
+      enabled: true,
+      fontFamily: 'Arial',
+      fontSize: 24,
+      fontColor: '#FFFFFF',
+      fontWeight: 'bold',
+      strokeColor: '#000000',
+      strokeWidth: 2,
+      bgColor: '#000000',
+      bgOpacity: 0.5,
+      position: 'bottom',
+      alignment: 'center',
+      marginX: 40,
+      marginBottom: 60,
+      uppercase: false,
+      animation: 'none',
+    }), now, now],
   );
 
   addLog(id, 'success', 'parse', `Document created and parsed: ${parsed.segments.length} segments, ${blocksCount} blocks, ${wc} words`);
@@ -1293,6 +1316,7 @@ function rowToDoc(row: ScriptDocRow) {
     blocksCount: row.blocks_count,
     wordsCount: row.words_count,
     estDurationSeconds: row.est_duration_seconds,
+    subtitleStyle: row.subtitle_style ? JSON.parse(row.subtitle_style) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1353,6 +1377,7 @@ function rowToBlock(row: ScriptBlockRow): ScriptBlockRecord {
     visualType: row.visual_type,
     clipAssetPath: row.clip_asset_path,
     clips: row.clips_json ? (JSON.parse(row.clips_json) as BlockClip[]) : [],
+    clipsJson: row.clips_json,
     motion: row.motion,
     renderedClipPath: row.rendered_clip_path,
     status: row.status,
@@ -1459,7 +1484,7 @@ export function updateBlockClip(docId: string, blockIndex: number, clipAssetPath
 
 export function updateBlockRendered(docId: string, blockIndex: number, renderedClipPath: string): void {
   dbRun(
-    `UPDATE script_blocks SET rendered_clip_path = ?, status = 'rendered', updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    `UPDATE script_blocks SET rendered_clip_path = ?, status = 'rendered', error_msg = NULL, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [renderedClipPath, new Date().toISOString(), docId, blockIndex],
   );
 }
@@ -1524,23 +1549,26 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
       const block = seg.blocks[bi];
       const blockIndex = flatIdx++;
       const narrationHash = createHash('sha256').update(block.narration || '').digest('hex').slice(0, 16);
-      // Chart wins if both [CHART:] and [FLOW:] present (conflict already warned during parse)
-      const hasFlow = !!block.flowPrompt && !block.chartSpec;
-      const visualType = block.chartSpec ? 'chart' : hasFlow ? 'ai' : block.pexelsQuery ? 'pexels' : 'inherit';
-      const aiPrompt = hasFlow ? block.flowPrompt! : null;
-      const motion = MOTION_CYCLE[blockIndex % MOTION_CYCLE.length];
-      const overlaysJson = JSON.stringify(block.overlays || []);
-      const chartSpecJson = block.chartSpec ? JSON.stringify(block.chartSpec) : null;
-      const paceHint = block.paceHint ?? null;
-
       const existing = dbGet<ScriptBlockRow>(
         `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
         [docId, blockIndex],
       );
 
       const sceneNum = bi + 1;
-
       const voiceConfig = block.voiceConfig ?? null;
+
+      // Chart wins if both [CHART:] and [FLOW:] present (conflict already warned during parse)
+      const hasFlow = !!block.flowPrompt && !block.chartSpec;
+      const parsedVisualType = block.chartSpec ? 'chart' : hasFlow ? 'ai' : block.pexelsQuery ? 'pexels' : 'inherit';
+      const visualType = parsedVisualType === 'inherit'
+        ? (existing ? existing.visual_type : 'pexels')
+        : parsedVisualType;
+
+      const aiPrompt = hasFlow ? block.flowPrompt! : null;
+      const motion = MOTION_CYCLE[blockIndex % MOTION_CYCLE.length];
+      const overlaysJson = JSON.stringify(block.overlays || []);
+      const chartSpecJson = block.chartSpec ? JSON.stringify(block.chartSpec) : null;
+      const paceHint = block.paceHint ?? null;
 
       if (!existing) {
         dbRun(
@@ -1553,17 +1581,19 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
         const visualChanged = (existing.pexels_query ?? null) !== (block.pexelsQuery ?? null)
           || (existing.chart_spec_json ?? null) !== (chartSpecJson ?? null)
           || (existing.ai_prompt ?? null) !== (aiPrompt ?? null)
-          || existing.visual_type !== visualType;
+          || (existing.clip_asset_path === null && existing.visual_type !== visualType);
+
+        const targetVisualType = existing.clip_asset_path ? existing.visual_type : visualType;
 
         if (narrationChanged) {
-          // Reset audio + clip + render
+          // Reset audio + render, keep clip asset path
           dbRun(
             `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, narration = ?, pexels_query = ?,
              chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?, content_hash = NULL,
              audio_path = NULL, audio_duration_ms = NULL, words_json = NULL,
-             clip_asset_path = NULL, ai_asset_path = NULL, rendered_clip_path = NULL, status = 'pending', error_msg = NULL, updated_at = ?
+             rendered_clip_path = NULL, status = 'pending', error_msg = NULL, updated_at = ?
              WHERE doc_id = ? AND block_index = ?`,
-            [si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, now, docId, blockIndex],
+            [si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, targetVisualType, now, docId, blockIndex],
           );
         } else if (visualChanged) {
           // Keep audio, reset clip + render
@@ -1591,4 +1621,60 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
   // Delete blocks beyond new total count
   const newCount = flatIdx;
   dbRun(`DELETE FROM script_blocks WHERE doc_id = ? AND block_index >= ?`, [docId, newCount]);
+}
+
+export function updateDocSubtitleStyle(id: string, style: any): void {
+  dbRun(
+    `UPDATE script_docs SET subtitle_style = ?, updated_at = ? WHERE id = ?`,
+    [JSON.stringify(style), new Date().toISOString(), id]
+  );
+}
+
+export function deleteDocProduceJob(docId: string): void {
+  const row = dbGet<{ id: string; payload: string; result: string | null }>(
+    `SELECT * FROM jobs WHERE type = 'script-studio-produce'
+     AND json_extract(payload, '$.docId') = ?
+     ORDER BY created_at DESC LIMIT 1`,
+    [docId]
+  );
+
+  if (row) {
+    if (row.result) {
+      try {
+        const resObj = JSON.parse(row.result);
+        if (resObj?.resultFilename) {
+          const outDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+          const videoPath = path.join(outDir, resObj.resultFilename);
+          if (fs.existsSync(videoPath)) {
+            fs.unlinkSync(videoPath);
+            addLog(docId, 'info', 'produce', `Deleted produced video file: ${resObj.resultFilename}`);
+          }
+        }
+      } catch (err) {
+        console.error('[produce] Failed to delete video file:', err);
+      }
+    }
+
+    dbRun(`DELETE FROM jobs WHERE id = ?`, [row.id]);
+  }
+
+  // Also delete the document's cached block videos folder!
+  try {
+    const outDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+    const docDir = path.join(outDir, `doc_${docId}`);
+    if (fs.existsSync(docDir)) {
+      fs.rmSync(docDir, { recursive: true, force: true });
+      addLog(docId, 'info', 'produce', `Deleted doc folder: doc_${docId}`);
+    }
+  } catch (err) {
+    console.error(`[produce] Failed to delete doc folder:`, err);
+  }
+
+  // Reset status to parsed
+  setDocStatus(docId, 'parsed');
+}
+
+export function getJobStatus(jobId: string): string | null {
+  const row = dbGet<{ status: string }>('SELECT status FROM jobs WHERE id = ?', [jobId]);
+  return row ? row.status : null;
 }

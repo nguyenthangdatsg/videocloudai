@@ -6,10 +6,11 @@ import {
   ArrowLeft, ChevronDown, ChevronUp, AlertTriangle, Info, Check,
   Play, Loader2, BarChart2, Video, Mic, Settings, RefreshCw, X,
   Volume2, Film, Square, ChevronRight, ChevronLeft, Pencil, Music2,
-  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus,
+  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2,
 } from 'lucide-react';
-import { scriptStudioApi, queueApi, ttsApi, musicApi } from '../../lib/api';
+import { scriptStudioApi, queueApi, ttsApi, musicApi, type SubtitleStyle } from '../../lib/api';
 import { useAppStore } from '../../store';
+import { SubtitlePanel } from '../storyboard/components/SubtitlePanel';
 
 // ── Types ──
 
@@ -32,6 +33,7 @@ interface ScriptBlock {
   visualType: string;
   clipAssetPath: string | null;
   clips: Array<{ assetPath: string; startSec: number; endSec: number | null; sourceDurationSec?: number; label?: string }>;
+  clipsJson: string | null;
   motion: string;
   renderedClipPath: string | null;
   status: 'pending' | 'audio_ready' | 'clip_ready' | 'rendered' | 'error';
@@ -305,15 +307,17 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   const audioRangeDragOffsetRef = useRef(0);
 
   // Multi-clip support: use clips array, fall back to legacy single clipAssetPath
-  const blockClips = block?.clips?.length > 0
-    ? block.clips
-    : (block?.clipAssetPath ? [{ assetPath: block.clipAssetPath, startSec: block.clipStartSec ?? 0, endSec: block.clipEndSec }] : []);
+  const blockClips = block?.clipsJson === '[]'
+    ? []
+    : (block?.clips?.length > 0
+      ? block.clips
+      : (block?.clipAssetPath ? [{ assetPath: block.clipAssetPath, startSec: block.clipStartSec ?? 0, endSec: block.clipEndSec, sourceDurationSec: block.audioDurationMs ? block.audioDurationMs / 1000 : undefined }] : []));
   const safeClipIdx = Math.min(activeClipIdx, Math.max(0, blockClips.length - 1));
   const activeClip = blockClips[safeClipIdx] ?? null;
 
   // Compute per-clip effective durations and total timeline
   const clipEffDurations = blockClips.map((c, i) => {
-    const srcDur = c.sourceDurationSec ?? clipSourceDurations[c.assetPath] ?? null;
+    const srcDur = c.sourceDurationSec ?? clipSourceDurations[c.assetPath] ?? videoDuration ?? null;
     const start = c.startSec ?? 0;
     const end = c.endSec ?? srcDur;
     return end != null ? Math.max(0, end - start) : (srcDur != null ? srcDur - start : 0);
@@ -338,8 +342,20 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     return { clipIdx: Math.max(0, last), localTime: (blockClips[last]?.endSec ?? blockClips[last]?.startSec ?? 0) };
   }, [blockClips, clipEffDurations]);
 
+  const getRenderedUrl = (absolutePath: string | null | undefined): string | null => {
+    if (!absolutePath) return null;
+    const cleanPath = absolutePath.replace(/\\/g, '/');
+    const index = cleanPath.indexOf('/renders/');
+    if (index !== -1) return cleanPath.substring(index);
+    const rIndex = cleanPath.indexOf('renders/');
+    if (rIndex !== -1) return '/' + cleanPath.substring(rIndex);
+    return null;
+  };
+
+  const renderedUrl = getRenderedUrl(block?.renderedClipPath);
+
   // Computed playback values
-  const effectiveClipStart = activeClip?.startSec ?? (block?.clipStartSec ?? 0);
+  const effectiveClipStart = renderedUrl ? 0 : (activeClip?.startSec ?? (block?.clipStartSec ?? 0));
   const audioDurSec = (block?.audioDurationMs && block.audioDurationMs > 0) ? block.audioDurationMs / 1000 : null;
   const playDurSec = totalClipsDuration > 0
     ? totalClipsDuration
@@ -466,7 +482,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
         if (video && blockClips.length > 0) {
           const clipDur = clipEffDurations[safeClipIdx] ?? 0;
           const localElapsed = video.currentTime - (blockClips[safeClipIdx]?.startSec ?? 0);
-          if (localElapsed >= clipDur - 0.05) {
+          if (clipDur > 0.1 && localElapsed >= clipDur - 0.05) {
             const nextIdx = safeClipIdx + 1;
             if (nextIdx < blockClips.length) {
               // Advance to next clip
@@ -696,9 +712,9 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
       } else {
         data = await scriptStudioApi.applyPixabayFromUrl(docId, block.blockIndex, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
       }
-      // Add to clips array (the backend already set clipAssetPath to the new file)
+      // Chart blocks: backend already composited the chart on the bg video — don't overwrite clips
       const newAssetPath = data.filename ?? data.clipAssetPath ?? block.clipAssetPath;
-      if (newAssetPath) {
+      if (newAssetPath && !block.chartSpec) {
         const srcDur = data.duration ?? candidate.duration ?? null;
         const newClip = { assetPath: newAssetPath, startSec: 0, endSec: srcDur as number | null, sourceDurationSec: srcDur as number | undefined, label: `${pickerService}:${candidate.id}` };
         const updatedClips = [...blockClips, newClip];
@@ -792,9 +808,9 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   if (!block) return null;
 
   const isPortrait = orientation === 'portrait';
-  const clipUrl = activeClip
-    ? (block.visualType === 'chart' ? `/cache/charts/` : `/cache/images/`) + activeClip.assetPath
-    : null;
+  const clipUrl = renderedUrl || (activeClip
+    ? (block.visualType === 'chart' ? `/cache/charts/` : `/renders/storyboard/doc_${docId}/`) + activeClip.assetPath
+    : null);
   const audioUrl = block.audioPath ? `/cache/block_audio/${block.audioPath}` : null;
   const audioTotalSec = audioDurSec ?? audioElDuration ?? 0;
   const audioBarPct = (audioTotalSec > 0 && playDurSec && playDurSec > 0) ? Math.min(100, (audioTotalSec / playDurSec) * 100) : 0;
@@ -821,6 +837,19 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             const isChart = !!b.chartSpec;
             const isAi = b.visualType === 'ai';
             const noClip = !b.clipAssetPath && !!b.narration;
+            const notRendered = b.status === 'clip_ready' && !!b.clipAssetPath && !b.renderedClipPath;
+            // Check if video duration < audio duration
+            const audioDurSec = (b.audioDurationMs ?? 0) / 1000;
+            let videoDurSec = 0;
+            if (b.clips?.length > 0) {
+              videoDurSec = b.clips.reduce((sum, c) => {
+                const dur = c.endSec != null && c.startSec != null ? c.endSec - c.startSec : (c.sourceDurationSec ?? 0);
+                return sum + dur;
+              }, 0);
+            } else if (b.clipAssetPath) {
+              videoDurSec = b.clipEndSec != null && b.clipStartSec != null ? b.clipEndSec - b.clipStartSec : 0;
+            }
+            const videoShort = audioDurSec > 0 && videoDurSec > 0 && videoDurSec < audioDurSec - 0.5;
             const isNewSegment = i === 0 || blocks[i - 1].segmentIndex !== b.segmentIndex;
             return (
               <div key={b.id} className="flex items-center gap-1 shrink-0">
@@ -839,17 +868,23 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                       ? 'bg-c-accent text-white'
                       : hasErr
                         ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                        : isChart
-                          ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
-                          : isAi
-                            ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
-                            : noClip
-                              ? 'bg-amber-500/15 text-amber-400'
-                              : b.status === 'rendered'
-                                ? 'bg-green-500/15 text-green-400'
-                                : 'bg-c-elevated text-c-dim hover:bg-c-hover hover:text-c-text'
+                        : noClip
+                          ? 'bg-amber-500/20 text-amber-400 border border-dashed border-amber-500/50'
+                          : notRendered
+                            ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                            : videoShort
+                              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                            : isChart
+                            ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                            : isAi
+                              ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                              : noClip
+                                ? 'bg-amber-500/15 text-amber-400'
+                                : b.status === 'rendered'
+                                  ? 'bg-green-500/15 text-green-400'
+                                  : 'bg-c-elevated text-c-dim hover:bg-c-hover hover:text-c-text'
                   }`}
-                  title={`#${i + 1} · ${b.segmentName} · Sc ${b.sceneNumber}${isChart ? ' [chart]' : isAi ? ' [AI]' : ''}: ${b.status}`}
+                  title={`#${i + 1} · ${b.segmentName} · Sc ${b.sceneNumber}${isChart ? ' [chart]' : isAi ? ' [AI]' : ''}: ${b.status}${videoShort ? ` · video ${videoDurSec.toFixed(1)}s < audio ${audioDurSec.toFixed(1)}s` : ''}`}
                 >
                   {isChart ? <BarChart2 className="w-3 h-3" /> : isAi ? <Wand2 className="w-3 h-3" /> : i + 1}
                 </button>
@@ -1959,6 +1994,33 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
   const [localVisualType, setLocalVisualType] = useState(block.visualType);
   useEffect(() => { setLocalVisualType(block.visualType); }, [block.visualType]);
   const [aiGenLog, setAiGenLog] = useState<string[]>([]);
+  const [reproducing, setReproducing] = useState(false);
+  const [reproduceLog, setReproduceLog] = useState<string[]>([]);
+  const [chartOpacity, setChartOpacity] = useState(0.5);
+  const defaultAnimSec = block.audioDurationMs ? (block.audioDurationMs / 1000) / 2 : 4;
+  const [animationSec, setAnimationSec] = useState(parseFloat(defaultAnimSec.toFixed(1)));
+
+  const handleReproduce = async () => {
+    if (reproducing) return;
+    setReproducing(true);
+    setReproduceLog([]);
+    try {
+      const result = await scriptStudioApi.reproduceBlock(
+        docId, block.blockIndex, orientation, chartOpacity,
+        block.chartSpec ? animationSec : undefined,
+        (msg) => setReproduceLog(prev => [...prev, msg]),
+      );
+      if (result?.type === 'error') {
+        setReproduceLog(prev => [...prev, `ERROR: ${result.error}`]);
+      } else {
+        setReproduceLog(prev => [...prev, '✓ Done']);
+        onBlockUpdated();
+      }
+    } catch (err: any) {
+      setReproduceLog(prev => [...prev, `ERROR: ${err.message}`]);
+    }
+    setReproducing(false);
+  };
 
   const saveQuery = async () => {
     setSaving(true);
@@ -2152,13 +2214,68 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
         <BlockCardPlayer
           audioSrc={`/cache/block_audio/${block.audioPath}`}
           durationMs={block.audioDurationMs}
-          clips={block.clips}
+          clips={block.clips?.length > 0
+            ? block.clips
+            : (block.clipAssetPath ? [{ assetPath: block.clipAssetPath, startSec: block.clipStartSec ?? 0, endSec: block.clipEndSec, sourceDurationSec: block.audioDurationMs ? block.audioDurationMs / 1000 : undefined }] : [])}
           visualType={block.visualType}
           docId={docId}
           blockIndex={block.blockIndex}
           onClipsUpdated={onBlockUpdated}
         />
       )}
+
+      {/* Reproduce controls */}
+      <div className="flex flex-col gap-1 px-3.5 pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+              reproducing
+                ? 'bg-orange-500/10 border-orange-500/30 text-orange-400'
+                : 'bg-c-elevated border-c-border text-c-muted hover:text-c-text hover:border-c-border-hover'
+            }`}
+            onClick={handleReproduce}
+            disabled={reproducing}
+            title="Re-render this block"
+          >
+            {reproducing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+            {reproducing ? 'Reproducing...' : 'Reproduce'}
+          </button>
+          {block.chartSpec && (
+            <>
+              <label className="inline-flex items-center gap-1 text-[10px] text-c-muted" title="Chart rectangle opacity (0 = transparent, 1 = solid)">
+                <span>Opacity</span>
+                <input
+                  type="number"
+                  min={0} max={1} step={0.1}
+                  value={chartOpacity}
+                  onChange={(e) => setChartOpacity(Math.min(1, Math.max(0, parseFloat(e.target.value) || 0)))}
+                  className="w-12 px-1 py-0.5 rounded border border-c-border bg-c-elevated text-c-text text-[10px] font-mono text-center"
+                />
+              </label>
+              <label className="inline-flex items-center gap-1 text-[10px] text-c-muted" title="Animation duration in seconds">
+                <span>Anim</span>
+                <input
+                  type="number"
+                  min={0.5} max={60} step={0.5}
+                  value={animationSec}
+                  onChange={(e) => setAnimationSec(Math.max(0.5, parseFloat(e.target.value) || 1))}
+                  className="w-14 px-1 py-0.5 rounded border border-c-border bg-c-elevated text-c-text text-[10px] font-mono text-center"
+                />
+                <span>s</span>
+              </label>
+            </>
+          )}
+        </div>
+        {reproduceLog.length > 0 && (
+          <div className="max-h-20 overflow-y-auto rounded bg-c-elevated/60 border border-c-border px-2 py-1">
+            {reproduceLog.map((line, i) => (
+              <p key={i} className={`text-[10px] font-mono leading-relaxed ${
+                line.startsWith('ERROR') ? 'text-red-400' : line.startsWith('✓') ? 'text-green-400' : 'text-c-dim'
+              }`}>{line}</p>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Error */}
       {isError && block.errorMsg && (
@@ -2453,13 +2570,22 @@ const RATE_OPTIONS = [
   { value: '+20%', label: '+20%' },
 ];
 
-function SettingsPanel({ options, onChange, onClose }: {
+const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
+  enabled: false, fontFamily: 'Arial', fontSize: 48, fontColor: '#FFFFFF',
+  fontWeight: 'bold', strokeColor: '#000000', strokeWidth: 2,
+  bgColor: '#000000', bgOpacity: 0.5, position: 'bottom', alignment: 'center',
+  marginX: 40, marginBottom: 60, uppercase: false, animation: 'none',
+};
+
+function SettingsPanel({ docId, options, onChange, onClose }: {
+  docId?: string;
   options: Record<string, any>;
   onChange: (k: string, v: any) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
   const [langFilter, setLangFilter] = useState('en');
+  const subtitleStyle = options.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
 
   const { data: voiceData } = useQuery({ queryKey: ['tts-voices'], queryFn: ttsApi.voices });
   const { data: cachedTracks } = useQuery({ queryKey: ['music-cached'], queryFn: musicApi.cached });
@@ -2476,7 +2602,7 @@ function SettingsPanel({ options, onChange, onClose }: {
     onChange('music', { enabled: musicEnabled, trackId: musicTrackId, volumeDb: musicVolumeDb, ...patch });
 
   return (
-    <div className="border-b border-c-border bg-c-elevated shrink-0">
+    <div className="border-b border-c-border bg-c-elevated shrink-0 max-h-[60vh] overflow-y-auto">
       <div className="px-4 py-3">
         {/* Header */}
         <div className="flex items-center justify-between mb-3">
@@ -2590,16 +2716,16 @@ function SettingsPanel({ options, onChange, onClose }: {
           </div>
 
           {/* Row 3: Subtitles */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={options.subtitles === true}
-              onChange={(e) => onChange('subtitles', e.target.checked)}
-              className="cursor-pointer accent-c-accent"
-            />
-            <span className="text-sm text-c-text">{t('scriptStudio.produce.subtitles')}</span>
-            <span className="text-xs text-c-dim">— {t('scriptStudio.produce.subtitlesHint')}</span>
-          </label>
+          <SubtitlePanel
+            subtitleStyle={subtitleStyle}
+            setSubtitleStyle={(updater) => {
+              const next = typeof updater === 'function' ? updater(subtitleStyle) : updater;
+              onChange('subtitleStyle', next);
+              scriptStudioApi.updateSubtitleStyle(docId!, next).catch(console.error);
+            }}
+            saveProject={() => {/* no-op */}}
+            t={t}
+          />
 
           {/* Row 4: AI fallback */}
           <label className="flex items-center gap-2 cursor-pointer" title={t('scriptStudio.produce.aiFallbackHint')}>
@@ -2635,10 +2761,11 @@ function SettingsPanel({ options, onChange, onClose }: {
 
 // ── Result View (Step 4) ──
 
-function ResultView({ jobResult, orientation, onRerun }: {
+function ResultView({ jobResult, orientation, onRerun, onRemove }: {
   jobResult: any;
   orientation: 'landscape' | 'portrait';
   onRerun: () => void;
+  onRemove: () => void;
 }) {
   const { t } = useTranslation();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -2708,6 +2835,13 @@ function ResultView({ jobResult, orientation, onRerun }: {
           onClick={onRerun}
         >
           {t('scriptStudio.studio.rerun')}
+        </button>
+        <button
+          className="btn-secondary flex items-center gap-2 text-sm px-4 py-2 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20 text-red-500 border border-red-500/10"
+          onClick={onRemove}
+        >
+          <Trash2 className="w-4 h-4" />
+          {t('scriptStudio.studio.removeProduce') || 'Remove Video'}
         </button>
       </div>
 
@@ -2837,7 +2971,9 @@ export default function ScriptDoc() {
   const [streamLogs, setStreamLogs] = useState<LogEntry[]>([]);
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [viewMode, setViewMode] = useState<'step' | 'list' | 'markdown'>('step');
-  const [produceOptions, setProduceOptions] = useState<Record<string, any>>({});
+  const [produceOptions, setProduceOptions] = useState<Record<string, any>>(() => ({
+    subtitleStyle: { ...DEFAULT_SUBTITLE_STYLE }
+  }));
   const [producing, setProducing] = useState(false);
   const [resyncing, setResyncing] = useState(false);
   const prevResultUrlRef = useRef<string | null>(null);
@@ -2872,6 +3008,22 @@ export default function ScriptDoc() {
   });
 
   const doc = docQ.data;
+
+  const hasSubtitlesInitializedRef = useRef(false);
+
+  useEffect(() => {
+    hasSubtitlesInitializedRef.current = false;
+  }, [id]);
+
+  useEffect(() => {
+    if (doc?.subtitleStyle && !hasSubtitlesInitializedRef.current) {
+      hasSubtitlesInitializedRef.current = true;
+      setProduceOptions((prev) => ({
+        ...prev,
+        subtitleStyle: doc.subtitleStyle,
+      }));
+    }
+  }, [doc?.subtitleStyle]);
 
   // Only check OmniVoice health if the doc uses omnivoice voice groups
   const docUsesOmnivoice = !!(doc?.parsed?.voiceGroups as any[])?.some((g: any) => g.engine === 'omnivoice');
@@ -2917,6 +3069,19 @@ export default function ScriptDoc() {
     } catch { /* ignore */ }
   };
 
+  const handleRemoveProduce = async () => {
+    if (!id) return;
+    if (!window.confirm(t('scriptStudio.studio.confirmRemoveProduce') || 'Are you sure you want to delete the produced video?')) return;
+    try {
+      await scriptStudioApi.deleteProduce(id);
+      qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
+      qc.invalidateQueries({ queryKey: ['script-studio-doc', id] });
+      setStep(3);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleBlockUpdated = useCallback(() => {
     qc.invalidateQueries({ queryKey: ['script-studio-blocks', id] });
   }, [qc, id]);
@@ -2943,9 +3108,13 @@ export default function ScriptDoc() {
   // Auto-advance to step 4 when production completes with a result
   useEffect(() => {
     const url = jobResult?.resultUrl;
-    if (url && url !== prevResultUrlRef.current) {
-      prevResultUrlRef.current = url;
-      setStep(4);
+    if (url) {
+      if (url !== prevResultUrlRef.current) {
+        prevResultUrlRef.current = url;
+        setStep(4);
+      }
+    } else {
+      prevResultUrlRef.current = null;
     }
   }, [jobResult?.resultUrl]);
 
@@ -3087,6 +3256,7 @@ export default function ScriptDoc() {
       {/* ── Step 2: Settings panel ── */}
       {showSettings && (
         <SettingsPanel
+          docId={id}
           options={produceOptions}
           onChange={(k, v) => setProduceOptions((prev) => ({ ...prev, [k]: v }))}
           onClose={() => setStep(2)}
@@ -3100,6 +3270,7 @@ export default function ScriptDoc() {
             jobResult={jobResult}
             orientation={orientation}
             onRerun={() => setStep(3)}
+            onRemove={handleRemoveProduce}
           />
         </div>
       ) : blocks.length === 0 ? (
@@ -3198,7 +3369,7 @@ export default function ScriptDoc() {
             activeProduceJob={activeProduceJob}
             jobResult={jobResult}
             showSettings={showSettings}
-            onToggleSettings={() => setStep(step === 1 ? 2 : 1)}
+            onToggleSettings={() => setStep((step as number) === 1 ? 2 : 1)}
             onProduce={handleProduce}
             onStop={handleStop}
           />

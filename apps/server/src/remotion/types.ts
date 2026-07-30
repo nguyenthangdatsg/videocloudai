@@ -2,6 +2,8 @@ export type MotionEffect = 'static' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan
 
 export interface ChartBigNumberConfig {
   durationInFrames: number;
+  /** Animation duration in frames. If omitted, defaults to 0.95 * durationInFrames */
+  animationFrames?: number;
   value: number;
   prefix?: string;
   suffix?: string;
@@ -13,6 +15,7 @@ export interface ChartBigNumberConfig {
 
 export interface ChartLineConfig {
   durationInFrames: number;
+  animationFrames?: number;
   dataPoints: { label: string; value: number }[];
   title?: string;
   sourceLabel?: string;
@@ -22,6 +25,7 @@ export interface ChartLineConfig {
 
 export interface ChartBarsConfig {
   durationInFrames: number;
+  animationFrames?: number;
   bars: { name: string; value: number }[];
   title?: string;
   sourceLabel?: string;
@@ -32,6 +36,7 @@ export interface ChartBarsConfig {
 
 export interface ChartVsConfig {
   durationInFrames: number;
+  animationFrames?: number;
   leftLabel: string;
   leftValue: string;
   rightLabel: string;

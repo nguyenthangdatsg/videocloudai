@@ -61,13 +61,17 @@ function buildRenderSpec(
   accentColor: string,
   bgColor: string,
   durationSec: number,
+  animationDurationSec?: number,
 ): ChartRenderSpec {
   const durationInFrames = Math.max(Math.round(durationSec * 24), 24);
+  const animationFrames = animationDurationSec != null
+    ? Math.max(Math.round(animationDurationSec * 24), 12)
+    : undefined;
   const isPortrait = orientation === 'portrait';
   const width = isPortrait ? 1080 : 1920;
   const height = isPortrait ? 1920 : 1080;
 
-  const base = { durationInFrames, accentColor, bgColor };
+  const base = { durationInFrames, animationFrames, accentColor, bgColor };
 
   if (spec.type === 'big-number') {
     const pd = spec.parsedData ?? {};
@@ -148,10 +152,11 @@ export async function renderChart(
   bgColor = '#0d0e12',
   durationSec = 6,
   onLog?: (msg: string) => void,
+  animationDurationSec?: number,
 ): Promise<ChartRenderResult> {
   const log = onLog ?? ((m: string) => console.log(`[chart-renderer] ${m}`));
 
-  const hashInput = JSON.stringify({ v: 2, spec, orientation, accentColor, bgColor, durationSec });
+  const hashInput = JSON.stringify({ v: 4, spec, orientation, accentColor, bgColor, durationSec, animationDurationSec });
   const hash = crypto.createHash('sha256').update(hashInput).digest('hex').slice(0, 16);
   const filename = `chart_${hash}.mp4`;
   const filePath = path.join(getChartCacheDir(), filename);
@@ -161,10 +166,11 @@ export async function renderChart(
     return { filename, filePath, cacheHit: true, durationSec };
   }
 
-  log(`Rendering chart: type=${spec.type} orientation=${orientation} duration=${durationSec}s`);
+  const animStr = animationDurationSec != null ? ` anim=${animationDurationSec.toFixed(1)}s` : '';
+  log(`Rendering chart: type=${spec.type} orientation=${orientation} duration=${durationSec}s${animStr}`);
   const t0 = Date.now();
 
-  const renderSpec = buildRenderSpec(spec, orientation, accentColor, bgColor, durationSec);
+  const renderSpec = buildRenderSpec(spec, orientation, accentColor, bgColor, durationSec, animationDurationSec);
   const { renderMedia, getCompositions } = await import('@remotion/renderer');
   const s = getSettings();
   const browserExecutable = s.get('chrome_executable_path') || undefined;

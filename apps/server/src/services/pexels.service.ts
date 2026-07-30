@@ -118,6 +118,7 @@ export async function searchPexelsVideos(
 
   const res = await fetch(`https://api.pexels.com/videos/search?${params}`, {
     headers: { Authorization: apiKey },
+    signal: AbortSignal.timeout(10000),
   });
 
   if (!res.ok) {
@@ -157,7 +158,7 @@ async function downloadVideoFile(
   }
 
   // Download
-  const res = await fetch(fileUrl);
+  const res = await fetch(fileUrl, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) {
     throw new Error(`Failed to download Pexels video: ${res.status}`);
   }
@@ -207,10 +208,11 @@ export async function searchAndDownloadPexelsVideo(
  * Fetch a specific Pexels video by ID, download the best quality file,
  * and return cached file info. Returns null if not found.
  */
-export async function downloadPexelsVideoById(id: number): Promise<PexelsResult | null> {
+export async function downloadPexelsVideoById(id: number, destDir?: string): Promise<PexelsResult | null> {
   const apiKey = getApiKey();
   const res = await fetch(`https://api.pexels.com/videos/videos/${id}`, {
     headers: { Authorization: apiKey },
+    signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) return null;
 
@@ -218,7 +220,7 @@ export async function downloadPexelsVideoById(id: number): Promise<PexelsResult 
   const bestFile = pickBestFile(video);
   if (!bestFile) return null;
 
-  const cacheDir = resolveImageCacheDir();
+  const cacheDir = destDir ?? resolveImageCacheDir();
   const filename = await downloadVideoFile(bestFile.link, cacheDir);
 
   return {

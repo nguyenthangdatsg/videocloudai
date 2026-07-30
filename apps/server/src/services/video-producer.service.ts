@@ -16,6 +16,8 @@ import {
   buildFlowPrompt,
   resolveBlockVoice,
   parseVoiceConfig,
+  syncBlocksFromParsed,
+  getJobStatus,
   type LogLevel,
   type ScriptBlockRecord,
   type VoiceGroup,
@@ -41,6 +43,23 @@ export interface ProduceOptions {
   orientation?: 'landscape' | 'portrait';
   music?: { enabled: boolean; trackId?: string; volumeDb?: number };
   subtitles?: boolean;
+  subtitleStyle?: {
+    enabled: boolean;
+    fontFamily: string;
+    fontSize: number;
+    fontColor: string;
+    fontWeight: 'normal' | 'bold';
+    strokeColor: string;
+    strokeWidth: number;
+    bgColor: string;
+    bgOpacity: number;
+    position: 'top' | 'center' | 'bottom';
+    alignment: 'left' | 'center' | 'right';
+    marginX: number;
+    marginBottom: number;
+    uppercase: boolean;
+    animation: 'none' | 'fade' | 'word-highlight' | 'karaoke';
+  };
   accentColor?: string;
   /** When true: if Pexels returns zero usable candidates, auto-generate via AI instead of inheriting previous clip */
   aiFallback?: boolean;
@@ -50,6 +69,8 @@ export interface ProduceOptions {
   aiLongSceneMode?: 'freeze_hold' | 'multi_generate';
   /** Playback speed multiplier for the final video (1 = normal, 2.5/5/7.5/10 = faster). */
   speedRate?: number;
+  /** Chart rectangle overlay opacity (0 = fully transparent, 1 = fully opaque). Default 0.5 */
+  chartOpacity?: number;
 }
 
 export type EmitFn = (level: LogLevel, message: string, progressPct: number) => void;
@@ -304,7 +325,7 @@ export function normalizeTtsText(text: string): NormalizationResult {
         const total = num * mult;
         const fracMatch = mM[1].match(/\.(\d+)$/);
         spoken = fracMatch
-          ? decimalToWords(Math.floor(num), fracMatch[1]) + (mult !== 1 ? ' ' + { 1e6: 'million', 1e9: 'billion', 1e3: 'thousand' }[mult] ?? '' : '') + ' ' + unit
+          ? decimalToWords(Math.floor(num), fracMatch[1]) + (mult !== 1 ? ' ' + ({ 1e6: 'million', 1e9: 'billion', 1e3: 'thousand' }[mult] ?? '') : '') + ' ' + unit
           : numToWords(total) + ' ' + unit;
         changed = true;
       }
@@ -677,6 +698,7 @@ function buildAssSubtitles(
   h: number,
   isPortrait: boolean,
   audioDir: string,
+  style?: ProduceOptions['subtitleStyle'],
 ): string {
   const hexToAssBgr = (hex: string) => {
     const c = hex.replace('#', '');
@@ -690,23 +712,42 @@ function buildAssSubtitles(
     return `${hh}:${String(mm).padStart(2, '0')}:${ss.toFixed(2).padStart(5, '0')}`;
   };
 
-  const fontSize = isPortrait ? 48 : 52;
-  const marginBottom = isPortrait ? 100 : 60;
-  const fontColor = `&H00${hexToAssBgr('#FFFFFF')}`;
-  const strokeColor = `&H00${hexToAssBgr('#000000')}`;
-  const backColor = `&H66${hexToAssBgr('#000000')}`;
+  // Use custom style if provided, otherwise defaults
+  const fontFamily = style?.fontFamily ?? 'Arial';
+  const fontSize = style?.fontSize ?? (isPortrait ? 48 : 52);
+  const bold = style?.fontWeight === 'bold' ? -1 : (style ? 0 : -1); // default bold
+  const fontColor = `&H00${hexToAssBgr(style?.fontColor ?? '#FFFFFF')}`;
+  const strokeColor = `&H00${hexToAssBgr(style?.strokeColor ?? '#000000')}`;
+  const bgAlpha = Math.round((1 - (style?.bgOpacity ?? 0.5)) * 255).toString(16).toUpperCase().padStart(2, '0');
+  const backColor = `&H${bgAlpha}${hexToAssBgr(style?.bgColor ?? '#000000')}`;
+  const borderStyle = (style?.bgOpacity ?? 0.5) > 0 ? 3 : 1;
+  const outline = style?.strokeWidth ?? 2;
+  const marginL = style?.marginX ?? 40;
+  const marginR = style?.marginX ?? 40;
+  const marginV = style?.marginBottom ?? (isPortrait ? 100 : 60);
+
+  // ASS alignment: bottom-left=1, bottom-center=2, bottom-right=3, mid-*=4-6, top-*=7-9
+  const assAlignMap: Record<string, number> = { left: 1, center: 2, right: 3 };
+  const posVertical = style?.position === 'top' ? 8 : style?.position === 'center' ? 5 : 2;
+  const assAlign = (assAlignMap[style?.alignment ?? 'center'] ?? 2) + (posVertical - 2);
+
+  const useUppercase = style?.uppercase ?? false;
+  const animation = style?.animation ?? 'none';
 
   const header = [
     '[Script Info]', 'ScriptType: v4.00+', `PlayResX: ${w}`, `PlayResY: ${h}`, 'WrapStyle: 0', '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,Arial,${fontSize},${fontColor},${fontColor},${strokeColor},${backColor},-1,0,0,0,100,100,0,0,3,3,0,2,40,40,${marginBottom},1`,
+    `Style: Default,${fontFamily},${fontSize},${fontColor},${fontColor},${strokeColor},${backColor},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},0,${assAlign},${marginL},${marginR},${marginV},1`,
     '', '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ].join('\n');
 
   const events: string[] = [];
   let globalOffsetMs = 0;
+
+  const applyCase = (t: string) => useUppercase ? t.toUpperCase() : t;
+  const karaokeTag = animation === 'word-highlight' ? '\\kf' : '\\k';
 
   for (const block of blocks) {
     const dur = block.audioDurationMs ?? 0;
@@ -742,33 +783,199 @@ function buildAssSubtitles(
         }
       }
 
-      if (displayTokens.length > 0) {
-        const start = globalOffsetMs + displayTokens[0].startMs;
-        const end = globalOffsetMs + dur;
-        const text = displayTokens
-          .map((dt) => `{\\kf${Math.max(1, Math.round(dt.durationMs / 10))}}${dt.text}`)
-          .join(' ');
-        events.push(`Dialogue: 0,${msToAssTime(start)},${msToAssTime(end)},Default,,0,0,0,,${text}`);
-      } else {
-        // No mappings: show spoken words as-is (all numerals already in original form if no normalization)
-        const start = globalOffsetMs + block.words[0].offset_ms;
-        const end = globalOffsetMs + dur;
-        const text = block.words
-          .map((w) => `{\\kf${Math.max(1, Math.round(w.duration_ms / 10))}}${w.word}`)
-          .join(' ');
-        events.push(`Dialogue: 0,${msToAssTime(start)},${msToAssTime(end)},Default,,0,0,0,,${text}`);
+      // Build timed tokens: either from displayTokens (with mappings) or raw words
+      const timedTokens: DisplayToken[] = displayTokens.length > 0
+        ? displayTokens
+        : block.words.map(w => ({ text: w.word, startMs: w.offset_ms, durationMs: w.duration_ms }));
+
+      // Chunk into groups of ~7 words for single-row display
+      const WORDS_PER_LINE = 7;
+      for (let ci = 0; ci < timedTokens.length; ci += WORDS_PER_LINE) {
+        const chunk = timedTokens.slice(ci, ci + WORDS_PER_LINE);
+        const chunkStart = globalOffsetMs + chunk[0].startMs;
+        const lastToken = chunk[chunk.length - 1];
+        const chunkEnd = globalOffsetMs + lastToken.startMs + lastToken.durationMs;
+
+        let text: string;
+        if (animation === 'fade') {
+          text = `{\\fad(150,100)}${applyCase(chunk.map(t => t.text).join(' '))}`;
+        } else if (animation === 'karaoke' || animation === 'word-highlight') {
+          text = chunk
+            .map((t) => `{${karaokeTag}${Math.max(1, Math.round(t.durationMs / 10))}}${applyCase(t.text)}`)
+            .join(' ');
+        } else {
+          text = applyCase(chunk.map(t => t.text).join(' '));
+        }
+        events.push(`Dialogue: 0,${msToAssTime(chunkStart)},${msToAssTime(chunkEnd)},Default,,0,0,0,,${text}`);
       }
     } else if (block.narration?.trim()) {
-      // Fallback: whole narration as single event (show original numerals)
+      // Fallback: whole narration chunked into single-row groups
       const words = block.narration.trim().split(/\s+/);
-      const perWord = dur > 0 ? Math.floor(dur / words.length / 10) : 10;
-      const text = words.map((w) => `{\\kf${perWord}}${w}`).join(' ');
-      events.push(`Dialogue: 0,${msToAssTime(globalOffsetMs)},${msToAssTime(globalOffsetMs + dur)},Default,,0,0,0,,${text}`);
+      const WORDS_PER_LINE = 7;
+      const totalWords = words.length;
+      const perWordMs = dur > 0 ? dur / totalWords : 100;
+
+      for (let ci = 0; ci < totalWords; ci += WORDS_PER_LINE) {
+        const chunk = words.slice(ci, ci + WORDS_PER_LINE);
+        const chunkStartMs = globalOffsetMs + ci * perWordMs;
+        const chunkEndMs = globalOffsetMs + Math.min((ci + chunk.length) * perWordMs, dur);
+
+        let text: string;
+        const perWord = Math.max(1, Math.floor(perWordMs / 10));
+        if (animation === 'fade') {
+          text = `{\\fad(150,100)}${applyCase(chunk.join(' '))}`;
+        } else if (animation === 'karaoke' || animation === 'word-highlight') {
+          text = chunk.map((w) => `{${karaokeTag}${perWord}}${applyCase(w)}`).join(' ');
+        } else {
+          text = applyCase(chunk.join(' '));
+        }
+        events.push(`Dialogue: 0,${msToAssTime(chunkStartMs)},${msToAssTime(chunkEndMs)},Default,,0,0,0,,${text}`);
+      }
     }
     globalOffsetMs += dur;
   }
 
   return header + '\n' + events.join('\n') + '\n';
+}
+
+// ── Single-block reproduce ──
+
+export async function reproduceSingleBlock(
+  docId: string,
+  blockIndex: number,
+  orientation: 'landscape' | 'portrait' = 'landscape',
+  chartOpacity = 0.5,
+  animationDurationSec?: number,
+  onLog?: (msg: string) => void,
+): Promise<{ clipPath: string; filename: string; durationSec: number }> {
+  const doc = getDoc(docId);
+  if (!doc) throw new Error('Script doc not found');
+  const blocks = listBlocks(docId);
+  const block = blocks.find((b) => b.blockIndex === blockIndex);
+  if (!block) throw new Error(`Block ${blockIndex} not found`);
+
+  const log = onLog ?? ((m: string) => console.log(`[reproduce] ${m}`));
+  const ffmpeg = resolveFfmpegPathSync('ffmpeg');
+  const s = getSettings();
+  const accentColor = '#7c6af5';
+  const isPortrait = orientation === 'portrait';
+  const w = isPortrait ? 1080 : 1920;
+  const h = isPortrait ? 1920 : 1080;
+  const pexelsOrientation = isPortrait ? 'portrait' as const : 'landscape' as const;
+
+  const cacheDir = path.resolve(process.env.CACHE_DIR ?? './cache');
+  const chartDir = path.resolve(cacheDir, 'charts');
+  const outDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+  const imageDir = path.join(outDir, `doc_${docId}`);
+  fs.mkdirSync(chartDir, { recursive: true });
+  fs.mkdirSync(imageDir, { recursive: true });
+
+  const audioDurSec = (block.audioDurationMs ?? 6000) / 1000;
+
+  // ── Chart block ──
+  if (block.chartSpec) {
+    const chartDur = Math.max(audioDurSec, 4);
+    const animDur = animationDurationSec ?? audioDurSec / 2;
+    log(`Rendering chart... (animation: ${animDur.toFixed(1)}s / ${chartDur.toFixed(1)}s total)`);
+
+    // Render dark-bg chart
+    const darkResult = await renderChart(block.chartSpec, orientation, accentColor, '#0d0e12', chartDur, log, animDur);
+    const darkChartPath = path.join(chartDir, darkResult.filename);
+
+    // Fetch Pexels background — try multiple queries
+    const bgQueries: string[] = [];
+    if (block.pexelsQuery) bgQueries.push(block.pexelsQuery);
+    if (block.chartSpec.title) bgQueries.push(block.chartSpec.title);
+    if (block.segmentName) bgQueries.push(block.segmentName);
+    if (block.narration) bgQueries.push(block.narration.split(/\s+/).slice(0, 5).join(' '));
+    if (bgQueries.length === 0) bgQueries.push('abstract background');
+
+    for (const bgQuery of bgQueries) {
+      log(`Fetching bg video: "${bgQuery}"`);
+      try {
+        const bgCandidates = await fetchBlockCandidates(bgQuery, pexelsOrientation, 1, imageDir);
+        if (bgCandidates.length > 0) {
+          const bgClipPath = path.join(imageDir, bgCandidates[0].filename);
+          log('Compositing chart rectangle over video...');
+
+          const opacityStr = chartOpacity.toFixed(2);
+          const bgHash = crypto.createHash('sha256').update(path.basename(bgClipPath)).digest('hex').slice(0, 8);
+          const compositeFilename = `chart_comp_o${opacityStr}_bg${bgHash}_${darkResult.filename}`;
+          const compositePath = path.join(chartDir, compositeFilename);
+          const bgScaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+          const chartMargin = Math.round(Math.min(w, h) * 0.06);
+          const chartW = w - chartMargin * 2;
+          const chartH = h - chartMargin * 2;
+          log(`Chart opacity: ${opacityStr}`);
+
+          await execFileAsync(ffmpeg, [
+            '-stream_loop', '-1', '-i', bgClipPath,
+            '-i', darkChartPath,
+            '-filter_complex', [
+              `[0:v]${bgScaleVf},eq=brightness=-0.15:saturation=0.4[bg]`,
+              `[1:v]crop=${chartW}:${chartH}:(in_w-${chartW})/2:(in_h-${chartH})/2,format=rgba,colorchannelmixer=aa=${opacityStr}[chart]`,
+              `[bg][chart]overlay=${chartMargin}:${chartMargin}:shortest=1:format=auto[out]`,
+            ].join(';'),
+            '-map', '[out]',
+            '-t', String(chartDur),
+            '-r', '24',
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+            '-pix_fmt', 'yuv420p',
+            '-an', '-y', compositePath,
+          ], { timeout: 300_000 });
+
+          updateBlockClip(docId, blockIndex, compositeFilename, 'chart');
+          updateBlockRendered(docId, blockIndex, compositePath);
+          log(`Done: chart composited → ${compositeFilename}`);
+          return { clipPath: compositePath, filename: compositeFilename, durationSec: chartDur };
+        }
+      } catch (err) {
+        log(`Bg fetch/composite failed for "${bgQuery}": ${(err as Error).message?.slice(0, 100)}`);
+      }
+    }
+
+    // Fallback: dark-bg chart only
+    updateBlockClip(docId, blockIndex, darkResult.filename, 'chart');
+    log(`Done: chart (solid bg) → ${darkResult.filename}`);
+    return { clipPath: darkChartPath, filename: darkResult.filename, durationSec: chartDur };
+  }
+
+  // ── Pexels / AI / other block — re-encode clip ──
+  if (!block.clipAssetPath) throw new Error('Block has no clip');
+
+  const resolveClip = (filename: string, vtype: string): string | null => {
+    const dirs = vtype === 'chart' ? [chartDir, imageDir] : [imageDir, chartDir];
+    for (const d of dirs) {
+      const p = path.join(d, filename);
+      if (fs.existsSync(p)) return p;
+    }
+    return null;
+  };
+
+  const srcPath = resolveClip(block.clipAssetPath, block.visualType);
+  if (!srcPath) throw new Error(`Source clip not found: ${block.clipAssetPath}`);
+
+  fs.mkdirSync(outDir, { recursive: true });
+  const segOut = path.join(outDir, `reproduced_block_${blockIndex}_${Date.now()}.mp4`);
+  const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h},format=yuv420p`;
+  const trimStart = block.clipStartSec ?? 0;
+
+  log(`Re-encoding clip: ${block.clipAssetPath} (${audioDurSec.toFixed(1)}s)...`);
+  await execFileAsync(ffmpeg, [
+    '-ss', String(trimStart),
+    '-stream_loop', '-1',
+    '-i', srcPath,
+    '-vf', scaleVf,
+    '-t', audioDurSec.toFixed(3),
+    '-r', '24',
+    '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+    '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+    '-an', '-y', segOut,
+  ], { timeout: 180_000 });
+
+  updateBlockRendered(docId, blockIndex, segOut);
+  log(`Done: ${path.basename(segOut)}`);
+  return { clipPath: segOut, filename: path.basename(segOut), durationSec: audioDurSec };
 }
 
 // ── Main orchestrator ──
@@ -782,12 +989,20 @@ export async function produceBlocks(
   const doc = getDoc(docId);
   if (!doc) throw new Error('Script doc not found');
 
+  const checkCancelled = (jId: string, dId: string) => {
+    const status = getJobStatus(jId);
+    if (status === 'cancelled') {
+      setDocStatus(dId, 'parsed');
+      throw new Error('JOB_CANCELLED');
+    }
+  };
+
   const orientation = options.orientation ?? 'landscape';
   const isPortrait = orientation === 'portrait';
   const w = isPortrait ? 1080 : 1920;
   const h = isPortrait ? 1920 : 1080;
   const pexelsOrientation = isPortrait ? 'portrait' as const : 'landscape' as const;
-  const enableSubtitles = options.subtitles === true;
+  const enableSubtitles = options.subtitles === true || options.subtitleStyle?.enabled === true;
   const accentColor = options.accentColor ?? '#7c6af5';
 
   const s = getSettings();
@@ -797,15 +1012,18 @@ export async function produceBlocks(
   const cacheDir = path.resolve(process.env.CACHE_DIR ?? './cache');
   const audioDir = path.resolve(cacheDir, 'block_audio');
   const chartDir = path.resolve(cacheDir, 'charts');
-  const imageDir = resolveImageCacheDir();
+  const outputDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+  const imageDir = path.join(outputDir, `doc_${docId}`);
   fs.mkdirSync(audioDir, { recursive: true });
   fs.mkdirSync(chartDir, { recursive: true });
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.mkdirSync(imageDir, { recursive: true });
 
   // Resolve ffmpeg: configured path → ffmpeg-static (full filters) → Remotion compositor → PATH
   const ffmpeg = resolveFfmpegPathSync('ffmpeg');
   const ffprobe = resolveFfmpegPathSync('ffprobe');
-  const outputDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
-  fs.mkdirSync(outputDir, { recursive: true });
+  addLog(docId, 'info', 'produce', `FFmpeg resolved: ${ffmpeg}`);
+  addLog(docId, 'info', 'produce', `FFprobe resolved: ${ffprobe}`);
 
   const blocks = listBlocks(docId);
   if (!blocks.length) throw new Error('No blocks found — parse the script first');
@@ -834,6 +1052,7 @@ export async function produceBlocks(
   emit('info', `Stage 1/4: Generating audio for ${blocks.length} blocks...`, 0);
 
   for (let i = 0; i < blocks.length; i++) {
+    checkCancelled(jobId, docId);
     const block = blocks[i];
     const pct = Math.round((i / blocks.length) * 30);
 
@@ -1069,6 +1288,7 @@ export async function produceBlocks(
   }
 
   for (let i = 0; i < blocksAfterAudio.length; i++) {
+    checkCancelled(jobId, docId);
     const block = blocksAfterAudio[i];
     const pct = 30 + Math.round((i / blocksAfterAudio.length) * 30);
 
@@ -1083,37 +1303,119 @@ export async function produceBlocks(
         aiShotCount++;
         continue;
       }
-      // Generate the AI clip
-      await generateAiClipForBlock(block, i, block.aiPrompt, pct);
+      
+      // Instead of generating AI clip, fall back to stock (Pexels) video!
+      const fallbackQuery = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 5).join(' ') || 'abstract';
+      addLog(docId, 'info', 'produce', `${ref(block)}: AI generation skipped — falling back to stock (Pexels) video for query: "${fallbackQuery}"`);
+      emit('info', `${ref(block)}: AI skipped, downloading stock fallback...`, pct);
+      
+      try {
+        const shots = planShots(block);
+        const nShots = Math.max(shots.length, 1);
+        const candidates = await fetchBlockCandidates(fallbackQuery, pexelsOrientation, nShots, imageDir);
+        
+        if (candidates.length > 0) {
+          blockCandidates.set(i, candidates);
+          const primary = candidates[0];
+          usedPexelsIds.add(primary.pexelsId);
+          updateBlockClip(docId, i, primary.filename, 'pexels');
+          blocksAfterAudio[i] = { ...block, clipAssetPath: primary.filename, visualType: 'pexels', status: 'clip_ready' };
+          lastGoodClip = primary.filename;
+          lastGoodVisualType = 'pexels';
+          emit('info', `${ref(block)}: stock fallback downloaded`, pct);
+        } else {
+          emit('warn', `${ref(block)}: no stock fallback found, inheriting previous clip`, pct);
+          if (lastGoodClip) {
+            updateBlockClip(docId, i, lastGoodClip, lastGoodVisualType);
+            blocksAfterAudio[i] = { ...block, clipAssetPath: lastGoodClip, visualType: lastGoodVisualType, status: 'clip_ready' };
+          }
+        }
+      } catch (err) {
+        emit('warn', `${ref(block)}: stock fallback failed — ${(err as Error).message}`, pct);
+        if (lastGoodClip) {
+          updateBlockClip(docId, i, lastGoodClip, lastGoodVisualType);
+          blocksAfterAudio[i] = { ...block, clipAssetPath: lastGoodClip, visualType: lastGoodVisualType, status: 'clip_ready' };
+        }
+      }
       continue;
     }
 
-    // Chart block — render chart overlay + fetch Pexels background clip
+    // Chart block — render chart as floating rectangle over Pexels background video
     if (block.chartSpec) {
       const audioDurSec = (block.audioDurationMs ?? 6000) / 1000;
       const chartDur = Math.max(audioDurSec, 4);
       emit('info', `${ref(block)}: rendering chart (${block.chartSpec.type})...`, pct);
       try {
-        // Render chart with green background for chromakey compositing
-        const chartBgColor = '#00b140';
-        const chartResult = await renderChart(block.chartSpec, orientation, accentColor, chartBgColor, chartDur,
-          (msg) => emit('info', msg, pct));
-        updateBlockClip(docId, i, chartResult.filename, 'chart');
-        blocksAfterAudio[i] = { ...block, clipAssetPath: chartResult.filename, visualType: 'chart', status: 'clip_ready' };
-        lastGoodClip = chartResult.filename;
-        lastGoodVisualType = 'chart';
-        emit('info', `${ref(block)}: chart rendered → ${chartResult.filename}`, pct);
+        // Render chart with dark background (animation = half of audio duration)
+        const animDur = audioDurSec / 2;
+        const darkResult = await renderChart(block.chartSpec, orientation, accentColor, '#0d0e12', chartDur,
+          (msg) => emit('info', msg, pct), animDur);
+        const darkChartPath = path.join(chartDir, darkResult.filename);
+        emit('info', `${ref(block)}: chart rendered → ${darkResult.filename}`, pct);
 
-        // Also fetch a Pexels background clip for compositing in Stage 3
-        const bgQuery = block.pexelsQuery || block.narration?.split(/\s+/).slice(0, 5).join(' ');
-        if (bgQuery) {
+        // Fetch Pexels background clip — try chart title, segment name, then narration excerpt
+        const bgQueries: string[] = [];
+        if (block.pexelsQuery) bgQueries.push(block.pexelsQuery);
+        if (block.chartSpec.title) bgQueries.push(block.chartSpec.title);
+        if (block.segmentName) bgQueries.push(block.segmentName);
+        if (block.narration) bgQueries.push(block.narration.split(/\s+/).slice(0, 5).join(' '));
+        if (bgQueries.length === 0) bgQueries.push('abstract background');
+        addLog(docId, 'info', 'produce', `${ref(block)}: chart bg queries=[${bgQueries.map(q => `"${q}"`).join(', ')}]`);
+        let composited = false;
+        for (const bgQuery of bgQueries) {
+          if (composited) break;
           try {
             const bgCandidates = await fetchBlockCandidates(bgQuery, pexelsOrientation, 1, imageDir);
             if (bgCandidates.length > 0) {
               blockCandidates.set(i, bgCandidates);
-              emit('info', `${ref(block)}: chart background clip fetched`, pct);
+              const bgClipPath = path.join(imageDir, bgCandidates[0].filename);
+              emit('info', `${ref(block)}: compositing chart rectangle over bg video...`, pct);
+
+              // Overlay dark-bg chart as a centered rectangle (82% size, 50% opacity) on dimmed bg video
+              const chartOp = (options.chartOpacity ?? 0.5).toFixed(2);
+              const bgHash = crypto.createHash('sha256').update(bgCandidates[0].filename).digest('hex').slice(0, 8);
+              const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${darkResult.filename}`;
+              const compositePath = path.join(chartDir, compositeFilename);
+              const bgScaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+              const chartW = Math.round(w * 0.82);
+              const chartH = Math.round(h * 0.82);
+              const chartX = Math.round((w - chartW) / 2);
+              const chartY = Math.round((h - chartH) / 2);
+              await execFileAsync(ffmpeg, [
+                '-stream_loop', '-1', '-i', bgClipPath,
+                '-i', darkChartPath,
+                '-filter_complex', [
+                  `[0:v]${bgScaleVf},eq=brightness=-0.15:saturation=0.4[bg]`,
+                  `[1:v]scale=${chartW}:${chartH}:flags=bicubic,format=rgba,colorchannelmixer=aa=${chartOp}[chart]`,
+                  `[bg][chart]overlay=${chartX}:${chartY}:shortest=1:format=auto[out]`,
+                ].join(';'),
+                '-map', '[out]',
+                '-t', String(chartDur),
+                '-r', '24',
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-pix_fmt', 'yuv420p',
+                '-an', '-y', compositePath,
+              ], { timeout: 300_000 });
+
+              updateBlockClip(docId, i, compositeFilename, 'chart');
+              blocksAfterAudio[i] = { ...block, clipAssetPath: compositeFilename, visualType: 'chart', status: 'clip_ready' };
+              lastGoodClip = compositeFilename;
+              lastGoodVisualType = 'chart';
+              composited = true;
+              emit('info', `${ref(block)}: chart composited on video background`, pct);
             }
-          } catch { /* background fetch is best-effort */ }
+          } catch (bgErr) {
+            addLog(docId, 'warn', 'produce', `${ref(block)}: chart composite/bg fetch failed: ${(bgErr as Error).message?.slice(0, 120)}`);
+          }
+        }
+
+        // Fallback: no bg clip or composite failed → use dark-bg chart as-is
+        if (!composited) {
+          updateBlockClip(docId, i, darkResult.filename, 'chart');
+          blocksAfterAudio[i] = { ...block, clipAssetPath: darkResult.filename, visualType: 'chart', status: 'clip_ready' };
+          lastGoodClip = darkResult.filename;
+          lastGoodVisualType = 'chart';
+          emit('info', `${ref(block)}: chart (solid bg) → ${darkResult.filename}`, pct);
         }
       } catch (err) {
         const msg = (err as Error).message;
@@ -1139,12 +1441,13 @@ export async function produceBlocks(
     }
 
     // Pexels block — fetch N candidates for N planned shots
-    if (block.pexelsQuery) {
+    if (block.visualType === 'pexels') {
+      const query = block.pexelsQuery || block.narration?.split(/\s+/).slice(0, 5).join(' ') || 'abstract';
       const shots = planShots(block);
       const nShots = Math.max(shots.length, 1);
-      emit('info', `${ref(block)}: fetching ${nShots} candidate(s) for "${block.pexelsQuery}"...`, pct);
+      emit('info', `${ref(block)}: fetching ${nShots} candidate(s) for "${query}"...`, pct);
       try {
-        const candidates = await fetchBlockCandidates(block.pexelsQuery, pexelsOrientation, nShots, imageDir);
+        const candidates = await fetchBlockCandidates(query, pexelsOrientation, nShots, imageDir);
 
         if (candidates.length > 0) {
           // Store all candidates for shot-level use in Stage 3
@@ -1158,11 +1461,9 @@ export async function produceBlocks(
           lastGoodVisualType = 'pexels';
           emit('info', `${ref(block)}: ${candidates.length} clip(s) fetched`, pct);
         } else if (options.aiFallback) {
-          // Auto-fallback: Pexels returned nothing → generate AI clip instead of inheriting
-          addLog(docId, 'info', 'produce', `${ref(block)}: Pexels empty → AI auto-fallback (query: "${block.pexelsQuery}")`);
-          emit('info', `${ref(block)}: Pexels empty → AI auto-fallback`, pct);
-          const generated = await generateAiClipForBlock(block, i, null, pct);
-          if (!generated && lastGoodClip) {
+          // AI fallback disabled when producing, default is stock / inherit
+          emit('warn', `${ref(block)}: Pexels empty, inheriting previous clip`, pct);
+          if (lastGoodClip) {
             updateBlockClip(docId, i, lastGoodClip, lastGoodVisualType);
             blocksAfterAudio[i] = { ...block, clipAssetPath: lastGoodClip, visualType: lastGoodVisualType, status: 'clip_ready' };
           }
@@ -1210,8 +1511,11 @@ export async function produceBlocks(
   // ══════════════════════════════════════════
   emit('info', 'Stage 3/4: Encoding per-block clips...', 60);
 
+  const docDir = path.join(outputDir, `doc_${docId}`);
+  fs.mkdirSync(docDir, { recursive: true });
+
   const concatId = crypto.randomUUID().slice(0, 8);
-  const concatDir = path.join(outputDir, `tmp_${concatId}`);
+  const concatDir = path.join(docDir, `tmp_concat_${concatId}`);
   fs.mkdirSync(concatDir, { recursive: true });
 
   const fps = 24;
@@ -1223,6 +1527,7 @@ export async function produceBlocks(
 
   let encodedCount = 0;
   for (let i = 0; i < blocksAfterVisuals.length; i++) {
+    checkCancelled(jobId, docId);
     const block = blocksAfterVisuals[i];
     const pct = 60 + Math.round((i / blocksAfterVisuals.length) * 25);
 
@@ -1230,15 +1535,56 @@ export async function produceBlocks(
       emit('warn', `${ref(block)}: no audio — skipping clip`, pct);
       continue;
     }
-    if (!block.clipAssetPath) {
-      emit('warn', `${ref(block)}: no visual clip — skipping`, pct);
+
+    const visualHash = crypto.createHash('sha256')
+      .update([
+        block.clipAssetPath ?? '',
+        block.clipStartSec ?? 0,
+        block.clipEndSec ?? 0,
+        block.motion ?? '',
+        block.visualType ?? '',
+        block.narration ?? '',
+        orientation,
+        block.clipsJson ?? '',
+        options.chartOpacity ?? 0.5,
+        accentColor
+      ].join('|'))
+      .digest('hex')
+      .slice(0, 16);
+
+    const contentHash = block.contentHash ?? 'static';
+    const persistentPath = path.join(docDir, `block_${i}_${contentHash}_${visualHash}.mp4`);
+
+    // Check if already rendered and file exists (skip cache for chart blocks — always re-composite)
+    if (block.visualType !== 'chart' && fs.existsSync(persistentPath)) {
+      emit('info', `${ref(block)}: clip cached`, pct);
+      if (block.renderedClipPath !== persistentPath) {
+        updateBlockRendered(docId, i, persistentPath);
+      }
+      blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
+      encodedCount++;
       continue;
     }
 
-    // Check if already rendered and file exists
-    if (block.renderedClipPath && fs.existsSync(block.renderedClipPath)) {
-      emit('info', `${ref(block)}: clip cached`, pct);
-      encodedCount++;
+    // Handle block with no clip (explicitly removed) or inherit fallback with no clip
+    if (!block.clipAssetPath) {
+      emit('info', `${ref(block)}: no clip assigned — rendering blank screen...`, pct);
+      const audioDurSec = (block.audioDurationMs ?? 6000) / 1000;
+      try {
+        await execFileAsync(ffmpeg, [
+          '-f', 'lavfi', '-i', `color=c=black:s=${w}x${h}:r=24`,
+          '-t', audioDurSec.toFixed(3),
+          '-pix_fmt', 'yuv420p',
+          '-y', persistentPath
+        ], { timeout: 60_000 });
+
+        updateBlockRendered(docId, i, persistentPath);
+        blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
+        encodedCount++;
+      } catch (err) {
+        const msg = (err as Error).message.slice(0, 200);
+        emit('warn', `${ref(block)}: blank screen render failed — ${msg}`, pct);
+      }
       continue;
     }
 
@@ -1262,68 +1608,23 @@ export async function produceBlocks(
     const candidates = blockCandidates.get(i) ?? [];
     const primaryClipPath = resolveClipPath(block.clipAssetPath, block.visualType);
 
-    // Chart blocks: composite chart overlay on Pexels background (or plain re-encode)
+    // Chart blocks: already composited in Stage 2 — just re-encode to segment format
     if (block.visualType === 'chart' && primaryClipPath) {
-      const segOut = path.join(concatDir, `block_${String(i).padStart(4, '0')}.mp4`);
-      const bgCandidates = blockCandidates.get(i) ?? [];
-      const bgClipPath = bgCandidates.length > 0 ? resolveClipPath(bgCandidates[0].filename, 'pexels') : null;
-
       try {
         const shotDurSec = (block.audioDurationMs ?? 6000) / 1000;
         const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
-
-        if (bgClipPath) {
-          addLog(docId, 'info', 'produce', `${ref(block)}: compositing chart over bg video ${path.basename(bgClipPath)}`);
-          // Green-screen chart (#00b140) overlaid on darkened Pexels video
-          try {
-            await execFileAsync(ffmpeg, [
-              '-stream_loop', '-1', '-i', bgClipPath,
-              '-i', primaryClipPath,
-              '-filter_complex', [
-                `[0:v]${scaleVf},eq=brightness=-0.12:saturation=0.5[bg]`,
-                `[1:v]${scaleVf},chromakey=0x00b140:0.24:0.08[chart]`,
-                `[bg][chart]overlay=0:0:shortest=1[out]`,
-              ].join(';'),
-              '-map', '[out]',
-              '-t', shotDurSec.toFixed(3),
-              '-r', String(fps),
-              '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-              '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
-              '-an', '-y', segOut,
-            ], { timeout: 300_000 });
-            emit('info', `${ref(block)}: chart composited on video background`, pct);
-          } catch (compErr) {
-            // Compositing failed — fall back to chart with dark background
-            addLog(docId, 'warn', 'produce', `${ref(block)}: composite failed (${(compErr as Error).message?.slice(0, 100)}), falling back to solid bg`);
-            const darkChart = await renderChart(block.chartSpec!, orientation, accentColor, '#0d0e12', shotDurSec,
-              (msg) => emit('info', msg, pct));
-            const darkChartPath = path.join(chartDir, darkChart.filename);
-            await execFileAsync(ffmpeg, [
-              '-i', darkChartPath,
-              '-vf', `${scaleVf},format=yuv420p`,
-              '-r', String(fps),
-              '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-              '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
-              '-an', '-y', segOut,
-            ], { timeout: 180_000 });
-          }
-        } else {
-          // No background clip — re-render chart with dark bg, then re-encode
-          addLog(docId, 'warn', 'produce', `${ref(block)}: no bg video found (candidates=${bgCandidates.length}), using solid background`);
-          const darkChart = await renderChart(block.chartSpec!, orientation, accentColor, '#0d0e12', shotDurSec,
-            (msg) => emit('info', msg, pct));
-          const darkChartPath = path.join(chartDir, darkChart.filename);
-          await execFileAsync(ffmpeg, [
-            '-i', darkChartPath,
-            '-vf', `${scaleVf},format=yuv420p`,
-            '-r', String(fps),
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
-            '-an', '-y', segOut,
-          ], { timeout: 180_000 });
-        }
-        updateBlockRendered(docId, i, segOut);
-        blocksAfterVisuals[i] = { ...block, renderedClipPath: segOut, status: 'rendered' };
+        addLog(docId, 'info', 'produce', `${ref(block)}: encoding chart clip ${path.basename(primaryClipPath)}`);
+        await execFileAsync(ffmpeg, [
+          '-i', primaryClipPath,
+          '-vf', `${scaleVf},format=yuv420p`,
+          '-t', shotDurSec.toFixed(3),
+          '-r', String(fps),
+          '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+          '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+          '-an', '-y', persistentPath,
+        ], { timeout: 180_000 });
+        updateBlockRendered(docId, i, persistentPath);
+        blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
         encodedCount++;
         emit('info', `${ref(block)}: chart clip encoded`, pct);
       } catch (err) {
@@ -1374,38 +1675,45 @@ export async function produceBlocks(
         chosenClipPath = primaryClipPath;
       } else {
         // Pexels / stock: pick from candidates with dedup
-        for (let ci = si; ci < candidates.length + si; ci++) {
-          const cand = candidates[ci % candidates.length];
-          if (!usedClipIdsForShots.has(cand.pexelsId) || ci === si) {
-            const p = resolveClipPath(cand.filename, 'pexels');
-            if (p) {
-              chosenClipPath = p;
-              chosenPexelsId = cand.pexelsId;
+        if (candidates.length > 0) {
+          for (let ci = si; ci < candidates.length + si; ci++) {
+            const cand = candidates[ci % candidates.length];
+            if (!usedClipIdsForShots.has(cand.pexelsId) || ci === si) {
+              const p = resolveClipPath(cand.filename, 'pexels');
+              if (p) {
+                chosenClipPath = p;
+                chosenPexelsId = cand.pexelsId;
 
-              // If user set a specific clip start time AND this is the primary clip, use it;
-              // otherwise auto-vary by hash. For multi-shot on same clip, advance offset per shot.
-              if (block.clipStartSec != null && cand.filename === block.clipAssetPath) {
-                trimOffsetSec = block.clipStartSec + (si > 0 ? shots.slice(0, si).reduce((s, sh) => s + sh.durationMs / 1000, 0) : 0);
-              } else {
-                const offsetHash = crypto.createHash('sha256')
-                  .update(`${i}-${si}-${cand.pexelsId}`)
-                  .digest('hex');
-                const maxOffset = Math.max(0, (cand.duration - shotDurSec - 1));
-                trimOffsetSec = maxOffset > 0
-                  ? (parseInt(offsetHash.slice(0, 4), 16) / 0xffff) * maxOffset
-                  : 0;
-                trimOffsetSec = Math.floor(trimOffsetSec * 10) / 10;
-              }
+                // If user set a specific clip start time AND this is the primary clip, use it;
+                // otherwise auto-vary by hash. For multi-shot on same clip, advance offset per shot.
+                if (block.clipStartSec != null && cand.filename === block.clipAssetPath) {
+                  trimOffsetSec = block.clipStartSec + (si > 0 ? shots.slice(0, si).reduce((s, sh) => s + sh.durationMs / 1000, 0) : 0);
+                } else {
+                  const offsetHash = crypto.createHash('sha256')
+                    .update(`${i}-${si}-${cand.pexelsId}`)
+                    .digest('hex');
+                  const maxOffset = Math.max(0, (cand.duration - shotDurSec - 1));
+                  trimOffsetSec = maxOffset > 0
+                    ? (parseInt(offsetHash.slice(0, 4), 16) / 0xffff) * maxOffset
+                    : 0;
+                  trimOffsetSec = Math.floor(trimOffsetSec * 10) / 10;
+                }
 
-              if (usedClipIdsForShots.has(cand.pexelsId) && ci > si) {
-                addLog(docId, 'info', 'produce', `${ref(block)} shot ${si + 1}: reuse with distinct trim (id=${cand.pexelsId}, offset=${trimOffsetSec.toFixed(1)}s)`);
+                if (usedClipIdsForShots.has(cand.pexelsId) && ci > si) {
+                  addLog(docId, 'info', 'produce', `${ref(block)} shot ${si + 1}: reuse with distinct trim (id=${cand.pexelsId}, offset=${trimOffsetSec.toFixed(1)}s)`);
+                }
+                break;
               }
-              break;
             }
           }
         }
-        // Final fallback to primary clip
-        if (!chosenClipPath) chosenClipPath = primaryClipPath;
+        // Fallback: no candidates (cached clip from Stage 2) — use primary clip with user trim
+        if (!chosenClipPath && primaryClipPath) {
+          chosenClipPath = primaryClipPath;
+          if (block.clipStartSec != null) {
+            trimOffsetSec = block.clipStartSec + (si > 0 ? shots.slice(0, si).reduce((s, sh) => s + sh.durationMs / 1000, 0) : 0);
+          }
+        }
       }
 
       if (!chosenClipPath) {
@@ -1514,19 +1822,18 @@ export async function produceBlocks(
     }
 
     // Concat shot clips into a single block clip (straight cuts, no transitions)
-    const segOut = path.join(concatDir, `block_${String(i).padStart(4, '0')}.mp4`);
     if (shotPaths.length === 1) {
-      fs.renameSync(shotPaths[0], segOut);
+      fs.renameSync(shotPaths[0], persistentPath);
     } else {
       const shotList = path.join(concatDir, `block_${String(i).padStart(4, '0')}_shots.txt`);
       fs.writeFileSync(shotList, shotPaths.map((f) => `file '${f.replace(/\\/g, '/')}'`).join('\n'));
-      await execFileAsync(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', shotList, '-c', 'copy', '-y', segOut], { timeout: 120_000 });
+      await execFileAsync(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', shotList, '-c', 'copy', '-y', persistentPath], { timeout: 120_000 });
       // Clean up individual shot files
       for (const sp of shotPaths) { try { fs.unlinkSync(sp); } catch { /* ignore */ } }
     }
 
-    updateBlockRendered(docId, i, segOut);
-    blocksAfterVisuals[i] = { ...block, renderedClipPath: segOut, status: 'rendered' };
+    updateBlockRendered(docId, i, persistentPath);
+    blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
     encodedCount++;
     if (shotsFailed > 0) {
       emit('info', `${ref(block)}: encoded (${shots.length - shotsFailed}/${shots.length} shots)`, pct);
@@ -1568,7 +1875,7 @@ export async function produceBlocks(
       narration: b.narration,
       audioPath: b.audioPath,
     }));
-    const assContent = buildAssSubtitles(subtitleData, w, h, isPortrait, audioDir);
+    const assContent = buildAssSubtitles(subtitleData, w, h, isPortrait, audioDir, options.subtitleStyle);
     const assPath = path.join(concatDir, 'subtitles.ass');
     fs.writeFileSync(assPath, assContent, 'utf-8');
 
