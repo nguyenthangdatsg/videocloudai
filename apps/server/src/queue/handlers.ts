@@ -121,13 +121,23 @@ export function registerHandlers(
       onProgress(pct, message);
     };
 
+    const controller = new AbortController();
+    const onCancel = ({ jobId }: { jobId: string }) => {
+      if (jobId === job.id) {
+        controller.abort();
+      }
+    };
+    queue.on('job:cancelled', onCancel);
+
     try {
-      const result = await produceBlocks(docId, job.id, options, emit);
+      const result = await produceBlocks(docId, job.id, options, emit, controller.signal);
       return result;
     } catch (err) {
       setDocStatus(docId, 'parsed');
       addLog(docId, 'error', 'produce', `Production failed: ${(err as Error).message}`);
       throw err;
+    } finally {
+      queue.off('job:cancelled', onCancel);
     }
   });
 }

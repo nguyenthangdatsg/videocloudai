@@ -985,11 +985,16 @@ export async function produceBlocks(
   jobId: string,
   options: ProduceOptions,
   emit: EmitFn,
+  signal?: AbortSignal,
 ): Promise<{ resultFilename: string; resultUrl: string; resultSizeKB: number; duration: number; aiShotCount: number }> {
   const doc = getDoc(docId);
   if (!doc) throw new Error('Script doc not found');
 
   const checkCancelled = (jId: string, dId: string) => {
+    if (signal?.aborted) {
+      setDocStatus(dId, 'parsed');
+      throw new Error('JOB_CANCELLED');
+    }
     const status = getJobStatus(jId);
     if (status === 'cancelled') {
       setDocStatus(dId, 'parsed');
@@ -1030,35 +1035,16 @@ export async function produceBlocks(
     args: string[],
     options?: any
   ) => {
-    const status = getJobStatus(jobId);
-    if (status === 'cancelled') {
+    if (signal?.aborted) {
       throw new Error('JOB_CANCELLED');
     }
-
-    const controller = new AbortController();
-    const { signal } = controller;
-
-    let intervalId = setInterval(() => {
-      try {
-        const s = getJobStatus(jobId);
-        if (s === 'cancelled') {
-          controller.abort();
-          clearInterval(intervalId);
-        }
-      } catch {
-        // ignore db errors during cancellation check
-      }
-    }, 1000);
-
     try {
       return await execFileAsync(file, args, { ...options, signal });
     } catch (err: any) {
-      if (err.name === 'AbortError' || err.message?.includes('abort')) {
+      if (err.name === 'AbortError' || err.message?.includes('abort') || signal?.aborted) {
         throw new Error('JOB_CANCELLED');
       }
       throw err;
-    } finally {
-      clearInterval(intervalId);
     }
   };
 
