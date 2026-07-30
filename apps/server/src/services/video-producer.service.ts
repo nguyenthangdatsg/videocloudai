@@ -71,6 +71,7 @@ export interface ProduceOptions {
   speedRate?: number;
   /** Chart rectangle overlay opacity (0 = fully transparent, 1 = fully opaque). Default 0.5 */
   chartOpacity?: number;
+  preset?: string;
 }
 
 export type EmitFn = (level: LogLevel, message: string, progressPct: number) => void;
@@ -1009,6 +1010,7 @@ export async function produceBlocks(
   const pexelsOrientation = isPortrait ? 'portrait' as const : 'landscape' as const;
   const enableSubtitles = options.subtitles === true || options.subtitleStyle?.enabled === true;
   const accentColor = options.accentColor ?? '#7c6af5';
+  const preset = options.preset || process.env.FFMPEG_PRESET || 'superfast';
 
   const s = getSettings();
   const voice = options.voice ?? s.get('default_voice') ?? 'en-US-GuyNeural';
@@ -1420,7 +1422,7 @@ export async function produceBlocks(
                 '-map', '[out]',
                 '-t', String(chartDur),
                 '-r', '24',
-                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-c:v', 'libx264', '-preset', preset, '-crf', '23',
                 '-pix_fmt', 'yuv420p',
                 '-an', '-y', compositePath,
               ], { timeout: 300_000 });
@@ -1647,7 +1649,7 @@ export async function produceBlocks(
           '-vf', `${scaleVf},format=yuv420p`,
           '-t', shotDurSec.toFixed(3),
           '-r', String(fps),
-          '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+          '-c:v', 'libx264', '-preset', preset, '-crf', '23',
           '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
           '-an', '-y', persistentPath,
         ], { timeout: 180_000 });
@@ -1774,7 +1776,7 @@ export async function produceBlocks(
             '-vf', staticVf,
             '-t', shotDurSec.toFixed(3),
             '-r', String(fps),
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+            '-c:v', 'libx264', '-preset', preset, '-crf', '23',
             '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
             '-an', '-y', shotOut,
           ], { timeout: 120_000 });
@@ -1794,7 +1796,7 @@ export async function produceBlocks(
             '-t', shotDurSec.toFixed(3),
             '-r', String(fps),
             '-c:v', 'libx264',
-            '-preset', 'fast',
+            '-preset', preset,
             '-crf', '23',
             '-pix_fmt', 'yuv420p',
             '-video_track_timescale', '90000',
@@ -1821,7 +1823,7 @@ export async function produceBlocks(
               await execFileWithCancel(ffmpeg, [
                 '-loop', '1', '-i', lastFr, '-vf', staticVf,
                 '-t', gap.toFixed(3), '-r', String(fps),
-                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-c:v', 'libx264', '-preset', preset, '-crf', '23',
                 '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
                 '-an', '-y', fillerPath,
               ], { timeout: 30_000 });
@@ -1916,7 +1918,7 @@ export async function produceBlocks(
     try {
       await execFileWithCancel(ffmpeg, [
         '-i', videoOnly, '-vf', `ass='${escapedAssPath}'`,
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-pix_fmt', 'yuv420p', '-an', '-y', subtitledVideo,
+        '-c:v', 'libx264', '-preset', preset, '-crf', '23', '-pix_fmt', 'yuv420p', '-an', '-y', subtitledVideo,
       ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
       videoInput = subtitledVideo;
       emit('info', 'Subtitles burned', 93);
@@ -1998,7 +2000,7 @@ export async function produceBlocks(
       '-i', outputFile,
       '-vf', `setpts=PTS/${speedRate}`,
       '-af', atempoFilters.join(','),
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+      '-c:v', 'libx264', '-preset', preset, '-crf', '23',
       '-c:a', 'aac', '-b:a', '192k',
       '-movflags', '+faststart', '-y', spedUpFile,
     ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
