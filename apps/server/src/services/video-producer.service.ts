@@ -1025,6 +1025,43 @@ export async function produceBlocks(
   addLog(docId, 'info', 'produce', `FFmpeg resolved: ${ffmpeg}`);
   addLog(docId, 'info', 'produce', `FFprobe resolved: ${ffprobe}`);
 
+  const execFileWithCancel = async (
+    file: string,
+    args: string[],
+    options?: any
+  ) => {
+    const status = getJobStatus(jobId);
+    if (status === 'cancelled') {
+      throw new Error('JOB_CANCELLED');
+    }
+
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    let intervalId = setInterval(() => {
+      try {
+        const s = getJobStatus(jobId);
+        if (s === 'cancelled') {
+          controller.abort();
+          clearInterval(intervalId);
+        }
+      } catch {
+        // ignore db errors during cancellation check
+      }
+    }, 1000);
+
+    try {
+      return await execFileAsync(file, args, { ...options, signal });
+    } catch (err: any) {
+      if (err.name === 'AbortError' || err.message?.includes('abort')) {
+        throw new Error('JOB_CANCELLED');
+      }
+      throw err;
+    } finally {
+      clearInterval(intervalId);
+    }
+  };
+
   const blocks = listBlocks(docId);
   if (!blocks.length) throw new Error('No blocks found — parse the script first');
 
@@ -1381,7 +1418,7 @@ export async function produceBlocks(
               const chartH = Math.round(h * 0.82);
               const chartX = Math.round((w - chartW) / 2);
               const chartY = Math.round((h - chartH) / 2);
-              await execFileAsync(ffmpeg, [
+              await execFileWithCancel(ffmpeg, [
                 '-stream_loop', '-1', '-i', bgClipPath,
                 '-i', darkChartPath,
                 '-filter_complex', [
@@ -1571,7 +1608,7 @@ export async function produceBlocks(
       emit('info', `${ref(block)}: no clip assigned — rendering blank screen...`, pct);
       const audioDurSec = (block.audioDurationMs ?? 6000) / 1000;
       try {
-        await execFileAsync(ffmpeg, [
+        await execFileWithCancel(ffmpeg, [
           '-f', 'lavfi', '-i', `color=c=black:s=${w}x${h}:r=24`,
           '-t', audioDurSec.toFixed(3),
           '-pix_fmt', 'yuv420p',
@@ -1614,7 +1651,7 @@ export async function produceBlocks(
         const shotDurSec = (block.audioDurationMs ?? 6000) / 1000;
         const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
         addLog(docId, 'info', 'produce', `${ref(block)}: encoding chart clip ${path.basename(primaryClipPath)}`);
-        await execFileAsync(ffmpeg, [
+        await execFileWithCancel(ffmpeg, [
           '-i', primaryClipPath,
           '-vf', `${scaleVf},format=yuv420p`,
           '-t', shotDurSec.toFixed(3),
@@ -1741,7 +1778,7 @@ export async function produceBlocks(
             ], { timeout: 30_000 });
           }
           // Step 2: generate static video from the last frame
-          await execFileAsync(ffmpeg, [
+          await execFileWithCancel(ffmpeg, [
             '-loop', '1', '-i', lastFramePath,
             '-vf', staticVf,
             '-t', shotDurSec.toFixed(3),
@@ -1774,23 +1811,23 @@ export async function produceBlocks(
             '-y',
             shotOut,
           ];
-          await execFileAsync(ffmpeg, ffArgs, { timeout: 180_000 });
+          await execFileWithCancel(ffmpeg, ffArgs, { timeout: 180_000 });
 
           // Verify output duration; if source was too short, pad with last frame
           try {
-            const probeRes = await execFileAsync(ffprobe, [
+            const probeRes = await execFileWithCancel(ffprobe, [
               '-v', 'error', '-show_entries', 'format=duration',
               '-of', 'json', shotOut,
             ], { timeout: 15_000 });
-            const probeDur = parseFloat(JSON.parse(probeRes.stdout).format?.duration ?? '0');
+            const probeDur = parseFloat(JSON.parse(probeRes.stdout.toString()).format?.duration ?? '0');
             if (probeDur > 0 && probeDur < shotDurSec - 0.15) {
               const paddedOut = shotOut.replace(/\.mp4$/, '_pad.mp4');
               const gap = shotDurSec - probeDur;
               // Extract last frame, generate filler, concat
               const lastFr = shotOut.replace(/\.mp4$/, '_lf.png');
-              await execFileAsync(ffmpeg, ['-sseof', '-0.1', '-i', shotOut, '-vframes', '1', '-y', lastFr], { timeout: 15_000 });
+              await execFileWithCancel(ffmpeg, ['-sseof', '-0.1', '-i', shotOut, '-vframes', '1', '-y', lastFr], { timeout: 15_000 });
               const fillerPath = shotOut.replace(/\.mp4$/, '_fill.mp4');
-              await execFileAsync(ffmpeg, [
+              await execFileWithCancel(ffmpeg, [
                 '-loop', '1', '-i', lastFr, '-vf', staticVf,
                 '-t', gap.toFixed(3), '-r', String(fps),
                 '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
@@ -1799,7 +1836,7 @@ export async function produceBlocks(
               ], { timeout: 30_000 });
               const padList = shotOut.replace(/\.mp4$/, '_padlist.txt');
               fs.writeFileSync(padList, `file '${shotOut.replace(/\\/g, '/')}'\nfile '${fillerPath.replace(/\\/g, '/')}'`);
-              await execFileAsync(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', padList, '-c', 'copy', '-y', paddedOut], { timeout: 30_000 });
+              await execFileWithCancel(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', padList, '-c', 'copy', '-y', paddedOut], { timeout: 30_000 });
               fs.renameSync(paddedOut, shotOut);
               try { fs.unlinkSync(lastFr); fs.unlinkSync(fillerPath); fs.unlinkSync(padList); } catch { /* cleanup */ }
               addLog(docId, 'info', 'produce', `${ref(block)} shot ${si + 1}: padded ${probeDur.toFixed(1)}s → ${shotDurSec.toFixed(1)}s`);
@@ -1827,7 +1864,7 @@ export async function produceBlocks(
     } else {
       const shotList = path.join(concatDir, `block_${String(i).padStart(4, '0')}_shots.txt`);
       fs.writeFileSync(shotList, shotPaths.map((f) => `file '${f.replace(/\\/g, '/')}'`).join('\n'));
-      await execFileAsync(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', shotList, '-c', 'copy', '-y', persistentPath], { timeout: 120_000 });
+      await execFileWithCancel(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', shotList, '-c', 'copy', '-y', persistentPath], { timeout: 120_000 });
       // Clean up individual shot files
       for (const sp of shotPaths) { try { fs.unlinkSync(sp); } catch { /* ignore */ } }
     }
@@ -1862,7 +1899,7 @@ export async function produceBlocks(
   const concatList = path.join(concatDir, 'list.txt');
   fs.writeFileSync(concatList, renderedClips.map((f) => `file '${f.replace(/\\/g, '/')}'`).join('\n'));
   const videoOnly = path.join(concatDir, 'video_only.mp4');
-  await execFileAsync(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', concatList, '-c', 'copy', '-y', videoOnly], { timeout: 300_000 });
+  await execFileWithCancel(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', concatList, '-c', 'copy', '-y', videoOnly], { timeout: 300_000 });
   emit('info', `Concatenated ${renderedClips.length} clips`, 88);
 
   // Burn subtitles
@@ -1882,7 +1919,7 @@ export async function produceBlocks(
     const subtitledVideo = path.join(concatDir, 'video_subtitled.mp4');
     const relAssPath = path.relative(process.cwd(), assPath).replace(/\\/g, '/');
     try {
-      await execFileAsync(ffmpeg, [
+      await execFileWithCancel(ffmpeg, [
         '-i', videoOnly, '-vf', `ass=${relAssPath}`,
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-pix_fmt', 'yuv420p', '-an', '-y', subtitledVideo,
       ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
@@ -1902,7 +1939,7 @@ export async function produceBlocks(
   const audioFiles = audioBlocks.map((b) => path.join(audioDir, b.audioPath!));
   fs.writeFileSync(audioList, audioFiles.map((f) => `file '${f.replace(/\\/g, '/')}'`).join('\n'));
   const masterAudio = path.join(concatDir, 'master_audio.mp3');
-  await execFileAsync(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', audioList, '-c', 'copy', '-y', masterAudio], { timeout: 300_000 });
+  await execFileWithCancel(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', audioList, '-c', 'copy', '-y', masterAudio], { timeout: 300_000 });
 
   const totalAudioMs = audioBlocks.reduce((s, b) => s + (b.audioDurationMs ?? 0), 0);
   const totalDurationSec = totalAudioMs / 1000;
@@ -1928,7 +1965,7 @@ export async function produceBlocks(
       `[2:a]atrim=0:${totalDurationSec},volume=${musicVol.toFixed(3)}[music]`,
       `[voice][music]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
     ];
-    await execFileAsync(ffmpeg, [
+    await execFileWithCancel(ffmpeg, [
       '-i', videoInput, '-i', masterAudio, '-stream_loop', '-1', '-i', musicPath,
       '-filter_complex', mixParts.join(';'),
       '-map', '0:v', '-map', '[aout]',
@@ -1936,7 +1973,7 @@ export async function produceBlocks(
       '-shortest', '-movflags', '+faststart', '-y', outputFile,
     ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
   } else {
-    await execFileAsync(ffmpeg, [
+    await execFileWithCancel(ffmpeg, [
       '-i', videoInput, '-i', masterAudio,
       '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
       '-shortest', '-movflags', '+faststart', '-y', outputFile,
@@ -1962,7 +1999,7 @@ export async function produceBlocks(
     }
     atempoFilters.push(`atempo=${remaining.toFixed(4)}`);
 
-    await execFileAsync(ffmpeg, [
+    await execFileWithCancel(ffmpeg, [
       '-i', outputFile,
       '-vf', `setpts=PTS/${speedRate}`,
       '-af', atempoFilters.join(','),
