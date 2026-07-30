@@ -1412,6 +1412,19 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
   clipStartSec?: number | null;
   clipEndSec?: number | null;
 }): void {
+  const oldBlock = getBlock(docId, blockIndex);
+  if (oldBlock && oldBlock.renderedClipPath && fs.existsSync(oldBlock.renderedClipPath)) {
+    const isClipChanging = 'clipAssetPath' in fields && fields.clipAssetPath !== oldBlock.clipAssetPath;
+    const isPromptChanging = 'aiPrompt' in fields && fields.aiPrompt !== oldBlock.aiPrompt;
+    if (isClipChanging || isPromptChanging) {
+      try {
+        fs.unlinkSync(oldBlock.renderedClipPath);
+      } catch {
+        // ignore errors
+      }
+    }
+  }
+
   const now = new Date().toISOString();
   const updates: string[] = [];
   const vals: unknown[] = [];
