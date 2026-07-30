@@ -1038,8 +1038,13 @@ export async function produceBlocks(
     if (signal?.aborted) {
       throw new Error('JOB_CANCELLED');
     }
+    let finalArgs = args;
+    const isFfmpeg = file.endsWith('ffmpeg') || file.endsWith('ffmpeg.exe') || file === 'ffmpeg';
+    if (isFfmpeg && !args.includes('-nostdin')) {
+      finalArgs = ['-nostdin', ...args];
+    }
     try {
-      return await execFileAsync(file, args, { ...options, signal });
+      return await execFileAsync(file, finalArgs, { ...options, signal });
     } catch (err: any) {
       if (err.name === 'AbortError' || err.message?.includes('abort') || signal?.aborted) {
         throw new Error('JOB_CANCELLED');
@@ -1903,10 +1908,14 @@ export async function produceBlocks(
     fs.writeFileSync(assPath, assContent, 'utf-8');
 
     const subtitledVideo = path.join(concatDir, 'video_subtitled.mp4');
-    const relAssPath = path.relative(process.cwd(), assPath).replace(/\\/g, '/');
+    const relAssPath = path.relative(process.cwd(), assPath);
+    const escapedAssPath = relAssPath
+      .replace(/\\/g, '/')
+      .replace(/:/g, '\\:')
+      .replace(/'/g, "'\\''");
     try {
       await execFileWithCancel(ffmpeg, [
-        '-i', videoOnly, '-vf', `ass=${relAssPath}`,
+        '-i', videoOnly, '-vf', `ass='${escapedAssPath}'`,
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-pix_fmt', 'yuv420p', '-an', '-y', subtitledVideo,
       ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
       videoInput = subtitledVideo;
