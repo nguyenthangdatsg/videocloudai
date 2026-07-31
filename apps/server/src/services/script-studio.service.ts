@@ -229,6 +229,7 @@ interface ScriptDocRow {
   words_count: number;
   est_duration_seconds: number;
   subtitle_style?: string | null;
+  produce_options?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -264,6 +265,9 @@ export function ensureScriptStudioTables(): void {
     )`);
     try {
       dbRun(`ALTER TABLE script_docs ADD COLUMN subtitle_style TEXT`);
+    } catch { /* ignore if column exists */ }
+    try {
+      dbRun(`ALTER TABLE script_docs ADD COLUMN produce_options TEXT`);
     } catch { /* ignore if column exists */ }
     dbRun(`CREATE INDEX IF NOT EXISTS idx_script_docs_status ON script_docs(status)`);
     dbRun(`CREATE INDEX IF NOT EXISTS idx_script_docs_updated ON script_docs(updated_at)`);
@@ -1317,6 +1321,7 @@ function rowToDoc(row: ScriptDocRow) {
     wordsCount: row.words_count,
     estDurationSeconds: row.est_duration_seconds,
     subtitleStyle: row.subtitle_style ? JSON.parse(row.subtitle_style) : null,
+    produceOptions: row.produce_options ? JSON.parse(row.produce_options) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1355,6 +1360,37 @@ export function getLogs(docId: string, limit = 200) {
 }
 
 // ── Block helpers ──
+
+/** Resolve the doc's render folder path. */
+function docDir(docId: string): string {
+  return path.join(path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard'), `doc_${docId}`);
+}
+
+/** Delete a clip file from the doc folder immediately — no cache. */
+function deleteClipFile(docId: string, filename: string | null): void {
+  if (!filename) return;
+  const fullPath = path.isAbsolute(filename) ? filename : path.join(docDir(docId), filename);
+  try { if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath); } catch {}
+}
+
+/** Collect all clip filenames from a block (clip_asset_path, ai_asset_path, rendered_clip_path, clips_json). */
+function collectBlockClipFiles(block: ScriptBlockRow | ScriptBlockRecord): string[] {
+  const files: string[] = [];
+  const clip = 'clip_asset_path' in block ? block.clip_asset_path : (block as ScriptBlockRecord).clipAssetPath;
+  const ai = 'ai_asset_path' in block ? block.ai_asset_path : (block as ScriptBlockRecord).aiAssetPath;
+  const rendered = 'rendered_clip_path' in block ? block.rendered_clip_path : (block as ScriptBlockRecord).renderedClipPath;
+  const clipsRaw = 'clips_json' in block ? block.clips_json : (block as ScriptBlockRecord).clipsJson;
+  if (clip) files.push(clip);
+  if (ai && ai !== clip) files.push(ai);
+  if (rendered) files.push(rendered);
+  if (clipsRaw) {
+    try {
+      const clips = JSON.parse(clipsRaw) as BlockClip[];
+      for (const c of clips) if (c.assetPath && !files.includes(c.assetPath)) files.push(c.assetPath);
+    } catch {}
+  }
+  return files;
+}
 
 function rowToBlock(row: ScriptBlockRow): ScriptBlockRecord {
   return {
@@ -1437,18 +1473,31 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
   if ('aiPrompt' in fields) {
     updates.push('ai_prompt = ?');
     vals.push(fields.aiPrompt ?? null);
-    // When aiPrompt changes, invalidate the cached AI clip
+    // When aiPrompt changes, invalidate the cached AI clip + delete old files
     updates.push('ai_asset_path = NULL');
     updates.push('clip_asset_path = NULL');
     updates.push('rendered_clip_path = NULL');
     updates.push('status = ?');
     vals.push('audio_ready');
+    if (oldBlock) {
+      const oldFiles = collectBlockClipFiles(oldBlock);
+      // Defer deletion until after DB update
+      setTimeout(() => { for (const f of oldFiles) deleteClipFile(docId, f); }, 0);
+    }
   }
   if ('clipAssetPath' in fields) {
     updates.push('clip_asset_path = ?');
     vals.push(fields.clipAssetPath ?? null);
-    // If clearing clip, reset rendered too
-    if (!fields.clipAssetPath) { updates.push('rendered_clip_path = NULL'); updates.push('status = ?'); vals.push('pending'); }
+    // If clearing clip, reset rendered too + delete old file
+    if (!fields.clipAssetPath) {
+      updates.push('rendered_clip_path = NULL');
+      updates.push('status = ?');
+      vals.push('pending');
+      if (oldBlock?.clipAssetPath) {
+        const oldClip = oldBlock.clipAssetPath;
+        setTimeout(() => deleteClipFile(docId, oldClip), 0);
+      }
+    }
   }
 
   if (!updates.length) return;
@@ -1459,6 +1508,7 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
 }
 
 export function updateBlockClips(docId: string, blockIndex: number, clips: BlockClip[]): void {
+  const old = dbGet<ScriptBlockRow>(`SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
   const now = new Date().toISOString();
   // Also sync legacy single-clip fields (clip_start_sec, clip_end_sec) for the producer
   const firstClip = clips.length > 0 ? clips[0] : null;
@@ -1470,6 +1520,15 @@ export function updateBlockClips(docId: string, blockIndex: number, clips: Block
     `UPDATE script_blocks SET clips_json = ?, clip_asset_path = ?, clip_start_sec = ?, clip_end_sec = ?, rendered_clip_path = NULL, status = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [JSON.stringify(clips), clipAssetPath, clipStartSec, clipEndSec, status, now, docId, blockIndex],
   );
+  // Delete old files no longer referenced by new clips
+  if (old) {
+    const newAssets = new Set(clips.map(c => c.assetPath));
+    if (clipAssetPath) newAssets.add(clipAssetPath);
+    const oldFiles = collectBlockClipFiles(old);
+    for (const f of oldFiles) {
+      if (!newAssets.has(f)) deleteClipFile(docId, f);
+    }
+  }
 }
 
 export function updateBlockAudio(docId: string, blockIndex: number, fields: {
@@ -1479,20 +1538,30 @@ export function updateBlockAudio(docId: string, blockIndex: number, fields: {
   wordsJson: string;
   audioEngine?: string;
 }): void {
+  const old = dbGet<ScriptBlockRow>(`SELECT rendered_clip_path FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
   dbRun(
     `UPDATE script_blocks SET content_hash = ?, audio_path = ?, audio_duration_ms = ?, audio_engine = ?, words_json = ?,
      rendered_clip_path = NULL, status = 'audio_ready', updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [fields.contentHash, fields.audioPath, fields.audioDurationMs, fields.audioEngine ?? null, fields.wordsJson, new Date().toISOString(), docId, blockIndex],
   );
+  if (old?.rendered_clip_path) deleteClipFile(docId, old.rendered_clip_path);
 }
 
 export function updateBlockClip(docId: string, blockIndex: number, clipAssetPath: string, visualType: string): void {
+  const old = dbGet<ScriptBlockRow>(`SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
   dbRun(
     `UPDATE script_blocks SET clip_asset_path = ?, visual_type = ?, rendered_clip_path = NULL,
      clip_start_sec = NULL, clip_end_sec = NULL, clips_json = NULL,
      status = 'clip_ready', updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [clipAssetPath, visualType, new Date().toISOString(), docId, blockIndex],
   );
+  // Delete old files that are no longer referenced
+  if (old) {
+    const oldFiles = collectBlockClipFiles(old);
+    for (const f of oldFiles) {
+      if (f !== clipAssetPath) deleteClipFile(docId, f);
+    }
+  }
 }
 
 export function updateBlockRendered(docId: string, blockIndex: number, renderedClipPath: string): void {
@@ -1609,7 +1678,8 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
             [si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, targetVisualType, now, docId, blockIndex],
           );
         } else if (visualChanged) {
-          // Keep audio, reset clip + render
+          // Keep audio, reset clip + render — delete old clip files
+          const oldFiles = collectBlockClipFiles(existing);
           dbRun(
             `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, pexels_query = ?,
              chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?,
@@ -1619,6 +1689,7 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
              WHERE doc_id = ? AND block_index = ?`,
             [si + 1, seg.name, sceneNum, block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, now, docId, blockIndex],
           );
+          for (const f of oldFiles) deleteClipFile(docId, f);
         } else {
           // Just update metadata
           dbRun(
@@ -1631,15 +1702,29 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
     }
   }
 
-  // Delete blocks beyond new total count
+  // Delete blocks beyond new total count — clean up their clip files
   const newCount = flatIdx;
+  const removedBlocks = dbAll<ScriptBlockRow>(
+    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index >= ?`, [docId, newCount],
+  );
   dbRun(`DELETE FROM script_blocks WHERE doc_id = ? AND block_index >= ?`, [docId, newCount]);
+  for (const rb of removedBlocks) {
+    const oldFiles = collectBlockClipFiles(rb);
+    for (const f of oldFiles) deleteClipFile(docId, f);
+  }
 }
 
 export function updateDocSubtitleStyle(id: string, style: any): void {
   dbRun(
     `UPDATE script_docs SET subtitle_style = ?, updated_at = ? WHERE id = ?`,
     [JSON.stringify(style), new Date().toISOString(), id]
+  );
+}
+
+export function updateDocProduceOptions(id: string, options: any): void {
+  dbRun(
+    `UPDATE script_docs SET produce_options = ?, updated_at = ? WHERE id = ?`,
+    [JSON.stringify(options), new Date().toISOString(), id]
   );
 }
 
@@ -1676,8 +1761,21 @@ export function deleteDocProduceJob(docId: string): void {
     const outDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
     const docDir = path.join(outDir, `doc_${docId}`);
     if (fs.existsSync(docDir)) {
-      fs.rmSync(docDir, { recursive: true, force: true });
-      addLog(docId, 'info', 'produce', `Deleted doc folder: doc_${docId}`);
+      const files = fs.readdirSync(docDir);
+      for (const file of files) {
+        const fullPath = path.join(docDir, file);
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+          if (file === 'concat' || file.startsWith('tmp_concat_')) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
+          }
+        } else {
+          if (!file.startsWith('pexels_') && !file.startsWith('pixabay_') && !file.startsWith('mixkit_')) {
+            fs.unlinkSync(fullPath);
+          }
+        }
+      }
+      addLog(docId, 'info', 'produce', `Cleaned rendered output cache files from doc folder: doc_${docId}`);
     }
   } catch (err) {
     console.error(`[produce] Failed to delete doc folder:`, err);

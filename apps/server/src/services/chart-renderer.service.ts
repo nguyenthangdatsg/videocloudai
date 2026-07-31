@@ -38,7 +38,7 @@ async function getBundleUrl(): Promise<string> {
 
 // ── Chart render dir ──
 
-function getChartCacheDir(): string {
+function getChartDir(): string {
   const dir = path.resolve(process.env.CACHE_DIR ?? './cache', 'charts');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
@@ -141,7 +141,6 @@ function buildRenderSpec(
 export interface ChartRenderResult {
   filename: string;
   filePath: string;
-  cacheHit: boolean;
   durationSec: number;
 }
 
@@ -156,15 +155,10 @@ export async function renderChart(
 ): Promise<ChartRenderResult> {
   const log = onLog ?? ((m: string) => console.log(`[chart-renderer] ${m}`));
 
-  const hashInput = JSON.stringify({ v: 4, spec, orientation, accentColor, bgColor, durationSec, animationDurationSec });
+  const hashInput = JSON.stringify({ spec, orientation, accentColor, bgColor, durationSec, animationDurationSec, t: Date.now() });
   const hash = crypto.createHash('sha256').update(hashInput).digest('hex').slice(0, 16);
   const filename = `chart_${hash}.mp4`;
-  const filePath = path.join(getChartCacheDir(), filename);
-
-  if (fs.existsSync(filePath)) {
-    log(`Chart cache hit: ${filename}`);
-    return { filename, filePath, cacheHit: true, durationSec };
-  }
+  const filePath = path.join(getChartDir(), filename);
 
   const animStr = animationDurationSec != null ? ` anim=${animationDurationSec.toFixed(1)}s` : '';
   log(`Rendering chart: type=${spec.type} orientation=${orientation} duration=${durationSec}s${animStr}`);
@@ -202,7 +196,7 @@ export async function renderChart(
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   log(`Chart rendered in ${elapsed}s → ${filename}`);
 
-  return { filename, filePath, cacheHit: false, durationSec };
+  return { filename, filePath, durationSec };
 }
 
 export function invalidateChartBundle(): void {

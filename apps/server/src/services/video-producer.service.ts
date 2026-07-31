@@ -72,6 +72,14 @@ export interface ProduceOptions {
   /** Chart rectangle overlay opacity (0 = fully transparent, 1 = fully opaque). Default 0.5 */
   chartOpacity?: number;
   preset?: string;
+  /** Watermark / logo overlay on the final video */
+  watermark?: {
+    enabled: boolean;
+    position?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+    opacity?: number;   // 0–1
+    scale?: number;     // fraction of video width (e.g. 0.08 = 8%)
+    margin?: number;    // pixels from edge
+  };
 }
 
 export type EmitFn = (level: LogLevel, message: string, progressPct: number) => void;
@@ -718,10 +726,14 @@ function buildAssSubtitles(
   const fontSize = style?.fontSize ?? (isPortrait ? 48 : 52);
   const bold = style?.fontWeight === 'bold' ? -1 : (style ? 0 : -1); // default bold
   const fontColor = `&H00${hexToAssBgr(style?.fontColor ?? '#FFFFFF')}`;
-  const strokeColor = `&H00${hexToAssBgr(style?.strokeColor ?? '#000000')}`;
+  const rawStrokeColor = `&H00${hexToAssBgr(style?.strokeColor ?? '#000000')}`;
   const bgAlpha = Math.round((1 - (style?.bgOpacity ?? 0.5)) * 255).toString(16).toUpperCase().padStart(2, '0');
-  const backColor = `&H${bgAlpha}${hexToAssBgr(style?.bgColor ?? '#000000')}`;
+  const rawBgColor = `&H${bgAlpha}${hexToAssBgr(style?.bgColor ?? '#000000')}`;
   const borderStyle = (style?.bgOpacity ?? 0.5) > 0 ? 3 : 1;
+  // ASS BorderStyle 3 (opaque box): OutlineColour = box fill, BackColour = shadow
+  // BorderStyle 1 (outline): OutlineColour = stroke, BackColour = shadow
+  const outlineColor = borderStyle === 3 ? rawBgColor : rawStrokeColor;
+  const backColor = borderStyle === 3 ? rawStrokeColor : rawBgColor;
   const outline = style?.strokeWidth ?? 2;
   const marginL = style?.marginX ?? 40;
   const marginR = style?.marginX ?? 40;
@@ -739,7 +751,7 @@ function buildAssSubtitles(
     '[Script Info]', 'ScriptType: v4.00+', `PlayResX: ${w}`, `PlayResY: ${h}`, 'WrapStyle: 0', '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,${fontFamily},${fontSize},${fontColor},${fontColor},${strokeColor},${backColor},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},0,${assAlign},${marginL},${marginR},${marginV},1`,
+    `Style: Default,${fontFamily},${fontSize},${fontColor},${fontColor},${outlineColor},${backColor},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},0,${assAlign},${marginL},${marginR},${marginV},1`,
     '', '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ].join('\n');
@@ -987,7 +999,7 @@ export async function produceBlocks(
   options: ProduceOptions,
   emit: EmitFn,
   signal?: AbortSignal,
-): Promise<{ resultFilename: string; resultUrl: string; resultSizeKB: number; duration: number; aiShotCount: number }> {
+): Promise<{ resultFilename: string; resultUrl: string; resultSizeKB: number; duration: number; aiShotCount: number; ytDescription?: string; ytTags?: string[] }> {
   const doc = getDoc(docId);
   if (!doc) throw new Error('Script doc not found');
 
@@ -1394,19 +1406,18 @@ export async function produceBlocks(
               const chartOp = (options.chartOpacity ?? 0.5).toFixed(2);
               const bgHash = crypto.createHash('sha256').update(block.clipAssetPath).digest('hex').slice(0, 8);
               const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${darkResult.filename}`;
-              const compositePath = path.join(chartDir, compositeFilename);
+              const compositePath = path.join(imageDir, compositeFilename);
               const bgScaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
-              const chartW = Math.round(w * 0.82);
-              const chartH = Math.round(h * 0.82);
-              const chartX = Math.round((w - chartW) / 2);
-              const chartY = Math.round((h - chartH) / 2);
+              const chartMargin = Math.round(Math.min(w, h) * 0.06);
+              const chartW = w - chartMargin * 2;
+              const chartH = h - chartMargin * 2;
               await execFileWithCancel(ffmpeg, [
                 '-stream_loop', '-1', '-i', directBgPath,
                 '-i', darkChartPath,
                 '-filter_complex', [
                   `[0:v]${bgScaleVf},eq=brightness=-0.15:saturation=0.4[bg]`,
-                  `[1:v]scale=${chartW}:${chartH}:flags=bicubic,format=rgba,colorchannelmixer=aa=${chartOp}[chart]`,
-                  `[bg][chart]overlay=${chartX}:${chartY}:shortest=1:format=auto[out]`,
+                  `[1:v]crop=${chartW}:${chartH}:(in_w-${chartW})/2:(in_h-${chartH})/2,format=rgba,colorchannelmixer=aa=${chartOp}[chart]`,
+                  `[bg][chart]overlay=${chartMargin}:${chartMargin}:shortest=1:format=auto[out]`,
                 ].join(';'),
                 '-map', '[out]',
                 '-t', String(chartDur),
@@ -1446,23 +1457,22 @@ export async function produceBlocks(
                 const bgClipPath = path.join(imageDir, bgCandidates[0].filename);
                 emit('info', `${ref(block)}: compositing chart rectangle over bg video...`, pct);
 
-                // Overlay dark-bg chart as a centered rectangle (82% size, 50% opacity) on dimmed bg video
+                // Overlay dark-bg chart as a centered rectangle on dimmed bg video
                 const chartOp = (options.chartOpacity ?? 0.5).toFixed(2);
                 const bgHash = crypto.createHash('sha256').update(bgCandidates[0].filename).digest('hex').slice(0, 8);
                 const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${darkResult.filename}`;
-                const compositePath = path.join(chartDir, compositeFilename);
+                const compositePath = path.join(imageDir, compositeFilename);
                 const bgScaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
-                const chartW = Math.round(w * 0.82);
-                const chartH = Math.round(h * 0.82);
-                const chartX = Math.round((w - chartW) / 2);
-                const chartY = Math.round((h - chartH) / 2);
+                const chartMargin = Math.round(Math.min(w, h) * 0.06);
+                const chartW = w - chartMargin * 2;
+                const chartH = h - chartMargin * 2;
                 await execFileWithCancel(ffmpeg, [
                   '-stream_loop', '-1', '-i', bgClipPath,
                   '-i', darkChartPath,
                   '-filter_complex', [
                     `[0:v]${bgScaleVf},eq=brightness=-0.15:saturation=0.4[bg]`,
-                    `[1:v]scale=${chartW}:${chartH}:flags=bicubic,format=rgba,colorchannelmixer=aa=${chartOp}[chart]`,
-                    `[bg][chart]overlay=${chartX}:${chartY}:shortest=1:format=auto[out]`,
+                    `[1:v]crop=${chartW}:${chartH}:(in_w-${chartW})/2:(in_h-${chartH})/2,format=rgba,colorchannelmixer=aa=${chartOp}[chart]`,
+                    `[bg][chart]overlay=${chartMargin}:${chartMargin}:shortest=1:format=auto[out]`,
                   ].join(';'),
                   '-map', '[out]',
                   '-t', String(chartDur),
@@ -1487,6 +1497,9 @@ export async function produceBlocks(
 
         // Fallback: no bg clip or composite failed → use dark-bg chart as-is
         if (!composited) {
+          // Copy chart to doc dir so UI can preview it
+          const darkDestPath = path.join(imageDir, darkResult.filename);
+          if (!fs.existsSync(darkDestPath)) fs.copyFileSync(path.join(chartDir, darkResult.filename), darkDestPath);
           updateBlockClip(docId, i, darkResult.filename, 'chart');
           blocksAfterAudio[i] = { ...block, clipAssetPath: darkResult.filename, visualType: 'chart', status: 'clip_ready' };
           lastGoodClip = darkResult.filename;
@@ -1973,6 +1986,45 @@ export async function produceBlocks(
     }
   }
 
+  // Burn watermark / logo overlay
+  const wm = options.watermark;
+  if (wm?.enabled) {
+    const wmImagePath = path.resolve('assets', 'watermark', 'logo.png');
+    if (fs.existsSync(wmImagePath)) {
+      emit('info', 'Burning watermark...', 94);
+      const wmOpacity = wm.opacity ?? 0.8;
+      const wmScale = wm.scale ?? 0.08;
+      const wmMargin = wm.margin ?? 20;
+      const wmW = Math.round(w * wmScale);
+      const posMap: Record<string, string> = {
+        'top-left':     `x=${wmMargin}:y=${wmMargin}`,
+        'top-right':    `x=W-w-${wmMargin}:y=${wmMargin}`,
+        'bottom-left':  `x=${wmMargin}:y=H-h-${wmMargin}`,
+        'bottom-right': `x=W-w-${wmMargin}:y=H-h-${wmMargin}`,
+      };
+      const wmPos = posMap[wm.position ?? 'bottom-right'] ?? posMap['bottom-right'];
+      const wmVideo = path.join(concatDir, 'video_watermarked.mp4');
+      try {
+        await execFileWithCancel(ffmpeg, [
+          '-i', videoInput,
+          '-i', wmImagePath,
+          '-filter_complex', [
+            `[1:v]scale=${wmW}:-1,format=rgba,colorchannelmixer=aa=${wmOpacity.toFixed(2)}[wm]`,
+            `[0:v][wm]overlay=${wmPos}:format=auto[out]`,
+          ].join(';'),
+          '-map', '[out]',
+          '-c:v', 'libx264', '-preset', preset, '-crf', '23', '-pix_fmt', 'yuv420p', '-an', '-y', wmVideo,
+        ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
+        videoInput = wmVideo;
+        emit('info', 'Watermark applied', 94);
+      } catch (wmErr) {
+        emit('warn', `Watermark skipped: ${(wmErr as Error).message?.slice(0, 100)}`, 94);
+      }
+    } else {
+      emit('warn', 'Watermark enabled but no logo found at assets/watermark/logo.png', 94);
+    }
+  }
+
   // Build master audio from per-block audio files
   emit('info', 'Building master audio track...', 94);
   const audioBlocks = finalBlocks.filter((b) => b.audioPath && b.audioDurationMs);
@@ -2069,11 +2121,111 @@ export async function produceBlocks(
   addLog(docId, 'success', 'status_change', `Video produced: ${resultFilename} (${(resultSizeKB / 1024).toFixed(1)} MB, ${finalDurationSec.toFixed(1)}s)`);
   emit('success', `Video complete: ${resultFilename} — ${(resultSizeKB / 1024).toFixed(1)} MB, ${finalDurationSec.toFixed(1)}s`, 100);
 
+  // Generate YouTube description + tags
+  let ytDescription: string | undefined;
+  let ytTags: string[] | undefined;
+  try {
+    const yt = await generateYouTubeMetadata(doc.title, finalBlocks, finalDurationSec);
+    ytDescription = yt.description;
+    ytTags = yt.tags;
+    addLog(docId, 'info', 'produce', `YouTube metadata generated (${ytTags.length} tags)`);
+  } catch (err) {
+    addLog(docId, 'warn', 'produce', `YouTube metadata generation failed: ${(err as Error).message}`);
+  }
+
   return {
     resultFilename,
     resultUrl: `/api/storyboard/video/${resultFilename}`,
     resultSizeKB,
     duration: finalDurationSec,
     aiShotCount,
+    ytDescription,
+    ytTags,
   };
+}
+
+// ── YouTube Metadata Generation ──
+
+function formatTimestamp(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function buildTimestampedChapters(blocks: ScriptBlockRecord[]): { chapters: string; segmentSummaries: string } {
+  const chapters: string[] = [];
+  const summaries: string[] = [];
+  let currentSec = 0;
+  let lastSegment = '';
+
+  for (const block of blocks) {
+    const durSec = (block.audioDurationMs ?? 0) / 1000;
+    if (block.segmentName !== lastSegment) {
+      chapters.push(`${formatTimestamp(currentSec)} ${block.segmentName}`);
+      // Collect first narration of each segment for context
+      const preview = block.narration.slice(0, 120).replace(/\n/g, ' ');
+      summaries.push(`[${block.segmentName}]: ${preview}`);
+      lastSegment = block.segmentName;
+    }
+    currentSec += durSec;
+  }
+
+  return { chapters: chapters.join('\n'), segmentSummaries: summaries.join('\n') };
+}
+
+export async function generateYouTubeMetadata(
+  title: string,
+  blocks: ScriptBlockRecord[],
+  totalDurationSec: number,
+): Promise<{ description: string; tags: string[] }> {
+  const { llmComplete } = await import('./llm.service');
+  const { chapters, segmentSummaries } = buildTimestampedChapters(blocks);
+  const fullNarration = blocks.map(b => b.narration).join(' ').slice(0, 2000);
+
+  const descPrompt = `You are a YouTube SEO expert. Generate a high-CTR YouTube description for this video.
+
+Title: "${title}"
+Duration: ${formatTimestamp(totalDurationSec)}
+Chapters/Timestamps:
+${chapters}
+
+Segment previews:
+${segmentSummaries}
+
+Full narration excerpt:
+${fullNarration}
+
+Requirements:
+1. Start with a strong 2-3 sentence hook that creates curiosity (this shows in search results)
+2. Include a "📌 In this video:" section with 3-5 bullet points
+3. Include the timestamps section exactly as provided above (with emoji 📍 before "Timestamps")
+4. Add a CTA asking viewers to like, subscribe, and comment
+5. Add 3-5 relevant hashtags at the end
+6. Keep the total description under 4000 characters
+7. Do NOT wrap in markdown code blocks
+
+Output ONLY the description text, nothing else.`;
+
+  const tagsPrompt = `You are a YouTube SEO expert. Generate 15-25 high-CTR tags for this YouTube video.
+
+Title: "${title}"
+Topics covered: ${segmentSummaries}
+
+Requirements:
+- Mix broad tags (high volume) with specific long-tail tags
+- Include the video's main subject as first tags
+- Include question-based tags viewers might search
+- Include comparison/vs tags if relevant
+- Each tag should be 1-4 words, no hashtags
+- Output ONLY a comma-separated list of tags, nothing else`;
+
+  const [description, tagsRaw] = await Promise.all([
+    llmComplete({ systemPrompt: descPrompt, userMessage: 'Generate the description now.', temperature: 0.7, maxTokens: 1500 }),
+    llmComplete({ systemPrompt: tagsPrompt, userMessage: 'Generate the tags now.', temperature: 0.5, maxTokens: 500 }),
+  ]);
+
+  const tags = tagsRaw.split(',').map(t => t.trim()).filter(t => t.length > 0 && t.length < 50);
+
+  return { description: description.trim(), tags };
 }

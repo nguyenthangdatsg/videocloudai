@@ -14,7 +14,7 @@ export function ChartLine(props: ChartLineConfig) {
   } = props;
 
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width: W, height: H } = useVideoConfig();
   const holdAt = animationFrames ?? Math.floor(durationInFrames * 0.95);
 
   const drawProgress = interpolate(frame, [0, holdAt], [0, 1], {
@@ -28,12 +28,11 @@ export function ChartLine(props: ChartLineConfig) {
     return <div style={{ width: '100%', height: '100%', background: bgColor }} />;
   }
 
-  const W = 1920;
-  const H = 1080;
-  const padL = 140;
-  const padR = 100;
-  const padT = 160;
-  const padB = 160;
+  const scale = Math.min(W / 1920, H / 1080);
+  const padL = Math.round(140 * scale);
+  const padR = Math.round(100 * scale);
+  const padT = Math.round(160 * scale);
+  const padB = Math.round(160 * scale);
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
 
@@ -81,11 +80,11 @@ export function ChartLine(props: ChartLineConfig) {
       {title && (
         <div style={{
           position: 'absolute',
-          top: 48,
+          top: Math.round(120 * scale),
           left: padL,
           right: padR,
           color: 'rgba(255,255,255,0.85)',
-          fontSize: 44,
+          fontSize: Math.round(44 * scale),
           fontWeight: 700,
           textAlign: 'center',
         }}>
@@ -102,8 +101,8 @@ export function ChartLine(props: ChartLineConfig) {
             <g key={frac}>
               <line x1={padL} y1={y} x2={padL + chartW} y2={y}
                 stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
-              <text x={padL - 12} y={y + 5} textAnchor="end"
-                fill="rgba(255,255,255,0.35)" fontSize={22}>
+              <text x={padL - Math.round(12 * scale)} y={y + 5} textAnchor="end"
+                fill="rgba(255,255,255,0.35)" fontSize={Math.round(22 * scale)}>
                 {val >= 1000 ? `${(val / 1000).toFixed(0)}k` : Math.round(val)}
               </text>
             </g>
@@ -116,7 +115,7 @@ export function ChartLine(props: ChartLineConfig) {
             points={polylineStr}
             fill="none"
             stroke={accentColor}
-            strokeWidth={5}
+            strokeWidth={Math.round(5 * scale)}
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -138,14 +137,14 @@ export function ChartLine(props: ChartLineConfig) {
           const dotOpacity = interpolate(visibleCount, [i - 0.3, i], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
           return (
             <g key={i} opacity={dotOpacity}>
-              <circle cx={p.x} cy={p.y} r={10} fill={accentColor} />
-              <text x={p.x} y={p.y - 20} textAnchor="middle"
-                fill="#fff" fontSize={22} fontWeight={700}>
+              <circle cx={p.x} cy={p.y} r={Math.round(10 * scale)} fill={accentColor} />
+              <text x={p.x} y={p.y - Math.round(20 * scale)} textAnchor="middle"
+                fill="#fff" fontSize={Math.round(22 * scale)} fontWeight={700}>
                 {p.value >= 1000 ? `${(p.value / 1000).toFixed(0)}k` : p.value}
               </text>
               {/* Label below x-axis */}
-              <text x={p.x} y={padT + chartH + 48} textAnchor="middle"
-                fill="rgba(255,255,255,0.55)" fontSize={24}>
+              <text x={p.x} y={padT + chartH + Math.round(48 * scale)} textAnchor="middle"
+                fill="rgba(255,255,255,0.55)" fontSize={Math.round(24 * scale)}>
                 {p.label}
               </text>
             </g>
@@ -156,11 +155,11 @@ export function ChartLine(props: ChartLineConfig) {
       {sourceLabel && (
         <div style={{
           position: 'absolute',
-          bottom: 36,
+          bottom: Math.round(80 * scale),
           left: padL,
           right: padR,
           color: 'rgba(255,255,255,0.3)',
-          fontSize: 26,
+          fontSize: Math.round(26 * scale),
           textAlign: 'center',
         }}>
           {sourceLabel}

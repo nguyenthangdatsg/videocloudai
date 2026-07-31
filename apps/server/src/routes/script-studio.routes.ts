@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import * as path from 'path';
 import * as fs from 'fs';
 import { createHash } from 'crypto';
+import multer from 'multer';
 import {
   ensureScriptStudioTables,
   createDoc,
@@ -25,6 +26,7 @@ import {
   DocStatus,
   type ParsedScript,
   updateDocSubtitleStyle,
+  updateDocProduceOptions,
   deleteDocProduceJob,
   resolveBlockVoice,
   type VoiceGroup,
@@ -55,6 +57,7 @@ function ndLine(res: Response, data: Record<string, unknown>) {
 async function compositeChartOnBg(
   block: { chartSpec: any; audioDurationMs: number | null },
   bgClipPath: string,
+  docId: string,
   orientation: 'landscape' | 'portrait',
   chartOpacity = 0.5,
   animationDurationSec?: number,
@@ -71,20 +74,24 @@ async function compositeChartOnBg(
     const chartDur = Math.max(audioDurSec, 4);
     const animDur = animationDurationSec ?? audioDurSec / 2;
     const accentColor = '#7c6af5';
-    const chartDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'charts');
-    fs.mkdirSync(chartDir, { recursive: true });
+    const chartCacheDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'charts');
+    fs.mkdirSync(chartCacheDir, { recursive: true });
 
     const darkResult = await renderChart(block.chartSpec, orientation, accentColor, '#0d0e12', chartDur, undefined, animDur);
-    const darkChartPath = path.join(chartDir, darkResult.filename);
+    const darkChartPath = path.join(chartCacheDir, darkResult.filename);
 
     const isPortrait = orientation === 'portrait';
     const w = isPortrait ? 1080 : 1920;
     const h = isPortrait ? 1920 : 1080;
     const chartOp = chartOpacity.toFixed(2);
-    const { createHash } = await import('crypto');
     const bgHash = createHash('sha256').update(path.basename(bgClipPath)).digest('hex').slice(0, 8);
-    const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${darkResult.filename}`;
-    const compositePath = path.join(chartDir, compositeFilename);
+    const ts = Date.now().toString(36);
+    const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${ts}_${darkResult.filename}`;
+    // Store composite in the doc folder, not cache
+    const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+    const docDir = path.join(rendersDir, `doc_${docId}`);
+    fs.mkdirSync(docDir, { recursive: true });
+    const compositePath = path.join(docDir, compositeFilename);
     const bgScaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
     const chartMargin = Math.round(Math.min(w, h) * 0.06);
     const chartW = w - chartMargin * 2;
@@ -185,6 +192,14 @@ export function createScriptStudioRouter(): Router {
     if (!subtitleStyle) { res.status(400).json({ error: 'subtitleStyle is required' }); return; }
 
     updateDocSubtitleStyle(docId, subtitleStyle);
+    res.json({ ok: true });
+  });
+
+  router.put('/docs/:id/produce-options', (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const doc = getDoc(docId);
+    if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
+    updateDocProduceOptions(docId, req.body);
     res.json({ ok: true });
   });
 
@@ -308,7 +323,7 @@ export function createScriptStudioRouter(): Router {
         const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
         const imageDir = path.join(rendersDir, `doc_${docId}`);
         const bgPath = path.join(imageDir, result.filename);
-        const composited = await compositeChartOnBg(block, bgPath, orient);
+        const composited = await compositeChartOnBg(block, bgPath, docId, orient);
         if (composited) {
           updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, duration: result.duration });
@@ -316,7 +331,7 @@ export function createScriptStudioRouter(): Router {
         }
       }
 
-      updateBlockClip(docId, blockIndex, result.filename, 'pexels');
+      updateBlockClip(docId, blockIndex, result.filename, 'pixabay');
       res.json({ ok: true, filename: result.filename, duration: result.duration });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -370,7 +385,7 @@ export function createScriptStudioRouter(): Router {
 
       // Chart block: composite chart overlay on the new bg video
       if (block.chartSpec) {
-        const composited = await compositeChartOnBg(block, destPath, orient);
+        const composited = await compositeChartOnBg(block, destPath, docId, orient);
         if (composited) {
           updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, pexelsId: video.id, duration: video.duration });
@@ -406,7 +421,7 @@ export function createScriptStudioRouter(): Router {
       if (block?.chartSpec) {
         const bgPath = path.join(docDir, result.filename);
         const orient = 'landscape' as const; // TODO: pass from request
-        const composited = await compositeChartOnBg(block, bgPath, orient);
+        const composited = await compositeChartOnBg(block, bgPath, docId, orient);
         if (composited) {
           updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, pexelsId, duration: result.duration });
@@ -522,7 +537,7 @@ export function createScriptStudioRouter(): Router {
       const block = getBlock(docId, blockIndex);
       if (block?.chartSpec) {
         const bgPath = path.join(docDir, result.filename);
-        const composited = await compositeChartOnBg(block, bgPath, 'landscape');
+        const composited = await compositeChartOnBg(block, bgPath, docId, 'landscape');
         if (composited) {
           updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, duration: result.duration });
@@ -530,7 +545,7 @@ export function createScriptStudioRouter(): Router {
         }
       }
 
-      updateBlockClip(docId, blockIndex, result.filename, 'pexels');
+      updateBlockClip(docId, blockIndex, result.filename, 'pixabay');
       res.json({ ok: true, filename: result.filename, duration: result.duration });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -559,7 +574,7 @@ export function createScriptStudioRouter(): Router {
       const block = getBlock(docId, blockIndex);
       if (block?.chartSpec) {
         const bgPath = path.join(docDir, result.filename);
-        const composited = await compositeChartOnBg(block, bgPath, 'landscape');
+        const composited = await compositeChartOnBg(block, bgPath, docId, 'landscape');
         if (composited) {
           updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, duration: result.duration });
@@ -567,7 +582,7 @@ export function createScriptStudioRouter(): Router {
         }
       }
 
-      updateBlockClip(docId, blockIndex, result.filename, 'pexels');
+      updateBlockClip(docId, blockIndex, result.filename, 'mixkit');
       res.json({ ok: true, filename: result.filename, duration: result.duration });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -805,12 +820,63 @@ export function createScriptStudioRouter(): Router {
     res.json({ job, docStatus: doc.status });
   });
 
+  // Generate YouTube description + tags on demand
+  router.post('/docs/:id/youtube-metadata', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const doc = getDoc(docId);
+    if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
+
+    try {
+      const blocks = listBlocks(docId);
+      const totalDurationSec = blocks.reduce((s, b) => s + (b.audioDurationMs ?? 0) / 1000, 0);
+      const { generateYouTubeMetadata } = await import('../services/video-producer.service');
+      const result = await generateYouTubeMetadata(doc.title, blocks, totalDurationSec);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.delete('/docs/:id/produce', (req: Request, res: Response) => {
     const docId = req.params.id as string;
     const doc = getDoc(docId);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
 
     deleteDocProduceJob(docId);
+    res.json({ ok: true });
+  });
+
+  // ── Watermark logo upload / status ──
+  const wmDir = path.resolve('assets', 'watermark');
+  fs.mkdirSync(wmDir, { recursive: true });
+  const wmUpload = multer({ dest: wmDir, limits: { fileSize: 5 * 1024 * 1024 } });
+
+  router.get('/watermark', (_req: Request, res: Response) => {
+    const logoPath = path.join(wmDir, 'logo.png');
+    if (fs.existsSync(logoPath)) {
+      const stat = fs.statSync(logoPath);
+      res.json({ exists: true, size: stat.size, url: '/api/script-studio/watermark/image' });
+    } else {
+      res.json({ exists: false });
+    }
+  });
+
+  router.get('/watermark/image', (_req: Request, res: Response) => {
+    const logoPath = path.join(wmDir, 'logo.png');
+    if (!fs.existsSync(logoPath)) { res.status(404).json({ error: 'No watermark logo' }); return; }
+    res.sendFile(logoPath);
+  });
+
+  router.post('/watermark', wmUpload.single('file'), (req: Request, res: Response) => {
+    if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
+    const dest = path.join(wmDir, 'logo.png');
+    fs.renameSync(req.file.path, dest);
+    res.json({ ok: true, url: '/api/script-studio/watermark/image' });
+  });
+
+  router.delete('/watermark', (_req: Request, res: Response) => {
+    const logoPath = path.join(wmDir, 'logo.png');
+    if (fs.existsSync(logoPath)) fs.unlinkSync(logoPath);
     res.json({ ok: true });
   });
 

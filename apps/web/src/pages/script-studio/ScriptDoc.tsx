@@ -6,7 +6,7 @@ import {
   ArrowLeft, ChevronDown, ChevronUp, AlertTriangle, Info, Check,
   Play, Loader2, BarChart2, Video, Mic, Settings, RefreshCw, X,
   Volume2, Film, Square, ChevronRight, ChevronLeft, Pencil, Music2,
-  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2,
+  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload,
 } from 'lucide-react';
 import { scriptStudioApi, queueApi, ttsApi, musicApi, type SubtitleStyle } from '../../lib/api';
 import { useAppStore } from '../../store';
@@ -712,12 +712,12 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
       } else {
         data = await scriptStudioApi.applyPixabayFromUrl(docId, block.blockIndex, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
       }
-      // Chart blocks: backend already composited the chart on the bg video — don't overwrite clips
       const newAssetPath = data.filename ?? data.clipAssetPath ?? block.clipAssetPath;
-      if (newAssetPath && !block.chartSpec) {
+      if (newAssetPath) {
         const srcDur = data.duration ?? candidate.duration ?? null;
         const newClip = { assetPath: newAssetPath, startSec: 0, endSec: srcDur as number | null, sourceDurationSec: srcDur as number | undefined, label: `${pickerService}:${candidate.id}` };
-        const updatedClips = [...blockClips, newClip];
+        // Chart blocks: replace all clips with the new composite; regular blocks: append
+        const updatedClips = block.chartSpec ? [newClip] : [...blockClips, newClip];
         await scriptStudioApi.updateBlockClips(docId, block.blockIndex, updatedClips);
         setActiveClipIdx(updatedClips.length - 1);
         if (srcDur) setClipSourceDurations(prev => ({ ...prev, [newAssetPath]: srcDur }));
@@ -809,7 +809,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
 
   const isPortrait = orientation === 'portrait';
   const clipUrl = renderedUrl || (activeClip
-    ? (block.visualType === 'chart' ? `/cache/charts/` : `/renders/storyboard/doc_${docId}/`) + activeClip.assetPath
+    ? `/renders/storyboard/doc_${docId}/` + activeClip.assetPath
     : null);
   const audioUrl = block.audioPath ? `/cache/block_audio/${block.audioPath}` : null;
   const audioTotalSec = audioDurSec ?? audioElDuration ?? 0;
@@ -1711,7 +1711,7 @@ function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, block
 
   const firstClip = clips[0] ?? null;
   const clipUrl = firstClip
-    ? (visualType === 'chart' ? `/cache/charts/` : `/cache/images/`) + firstClip.assetPath
+    ? `/renders/storyboard/doc_${docId}/` + firstClip.assetPath
     : null;
 
   // The video start offset where audio begins (use drag state if actively dragging)
@@ -2577,6 +2577,91 @@ const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   marginX: 40, marginBottom: 60, uppercase: false, animation: 'none',
 };
 
+const WATERMARK_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
+
+function WatermarkPanel({ options, onChange }: { options: Record<string, any>; onChange: (k: string, v: any) => void }) {
+  const { t } = useTranslation();
+  const wm = options.watermark ?? { enabled: false, position: 'bottom-right', opacity: 0.8, scale: 0.08, margin: 20 };
+  const setWm = (patch: Record<string, unknown>) => onChange('watermark', { ...wm, ...patch });
+  const fileRef = useRef<HTMLInputElement>(null);
+  const { data: wmStatus, refetch } = useQuery({ queryKey: ['watermark-status'], queryFn: scriptStudioApi.getWatermark });
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await scriptStudioApi.uploadWatermark(file);
+    refetch();
+    setWm({ enabled: true });
+  };
+
+  const handleDelete = async () => {
+    await scriptStudioApi.deleteWatermark();
+    refetch();
+    setWm({ enabled: false });
+  };
+
+  return (
+    <div className="rounded-lg border border-c-border bg-c-surface p-2.5 space-y-2">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={wm.enabled}
+          onChange={(e) => setWm({ enabled: e.target.checked })}
+          className="cursor-pointer accent-c-accent"
+          disabled={!wmStatus?.exists}
+        />
+        <Image className="w-3.5 h-3.5 text-c-muted" />
+        <span className="text-sm font-medium text-c-text">{t('scriptStudio.produce.watermarkLabel')}</span>
+      </label>
+
+      {/* Logo upload / preview */}
+      <div className="flex items-center gap-2 pl-1">
+        {wmStatus?.exists ? (
+          <>
+            <img src={`/api/script-studio/watermark/image?t=${Date.now()}`} className="w-8 h-8 object-contain rounded border border-c-border bg-c-elevated" />
+            <span className="text-xs text-c-dim">{t('scriptStudio.produce.watermarkUploaded')}</span>
+            <button className="text-xs text-red-400 hover:text-red-300 cursor-pointer" onClick={handleDelete}>{t('scriptStudio.produce.watermarkRemove')}</button>
+          </>
+        ) : (
+          <span className="text-xs text-c-dim">{t('scriptStudio.produce.watermarkNoLogo')}</span>
+        )}
+        <button
+          className="text-xs text-c-accent hover:text-c-accent/80 flex items-center gap-1 cursor-pointer"
+          onClick={() => fileRef.current?.click()}
+        >
+          <Upload className="w-3 h-3" />
+          {t('scriptStudio.produce.watermarkUpload')}
+        </button>
+        <input ref={fileRef} type="file" accept="image/png,image/webp,image/svg+xml" className="hidden" onChange={handleUpload} />
+      </div>
+
+      {wm.enabled && wmStatus?.exists && (
+        <div className="grid grid-cols-3 gap-2 pl-1">
+          {/* Position */}
+          <div>
+            <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.watermarkPosition')}</label>
+            <select className="input w-full text-sm" value={wm.position ?? 'bottom-right'} onChange={(e) => setWm({ position: e.target.value })}>
+              {WATERMARK_POSITIONS.map((p) => (
+                <option key={p} value={p}>{t(`scriptStudio.produce.watermarkPos_${p.replace('-', '_')}`)}</option>
+              ))}
+            </select>
+          </div>
+          {/* Opacity */}
+          <div>
+            <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.watermarkOpacity')} ({Math.round((wm.opacity ?? 0.8) * 100)}%)</label>
+            <input type="range" min={0.1} max={1} step={0.05} value={wm.opacity ?? 0.8} onChange={(e) => setWm({ opacity: Number(e.target.value) })} className="w-full accent-c-accent cursor-pointer" />
+          </div>
+          {/* Scale */}
+          <div>
+            <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.watermarkScale')} ({Math.round((wm.scale ?? 0.08) * 100)}%)</label>
+            <input type="range" min={0.03} max={0.25} step={0.01} value={wm.scale ?? 0.08} onChange={(e) => setWm({ scale: Number(e.target.value) })} className="w-full accent-c-accent cursor-pointer" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsPanel({ docId, options, onChange, onClose }: {
   docId?: string;
   options: Record<string, any>;
@@ -2753,6 +2838,9 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
               <option value="multi_generate">{t('scriptStudio.produce.aiLongMultiGen')}</option>
             </select>
           </div>
+
+          {/* Row 6: Watermark / Logo */}
+          <WatermarkPanel options={options} onChange={onChange} />
         </div>
       </div>
     </div>
@@ -2761,16 +2849,38 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
 
 // ── Result View (Step 4) ──
 
-function ResultView({ jobResult, orientation, onRerun, onRemove }: {
+function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
   jobResult: any;
   orientation: 'landscape' | 'portrait';
   onRerun: () => void;
   onRemove: () => void;
+  docId: string;
 }) {
   const { t } = useTranslation();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const SPEED_OPTIONS = [1, 2.5, 5, 7.5, 10];
+  const [ytDesc, setYtDesc] = useState<string>(jobResult?.ytDescription ?? '');
+  const [ytTags, setYtTags] = useState<string[]>(jobResult?.ytTags ?? []);
+  const [genYt, setGenYt] = useState(false);
+  const [copiedDesc, setCopiedDesc] = useState(false);
+  const [copiedTags, setCopiedTags] = useState(false);
+
+  const generateYt = async () => {
+    setGenYt(true);
+    try {
+      const data = await scriptStudioApi.generateYouTubeMetadata(docId);
+      setYtDesc(data.description);
+      setYtTags(data.tags);
+    } catch { /* ignore */ }
+    setGenYt(false);
+  };
+
+  const copyText = (text: string, setter: (v: boolean) => void) => {
+    navigator.clipboard.writeText(text);
+    setter(true);
+    setTimeout(() => setter(false), 2000);
+  };
 
   const handleSpeedChange = (rate: number) => {
     setPlaybackRate(rate);
@@ -2841,7 +2951,7 @@ function ResultView({ jobResult, orientation, onRerun, onRemove }: {
           onClick={onRemove}
         >
           <Trash2 className="w-4 h-4" />
-          {t('scriptStudio.studio.removeProduce') || 'Remove Video'}
+          {t('scriptStudio.studio.removeProduce')}
         </button>
       </div>
 
@@ -2855,6 +2965,69 @@ function ResultView({ jobResult, orientation, onRerun, onRemove }: {
           </p>
         </div>
       )}
+
+      {/* YouTube Metadata */}
+      <div className="max-w-2xl w-full mt-2 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-c-text flex items-center gap-2">
+            <ExternalLink className="w-4 h-4 text-red-400" />
+            YouTube Metadata
+          </h3>
+          <button
+            className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
+            onClick={generateYt}
+            disabled={genYt}
+          >
+            {genYt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+            {ytDesc ? 'Regenerate' : 'Generate'}
+          </button>
+        </div>
+
+        {ytDesc && (
+          <div className="space-y-3">
+            {/* Description */}
+            <div className="bg-c-elevated rounded-lg border border-c-border overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-c-border">
+                <span className="text-xs font-medium text-c-muted">Description</span>
+                <button
+                  className="text-xs text-c-accent hover:text-c-text flex items-center gap-1 cursor-pointer"
+                  onClick={() => copyText(ytDesc, setCopiedDesc)}
+                >
+                  {copiedDesc ? <Check className="w-3 h-3 text-green-400" /> : <FileText className="w-3 h-3" />}
+                  {copiedDesc ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <textarea
+                className="w-full bg-transparent text-xs text-c-text p-3 resize-y min-h-[120px] max-h-[400px] outline-none"
+                value={ytDesc}
+                onChange={(e) => setYtDesc(e.target.value)}
+                rows={10}
+              />
+            </div>
+
+            {/* Tags */}
+            <div className="bg-c-elevated rounded-lg border border-c-border overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-c-border">
+                <span className="text-xs font-medium text-c-muted">Tags ({ytTags.length})</span>
+                <button
+                  className="text-xs text-c-accent hover:text-c-text flex items-center gap-1 cursor-pointer"
+                  onClick={() => copyText(ytTags.join(', '), setCopiedTags)}
+                >
+                  {copiedTags ? <Check className="w-3 h-3 text-green-400" /> : <FileText className="w-3 h-3" />}
+                  {copiedTags ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <div className="p-3 flex flex-wrap gap-1.5">
+                {ytTags.map((tag, i) => (
+                  <span key={i} className="text-xs bg-c-surface text-c-muted px-2 py-0.5 rounded border border-c-border">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2974,6 +3147,7 @@ export default function ScriptDoc() {
   const [produceOptions, setProduceOptions] = useState<Record<string, any>>(() => ({
     subtitleStyle: { ...DEFAULT_SUBTITLE_STYLE }
   }));
+  const produceOptionsLoaded = useRef(false);
   const [producing, setProducing] = useState(false);
   const [resyncing, setResyncing] = useState(false);
   const prevResultUrlRef = useRef<string | null>(null);
@@ -3009,21 +3183,27 @@ export default function ScriptDoc() {
 
   const doc = docQ.data;
 
-  const hasSubtitlesInitializedRef = useRef(false);
-
+  // Load saved produce options from doc on first load
   useEffect(() => {
-    hasSubtitlesInitializedRef.current = false;
+    produceOptionsLoaded.current = false;
   }, [id]);
 
   useEffect(() => {
-    if (doc?.subtitleStyle && !hasSubtitlesInitializedRef.current) {
-      hasSubtitlesInitializedRef.current = true;
-      setProduceOptions((prev) => ({
-        ...prev,
-        subtitleStyle: doc.subtitleStyle,
-      }));
-    }
-  }, [doc?.subtitleStyle]);
+    if (!doc || produceOptionsLoaded.current) return;
+    produceOptionsLoaded.current = true;
+    const saved = doc.produceOptions ?? {};
+    const subtitleStyle = doc.subtitleStyle ?? saved.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
+    setProduceOptions({ ...saved, subtitleStyle });
+  }, [doc]);
+
+  // Persist produce options to backend (debounced)
+  useEffect(() => {
+    if (!id || !produceOptionsLoaded.current) return;
+    const timer = setTimeout(() => {
+      scriptStudioApi.updateProduceOptions(id, produceOptions).catch(console.error);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [id, produceOptions]);
 
   // Only check OmniVoice health if the doc uses omnivoice voice groups
   const docUsesOmnivoice = !!(doc?.parsed?.voiceGroups as any[])?.some((g: any) => g.engine === 'omnivoice');
@@ -3071,7 +3251,7 @@ export default function ScriptDoc() {
 
   const handleRemoveProduce = async () => {
     if (!id) return;
-    if (!window.confirm(t('scriptStudio.studio.confirmRemoveProduce') || 'Are you sure you want to delete the produced video?')) return;
+    if (!window.confirm(t('scriptStudio.studio.confirmRemoveProduce'))) return;
     try {
       await scriptStudioApi.deleteProduce(id);
       qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
@@ -3271,6 +3451,7 @@ export default function ScriptDoc() {
             orientation={orientation}
             onRerun={() => setStep(3)}
             onRemove={handleRemoveProduce}
+            docId={id!}
           />
         </div>
       ) : blocks.length === 0 ? (

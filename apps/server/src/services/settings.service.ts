@@ -60,6 +60,11 @@ export const SETTING_DEFAULTS: Record<string, string> = {
   tiktok_client_secret: '',
   instagram_app_id: '',
   instagram_app_secret: '',
+  watermark_enabled: '0',
+  watermark_position: 'bottom-right',
+  watermark_opacity: '0.8',
+  watermark_scale: '0.08',
+  watermark_margin: '20',
 };
 
 const MASKED_KEYS = ['jamendo_client_id', 'groq_api_key', 'anthropic_api_key', 'huggingface_api_key', 'gemini_api_key', 'openrouter_api_key', 'cerebras_api_key', 'grok_api_key', 'openai_api_key'];

@@ -15,7 +15,7 @@ export function ChartBars(props: ChartBarsConfig) {
   } = props;
 
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width: W, height: H } = useVideoConfig();
   const holdAt = animationFrames ?? Math.floor(durationInFrames * 0.95);
 
   const progress = interpolate(frame, [0, holdAt], [0, 1], {
@@ -37,13 +37,20 @@ export function ChartBars(props: ChartBarsConfig) {
   const itemCount = Math.min(sorted.length, 10);
   const displayBars = sorted.slice(0, itemCount);
 
-  const barH = 54;
-  const barGap = 20;
+  // Scale dimensions proportionally to actual composition size
+  const scale = Math.min(W / 1920, H / 1080);
+  const barH = Math.round(54 * scale);
+  const barGap = Math.round(20 * scale);
   const totalH = itemCount * (barH + barGap) - barGap;
-  const padL = 320;
-  const padR = 140;
-  const barMaxW = 1920 - padL - padR;
-  const startY = (1080 - totalH) / 2 - (title ? 40 : 0);
+  const padL = Math.round(320 * scale);
+  const padR = Math.round(140 * scale);
+  const barMaxW = W - padL - padR;
+  // Shift bars down to leave room for title within the cropped overlay area
+  const titleReserve = title ? Math.round(100 * scale) : 0;
+  const safeTop = Math.round(H * 0.06) + titleReserve;
+  const safeBottom = Math.round(H * 0.06);
+  const availableH = H - safeTop - safeBottom;
+  const startY = safeTop + Math.max(0, (availableH - totalH) / 2);
 
   return (
     <div style={{
@@ -56,11 +63,11 @@ export function ChartBars(props: ChartBarsConfig) {
       {title && (
         <div style={{
           position: 'absolute',
-          top: 48,
+          top: startY - Math.round(60 * scale),
           left: 0,
           right: 0,
           color: 'rgba(255,255,255,0.85)',
-          fontSize: 44,
+          fontSize: Math.round(44 * scale),
           fontWeight: 700,
           textAlign: 'center',
         }}>
@@ -68,7 +75,7 @@ export function ChartBars(props: ChartBarsConfig) {
         </div>
       )}
 
-      <svg width={1920} height={1080} style={{ position: 'absolute', top: 0, left: 0 }}>
+      <svg width={W} height={H} style={{ position: 'absolute', top: 0, left: 0 }}>
         {displayBars.map((bar, i) => {
           const y = startY + i * (barH + barGap);
           const barDelay = i * 0.08;
@@ -86,6 +93,7 @@ export function ChartBars(props: ChartBarsConfig) {
               : String(bar.value);
 
           const isTop = i === 0 && sortOrder !== 'asc';
+          const fontSize = Math.round(26 * scale);
 
           return (
             <g key={i}>
@@ -95,16 +103,16 @@ export function ChartBars(props: ChartBarsConfig) {
                 y={y}
                 width={Math.max(barW, 0)}
                 height={barH}
-                rx={6}
+                rx={Math.round(6 * scale)}
                 fill={isTop ? accentColor : `${accentColor}99`}
               />
               {/* Name */}
               <text
-                x={padL - 16}
-                y={y + barH / 2 + 8}
+                x={padL - Math.round(16 * scale)}
+                y={y + barH / 2 + fontSize * 0.35}
                 textAnchor="end"
                 fill="rgba(255,255,255,0.8)"
-                fontSize={26}
+                fontSize={fontSize}
                 fontWeight={isTop ? 700 : 400}
               >
                 {bar.name.length > 20 ? bar.name.slice(0, 20) + '…' : bar.name}
@@ -112,11 +120,11 @@ export function ChartBars(props: ChartBarsConfig) {
               {/* Value */}
               {barProgress > 0.3 && (
                 <text
-                  x={padL + barW + 12}
-                  y={y + barH / 2 + 8}
+                  x={padL + barW + Math.round(12 * scale)}
+                  y={y + barH / 2 + fontSize * 0.35}
                   textAnchor="start"
                   fill={isTop ? accentColor : 'rgba(255,255,255,0.6)'}
-                  fontSize={26}
+                  fontSize={fontSize}
                   fontWeight={700}
                 >
                   {valStr}
@@ -130,11 +138,11 @@ export function ChartBars(props: ChartBarsConfig) {
       {sourceLabel && (
         <div style={{
           position: 'absolute',
-          bottom: 36,
+          bottom: Math.round(80 * scale),
           left: 0,
           right: 0,
           color: 'rgba(255,255,255,0.3)',
-          fontSize: 26,
+          fontSize: Math.round(26 * scale),
           textAlign: 'center',
         }}>
           {sourceLabel}

@@ -81,7 +81,7 @@ export async function searchPixabayVideos(
   },
 ): Promise<PixabayVideoHit[]> {
   const apiKey = getApiKey();
-  const perPage = opts?.perPage ?? 5;
+  const perPage = Math.max(3, opts?.perPage ?? 5); // Pixabay minimum is 3
   const orientation = opts?.orientation === 'portrait' ? 'vertical' : 'horizontal';
 
   const params = new URLSearchParams({
@@ -205,7 +205,7 @@ export async function searchAndDownloadPixabayVideo(
   const destPath = path.join(cacheDir, filename);
 
   if (!fs.existsSync(destPath)) {
-    const resp = await fetch(best.url);
+    const resp = await fetch(best.url, { signal: AbortSignal.timeout(60000) });
     if (!resp.ok) throw new Error(`Failed to download Pixabay video: ${resp.status}`);
     fs.writeFileSync(destPath, Buffer.from(await resp.arrayBuffer()));
   }

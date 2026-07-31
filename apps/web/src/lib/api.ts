@@ -1059,9 +1059,17 @@ export const scriptStudioApi = {
     const res = await api.put(`/script-studio/docs/${id}/subtitle-style`, { subtitleStyle });
     return res.data as { ok: boolean };
   },
+  updateProduceOptions: async (id: string, options: Record<string, any>) => {
+    const res = await api.put(`/script-studio/docs/${id}/produce-options`, options);
+    return res.data as { ok: boolean };
+  },
   deleteProduce: async (id: string) => {
     const res = await api.delete(`/script-studio/docs/${id}/produce`);
     return res.data as { ok: boolean };
+  },
+  generateYouTubeMetadata: async (id: string) => {
+    const res = await api.post(`/script-studio/docs/${id}/youtube-metadata`);
+    return res.data as { description: string; tags: string[] };
   },
   getNarration: async (id: string) => {
     const res = await api.get(`/script-studio/docs/${id}/narration`);
@@ -1193,6 +1201,20 @@ export const scriptStudioApi = {
   omnivoiceVoices: async () => {
     const res = await api.get('/script-studio/omnivoice/voices');
     return res.data as { voices: Array<{ voice_id: string; name: string; type: string; engine?: string }> };
+  },
+  getWatermark: async () => {
+    const res = await api.get('/script-studio/watermark');
+    return res.data as { exists: boolean; size?: number; url?: string };
+  },
+  uploadWatermark: async (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await api.post('/script-studio/watermark', form);
+    return res.data as { ok: boolean; url: string };
+  },
+  deleteWatermark: async () => {
+    const res = await api.delete('/script-studio/watermark');
+    return res.data as { ok: boolean };
   },
 };
 
