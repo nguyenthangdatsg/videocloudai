@@ -3,8 +3,6 @@ import * as fs from 'fs';
 import type { IntroConfig, OutroConfig, SceneClipConfig, ComparisonSceneConfig } from '../remotion/types';
 import { getSettings } from './settings.service';
 
-let cachedBundleUrl: string | null = null;
-
 function getRootTsxPath(): string {
   // Works for both ts-node-dev (src/) and compiled (dist/) runtime
   const fromSrc = path.resolve(__dirname, '../remotion/Root.tsx');
@@ -13,15 +11,13 @@ function getRootTsxPath(): string {
 }
 
 async function getBundleUrl(): Promise<string> {
-  if (cachedBundleUrl) return cachedBundleUrl;
   const { bundle } = await import('@remotion/bundler');
   const entryPoint = getRootTsxPath();
-  cachedBundleUrl = await bundle({ entryPoint });
-  return cachedBundleUrl;
+  return await bundle({ entryPoint });
 }
 
 export function invalidateBundle(): void {
-  cachedBundleUrl = null;
+  // no-op: bundle caching disabled
 }
 
 const MAX_RENDER_RETRIES = 2;

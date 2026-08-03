@@ -154,6 +154,7 @@ export interface ScriptBlockRow {
   voice_config: string | null;
   clip_start_sec: number | null;
   clip_end_sec: number | null;
+  display_number: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -189,6 +190,7 @@ export interface ScriptBlockRecord {
   voiceConfig: string | null;
   clipStartSec: number | null;
   clipEndSec: number | null;
+  displayNumber: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -356,6 +358,9 @@ export function ensureScriptStudioTables(): void {
 
   // Migration: clips_json (multi-clip timeline per block)
   try { dbRun(`ALTER TABLE script_blocks ADD COLUMN clips_json TEXT`); } catch { /* already exists */ }
+
+  // Migration: display_number (original block number for split display: 3a, 3b, etc.)
+  try { dbRun(`ALTER TABLE script_blocks ADD COLUMN display_number INTEGER`); } catch { /* already exists */ }
 
   // Migrate: sync blocks for any existing docs that have no blocks yet
   try {
@@ -1424,6 +1429,7 @@ function rowToBlock(row: ScriptBlockRow): ScriptBlockRecord {
     voiceConfig: row.voice_config ?? null,
     clipStartSec: row.clip_start_sec ?? null,
     clipEndSec: row.clip_end_sec ?? null,
+    displayNumber: row.display_number ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1524,6 +1530,14 @@ export function updateBlockClips(docId: string, blockIndex: number, clips: Block
   if (old) {
     const newAssets = new Set(clips.map(c => c.assetPath));
     if (clipAssetPath) newAssets.add(clipAssetPath);
+    // Preserve split source videos so user can re-render with changes
+    for (const c of clips) {
+      if ((c as any).splitSources) {
+        for (const src of (c as any).splitSources) {
+          if (src) newAssets.add(src);
+        }
+      }
+    }
     const oldFiles = collectBlockClipFiles(old);
     for (const f of oldFiles) {
       if (!newAssets.has(f)) deleteClipFile(docId, f);
@@ -1576,6 +1590,92 @@ export function updateBlockError(docId: string, blockIndex: number, errorMsg: st
     `UPDATE script_blocks SET status = 'error', error_msg = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [errorMsg, new Date().toISOString(), docId, blockIndex],
   );
+}
+
+/**
+ * Split a block into two at a sentence boundary.
+ * Uses display_number so block 3 becomes 3a + 3b without renumbering subsequent blocks visually.
+ * Internally, block_index still shifts to maintain ordering.
+ */
+export function splitBlock(docId: string, blockIndex: number): { ok: boolean; newBlockIndex: number; leftNarration: string; rightNarration: string } {
+  const row = dbGet<ScriptBlockRow>(
+    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    [docId, blockIndex],
+  );
+  if (!row) throw new Error(`Block ${blockIndex} not found`);
+  const narration = row.narration ?? '';
+  if (!narration.trim()) throw new Error('Cannot split an empty block');
+
+  // Find sentence boundary closest to midpoint
+  const mid = Math.floor(narration.length / 2);
+  const sentenceEnds: number[] = [];
+  for (let i = 0; i < narration.length; i++) {
+    if ('.!?;'.includes(narration[i]) && i > 10 && i < narration.length - 10) {
+      sentenceEnds.push(i + 1);
+    }
+  }
+  let splitAt: number;
+  if (sentenceEnds.length > 0) {
+    splitAt = sentenceEnds.reduce((best, pos) => Math.abs(pos - mid) < Math.abs(best - mid) ? pos : best);
+  } else {
+    let bestSpace = mid;
+    for (let i = mid; i >= Math.max(1, mid - 50); i--) {
+      if (narration[i] === ' ') { bestSpace = i; break; }
+    }
+    splitAt = bestSpace;
+  }
+
+  const leftNarration = narration.slice(0, splitAt).trim();
+  const rightNarration = narration.slice(splitAt).trim();
+  if (!leftNarration || !rightNarration) throw new Error('Cannot split: narration too short');
+
+  const now = new Date().toISOString();
+  const newIdx = blockIndex + 1;
+
+  // The display number for this block: use existing display_number, or blockIndex + 1
+  const displayNum = row.display_number ?? (blockIndex + 1);
+
+  // Backfill display_number on all blocks that don't have one yet (before shifting)
+  dbRun(
+    `UPDATE script_blocks SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`,
+    [docId],
+  );
+
+  // Shift all subsequent blocks up by 1 (reverse order to avoid unique constraint)
+  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxIdx = maxRow?.mx ?? blockIndex;
+  for (let i = maxIdx; i >= newIdx; i--) {
+    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+      [i + 1, now, docId, i]);
+  }
+
+  // Update original block: truncate narration, set display_number, reset audio & clip
+  const oldFiles = collectBlockClipFiles(row);
+  dbRun(
+    `UPDATE script_blocks SET narration = ?, display_number = ?, content_hash = NULL,
+     audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
+     clip_asset_path = NULL, clips_json = NULL, rendered_clip_path = NULL,
+     status = 'pending', error_msg = NULL, updated_at = ?
+     WHERE doc_id = ? AND block_index = ?`,
+    [leftNarration, displayNum, now, docId, blockIndex],
+  );
+  for (const f of oldFiles) deleteClipFile(docId, f);
+
+  // Insert new block with same display_number
+  const motion = MOTION_CYCLE[newIdx % MOTION_CYCLE.length];
+  dbRun(
+    `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number,
+     narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt,
+     visual_type, motion, display_number, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)`,
+    [randomUUID(), docId, newIdx, row.segment_index, row.segment_name, row.scene_number,
+     rightNarration, row.pexels_query, row.pace_hint, row.voice_config, row.visual_type, motion,
+     displayNum, now, now],
+  );
+
+  addLog(docId, 'info', 'parse', `Block ${displayNum} split → ${displayNum}a (${countWords(leftNarration)}w) + ${displayNum}b (${countWords(rightNarration)}w)`);
+
+  return { ok: true, newBlockIndex: newIdx, leftNarration, rightNarration };
 }
 
 export function updateBlockAi(
@@ -1659,13 +1759,20 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
           [randomUUID(), docId, blockIndex, si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, motion, now, now],
         );
       } else {
-        const narrationChanged = existing.content_hash !== narrationHash && existing.audio_path !== null;
-        const visualChanged = (existing.pexels_query ?? null) !== (block.pexelsQuery ?? null)
+        // Compare actual narration text, not just hash — content_hash can be NULL after previous sync
+        const narrationChanged = (existing.narration ?? '') !== (block.narration ?? '') && existing.audio_path !== null;
+        // Only consider visual "changed" when the block has NO user-assigned clip.
+        // If the user already picked a stock video or split screen, preserve it even if the
+        // parsed pexels_query / ai_prompt changed — user intent wins over parser output.
+        const hasUserClip = !!existing.clip_asset_path;
+        const visualChanged = !hasUserClip && (
+          (existing.pexels_query ?? null) !== (block.pexelsQuery ?? null)
           || (existing.chart_spec_json ?? null) !== (chartSpecJson ?? null)
           || (existing.ai_prompt ?? null) !== (aiPrompt ?? null)
-          || (existing.clip_asset_path === null && existing.visual_type !== visualType);
+          || existing.visual_type !== visualType
+        );
 
-        const targetVisualType = existing.clip_asset_path ? existing.visual_type : visualType;
+        const targetVisualType = hasUserClip ? existing.visual_type : visualType;
 
         if (narrationChanged) {
           // Reset audio + render, keep clip asset path
@@ -1691,11 +1798,12 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
           );
           for (const f of oldFiles) deleteClipFile(docId, f);
         } else {
-          // Just update metadata
+          // Just update metadata (including pexels_query for future use, but keep clips intact)
           dbRun(
-            `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, updated_at = ?
+            `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, pexels_query = ?,
+             overlays_json = ?, pace_hint = ?, voice_config = ?, updated_at = ?
              WHERE doc_id = ? AND block_index = ?`,
-            [si + 1, seg.name, sceneNum, overlaysJson, paceHint, voiceConfig, now, docId, blockIndex],
+            [si + 1, seg.name, sceneNum, block.pexelsQuery ?? null, overlaysJson, paceHint, voiceConfig, now, docId, blockIndex],
           );
         }
       }
@@ -1754,31 +1862,6 @@ export function deleteDocProduceJob(docId: string): void {
     }
 
     dbRun(`DELETE FROM jobs WHERE id = ?`, [row.id]);
-  }
-
-  // Also delete the document's cached block videos folder!
-  try {
-    const outDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
-    const docDir = path.join(outDir, `doc_${docId}`);
-    if (fs.existsSync(docDir)) {
-      const files = fs.readdirSync(docDir);
-      for (const file of files) {
-        const fullPath = path.join(docDir, file);
-        const stat = fs.statSync(fullPath);
-        if (stat.isDirectory()) {
-          if (file === 'concat' || file.startsWith('tmp_concat_')) {
-            fs.rmSync(fullPath, { recursive: true, force: true });
-          }
-        } else {
-          if (!file.startsWith('pexels_') && !file.startsWith('pixabay_') && !file.startsWith('mixkit_')) {
-            fs.unlinkSync(fullPath);
-          }
-        }
-      }
-      addLog(docId, 'info', 'produce', `Cleaned rendered output cache files from doc folder: doc_${docId}`);
-    }
-  } catch (err) {
-    console.error(`[produce] Failed to delete doc folder:`, err);
   }
 
   // Reset status to parsed

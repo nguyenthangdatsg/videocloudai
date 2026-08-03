@@ -160,6 +160,111 @@ export async function searchPixabayCandidates(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pixabay Image Search
+// ---------------------------------------------------------------------------
+
+interface PixabayImageHit {
+  id: number;
+  pageURL: string;
+  type: string;
+  tags: string;
+  previewURL: string;
+  previewWidth: number;
+  previewHeight: number;
+  webformatURL: string;
+  webformatWidth: number;
+  webformatHeight: number;
+  largeImageURL: string;
+  imageWidth: number;
+  imageHeight: number;
+  user: string;
+}
+
+interface PixabayImageSearchResponse {
+  total: number;
+  totalHits: number;
+  hits: PixabayImageHit[];
+}
+
+export interface PixabayImageCandidate {
+  pixabayId: number;
+  thumbnail: string;
+  downloadUrl: string;
+  width: number;
+  height: number;
+  pageURL: string;
+  tags: string;
+  user: string;
+}
+
+/**
+ * Search Pixabay for images (photos/illustrations).
+ */
+export async function searchPixabayImages(
+  query: string,
+  orientation: 'landscape' | 'portrait' = 'landscape',
+  perPage = 12,
+): Promise<PixabayImageCandidate[]> {
+  const apiKey = getApiKey();
+  const orientVal = orientation === 'portrait' ? 'vertical' : 'horizontal';
+
+  const params = new URLSearchParams({
+    key: apiKey,
+    q: query,
+    image_type: 'photo',
+    orientation: orientVal,
+    per_page: String(Math.max(3, perPage)),
+    safesearch: 'true',
+  });
+
+  const res = await fetch(`https://pixabay.com/api/?${params}`, {
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Pixabay Images API error ${res.status}: ${body}`);
+  }
+
+  const text = await res.text();
+  if (text.startsWith('<!DOCTYPE') || text.startsWith('<html')) {
+    throw new Error('Pixabay API blocked by Cloudflare challenge');
+  }
+
+  const data = JSON.parse(text) as PixabayImageSearchResponse;
+  return (data.hits ?? []).map((h) => ({
+    pixabayId: h.id,
+    thumbnail: h.webformatURL,
+    downloadUrl: h.largeImageURL,
+    width: h.imageWidth,
+    height: h.imageHeight,
+    pageURL: h.pageURL,
+    tags: h.tags,
+    user: h.user,
+  }));
+}
+
+/**
+ * Download a Pixabay image to the cache directory.
+ */
+export async function downloadPixabayImage(
+  imageUrl: string,
+  destDir?: string,
+): Promise<{ filename: string; url: string }> {
+  const cacheDir = destDir ?? resolveImageCacheDir();
+  const hash = hashUrl(imageUrl);
+  const filename = `pixabay_photo_${hash}.jpg`;
+  const destPath = path.join(cacheDir, filename);
+
+  if (!fs.existsSync(destPath)) {
+    const resp = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
+    if (!resp.ok) throw new Error(`Failed to download Pixabay image: ${resp.status}`);
+    fs.writeFileSync(destPath, Buffer.from(await resp.arrayBuffer()));
+  }
+
+  return { filename, url: `/api/image/file/${filename}` };
+}
+
 /**
  * Download a specific Pixabay video from a known URL and apply it to a block.
  */

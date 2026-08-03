@@ -21,8 +21,6 @@ import { getSettings } from './settings.service';
 
 // ── Bundle cache (shared with remotion-renderer but independently managed here) ──
 
-let cachedBundleUrl: string | null = null;
-
 function getRootTsxPath(): string {
   const fromSrc = path.resolve(__dirname, '../remotion/Root.tsx');
   const fromDist = path.resolve(__dirname, '../../src/remotion/Root.tsx');
@@ -30,10 +28,8 @@ function getRootTsxPath(): string {
 }
 
 async function getBundleUrl(): Promise<string> {
-  if (cachedBundleUrl) return cachedBundleUrl;
   const { bundle } = await import('@remotion/bundler');
-  cachedBundleUrl = await bundle({ entryPoint: getRootTsxPath() });
-  return cachedBundleUrl;
+  return await bundle({ entryPoint: getRootTsxPath() });
 }
 
 // ── Chart render dir ──
@@ -200,5 +196,5 @@ export async function renderChart(
 }
 
 export function invalidateChartBundle(): void {
-  cachedBundleUrl = null;
+  // no-op: bundle caching disabled
 }

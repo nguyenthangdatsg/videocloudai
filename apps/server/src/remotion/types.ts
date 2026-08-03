@@ -69,6 +69,21 @@ export interface OutroConfig {
   durationInFrames: number;
 }
 
+export interface SplitScreenConfig {
+  durationInFrames: number;
+  leftSrc: string;
+  leftType: 'image' | 'video';
+  rightSrc: string;
+  rightType: 'image' | 'video';
+  middleText?: string;
+  middleStyle?: 'vs' | 'line' | 'glow' | 'badge' | 'none';
+  accentColor?: string;
+  bgColor?: string;
+  leftLabel?: string;
+  rightLabel?: string;
+  gap?: number;
+}
+
 export interface ComparisonSceneConfig {
   durationInFrames: number;
   leftMediaSrc: string;

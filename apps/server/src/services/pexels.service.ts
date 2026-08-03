@@ -94,6 +94,108 @@ function pickBestFile(video: PexelsVideo): PexelsVideoFile | null {
 // Core API
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Pexels Photos API types
+// ---------------------------------------------------------------------------
+
+interface PexelsPhotoSrc {
+  original: string;
+  large2x: string;
+  large: string;
+  medium: string;
+  small: string;
+  portrait: string;
+  landscape: string;
+  tiny: string;
+}
+
+interface PexelsPhoto {
+  id: number;
+  url: string;         // Pexels page URL
+  photographer: string;
+  width: number;
+  height: number;
+  src: PexelsPhotoSrc;
+  alt: string;
+}
+
+interface PexelsPhotoSearchResponse {
+  page: number;
+  per_page: number;
+  total_results: number;
+  photos: PexelsPhoto[];
+}
+
+export interface PexelsPhotoCandidate {
+  pexelsId: number;
+  thumbnail: string;
+  downloadUrl: string;
+  width: number;
+  height: number;
+  pexelsUrl: string;
+  photographer: string;
+  alt: string;
+}
+
+/**
+ * Search Pexels for photos and return candidate metadata for the picker UI.
+ */
+export async function searchPexelsPhotos(
+  query: string,
+  orientation: 'landscape' | 'portrait' | 'square' = 'landscape',
+  perPage = 12,
+): Promise<PexelsPhotoCandidate[]> {
+  const apiKey = getApiKey();
+  const params = new URLSearchParams({
+    query,
+    per_page: String(perPage),
+    orientation,
+  });
+
+  const res = await fetch(`https://api.pexels.com/v1/search?${params}`, {
+    headers: { Authorization: apiKey },
+    signal: AbortSignal.timeout(10000),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Pexels Photos API error ${res.status}: ${body}`);
+  }
+
+  const data = (await res.json()) as PexelsPhotoSearchResponse;
+  return (data.photos ?? []).map((p) => ({
+    pexelsId: p.id,
+    thumbnail: p.src.medium,
+    downloadUrl: p.src.large2x || p.src.large || p.src.original,
+    width: p.width,
+    height: p.height,
+    pexelsUrl: p.url,
+    photographer: p.photographer,
+    alt: p.alt,
+  }));
+}
+
+/**
+ * Download a Pexels photo to the cache directory.
+ */
+export async function downloadPexelsPhoto(
+  photoUrl: string,
+  destDir?: string,
+): Promise<{ filename: string; url: string }> {
+  const cacheDir = destDir ?? resolveImageCacheDir();
+  const hash = hashUrl(photoUrl);
+  const filename = `pexels_photo_${hash}.jpg`;
+  const destPath = path.join(cacheDir, filename);
+
+  if (!fs.existsSync(destPath)) {
+    const res = await fetch(photoUrl, { signal: AbortSignal.timeout(30000) });
+    if (!res.ok) throw new Error(`Failed to download Pexels photo: ${res.status}`);
+    fs.writeFileSync(destPath, Buffer.from(await res.arrayBuffer()));
+  }
+
+  return { filename, url: `/api/image/file/${filename}` };
+}
+
 /**
  * Search Pexels for videos and return raw results (no download).
  */

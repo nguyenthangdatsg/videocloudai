@@ -1106,14 +1106,50 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/fetch-pixabay`, { orientation });
     return res.data as { ok: boolean; filename: string; duration: number };
   },
-  getAlternatives: async (id: string, query: string, orientation: 'landscape' | 'portrait' = 'landscape', perPage = 12, service: 'pexels' | 'pixabay' | 'mixkit' = 'pexels') => {
+  getAlternatives: async (id: string, query: string, orientation: 'landscape' | 'portrait' = 'landscape', perPage = 12, service: 'pexels' | 'pixabay' | 'mixkit' | 'images' = 'pexels') => {
     const res = await api.get(`/script-studio/docs/${id}/blocks/alternatives`, {
       params: { query, orientation, perPage, service },
     });
     return res.data as {
-      service: 'pexels' | 'pixabay' | 'mixkit';
-      candidates: Array<{ pexelsId?: number; pixabayId?: number; mixkitId?: number; thumbnail: string; previewUrl: string | null; downloadUrl?: string; duration: number; width: number; height: number; pexelsUrl?: string; pageURL?: string; title?: string }>;
+      service: 'pexels' | 'pixabay' | 'mixkit' | 'images';
+      candidates: Array<{ pexelsId?: number; pixabayId?: number; mixkitId?: number; imageId?: number; source?: string; thumbnail: string; previewUrl?: string | null; downloadUrl?: string; duration?: number; width: number; height: number; pexelsUrl?: string; pageURL?: string; pageUrl?: string; title?: string }>;
     };
+  },
+  applyStockImage: async (id: string, blockIndex: number, downloadUrl: string, source: string, width: number, height: number, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in') => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-stock-image`, { downloadUrl, source, width, height, zoomEffect });
+    return res.data as { ok: boolean; filename: string; duration: number };
+  },
+  downloadStock: async (id: string, service: string, candidate: { id?: number; downloadUrl?: string; duration?: number; width?: number; height?: number }) => {
+    const res = await api.post(`/script-studio/docs/${id}/download-stock`, {
+      service,
+      pexelsId: service === 'pexels' ? candidate.id : undefined,
+      downloadUrl: candidate.downloadUrl,
+      duration: candidate.duration,
+      width: candidate.width,
+      height: candidate.height,
+    });
+    return res.data as { ok: boolean; filename: string; duration: number };
+  },
+  splitBlock: async (id: string, blockIndex: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-block`);
+    return res.data as { ok: boolean; newBlockIndex: number; leftNarration: string; rightNarration: string };
+  },
+  splitScreen: async (id: string, blockIndex: number, leftClip: string, rightClip: string, opts?: { middleText?: string; middleStyle?: string; accentColor?: string; leftLabel?: string; rightLabel?: string; labelPosition?: string; labelStyle?: string }) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-screen`, { leftClip, rightClip, ...opts });
+    return res.data as { ok: boolean; filename: string; duration: number };
+  },
+  pasteImage: async (id: string, blockIndex: number, file: File, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in') => {
+    const form = new FormData();
+    form.append('image', file);
+    form.append('zoomEffect', zoomEffect);
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/paste-image`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data as { ok: boolean; filename: string; duration: number };
+  },
+  renderRemotion: async (id: string, blockIndex: number, compositionId: string, durationSec: number, orientation: string, props: Record<string, unknown> = {}) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/render-remotion`, { compositionId, durationSec, orientation, props });
+    return res.data as { ok: boolean; filename: string; durationSec: number };
   },
   applyPexelsById: async (id: string, blockIndex: number, pexelsId: number) => {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-pexels-id`, { pexelsId });
@@ -1143,6 +1179,17 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/tts`, opts ?? {});
     return res.data as { cached: boolean; audioDurationMs: number; wordCount?: number; engine?: string };
   },
+  ttsAll: async (id: string, engine: string, onProgress?: (data: { done: number; total: number; blockIndex?: number; error?: string }) => void) => {
+    const res = await fetch(`${api.defaults.baseURL}/script-studio/docs/${id}/tts-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ engine }),
+    });
+    if (!res.ok) throw new Error(`TTS all failed: ${res.status}`);
+    await readNDJSON(res, (parsed) => {
+      if (onProgress) onProgress(parsed as any);
+    });
+  },
   reproduceBlock: async (
     id: string,
     blockIndex: number,
@@ -1150,11 +1197,12 @@ export const scriptStudioApi = {
     chartOpacity = 0.5,
     animationDurationSec?: number,
     onLog?: (msg: string) => void,
+    accentColor?: string,
   ) => {
     const res = await fetch(`/api/script-studio/docs/${id}/blocks/${blockIndex}/reproduce`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orientation, chartOpacity, animationDurationSec }),
+      body: JSON.stringify({ orientation, chartOpacity, animationDurationSec, accentColor }),
     });
     if (!res.ok) {
       const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -1209,7 +1257,9 @@ export const scriptStudioApi = {
   uploadWatermark: async (file: File) => {
     const form = new FormData();
     form.append('file', file);
-    const res = await api.post('/script-studio/watermark', form);
+    const res = await api.post('/script-studio/watermark', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
     return res.data as { ok: boolean; url: string };
   },
   deleteWatermark: async () => {

@@ -17,9 +17,9 @@ import {
   getBlock,
   updateBlockVisual,
   updateBlockAi,
-  updateBlockClip,
   updateBlockClips,
   updateBlockAudio,
+  splitBlock,
   type BlockClip,
   buildFlowPrompt,
   syncBlocksFromParsed,
@@ -325,13 +325,11 @@ export function createScriptStudioRouter(): Router {
         const bgPath = path.join(imageDir, result.filename);
         const composited = await compositeChartOnBg(block, bgPath, docId, orient);
         if (composited) {
-          updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, duration: result.duration });
           return;
         }
       }
 
-      updateBlockClip(docId, blockIndex, result.filename, 'pixabay');
       res.json({ ok: true, filename: result.filename, duration: result.duration });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -387,13 +385,11 @@ export function createScriptStudioRouter(): Router {
       if (block.chartSpec) {
         const composited = await compositeChartOnBg(block, destPath, docId, orient);
         if (composited) {
-          updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, pexelsId: video.id, duration: video.duration });
           return;
         }
       }
 
-      updateBlockClip(docId, blockIndex, filename, 'pexels');
       res.json({ ok: true, filename, pexelsId: video.id, duration: video.duration });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -423,13 +419,11 @@ export function createScriptStudioRouter(): Router {
         const orient = 'landscape' as const; // TODO: pass from request
         const composited = await compositeChartOnBg(block, bgPath, docId, orient);
         if (composited) {
-          updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, pexelsId, duration: result.duration });
           return;
         }
       }
 
-      updateBlockClip(docId, blockIndex, result.filename, 'pexels');
       res.json({ ok: true, filename: result.filename, pexelsId, duration: result.duration });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -478,7 +472,6 @@ export function createScriptStudioRouter(): Router {
       }
 
       updateBlockAi(docId, blockIndex, prompt, aiFilename, { promptHash, generatedAt: new Date().toISOString() });
-      updateBlockClip(docId, blockIndex, aiFilename, 'ai');
 
       ndLine(res, { type: 'log', level: 'success', message: `AI clip ready: ${aiFilename}`, ts: new Date().toISOString() });
       ndLine(res, { type: 'result', blockIndex, aiFilename, promptHash });
@@ -489,7 +482,7 @@ export function createScriptStudioRouter(): Router {
     res.end();
   });
 
-  // Stock video alternatives for picker — supports ?service=pexels|pixabay|mixkit
+  // Stock video alternatives for picker — supports ?service=pexels|pixabay|mixkit|images
   router.get('/docs/:id/blocks/alternatives', async (req: Request, res: Response) => {
     const query = (req.query.query as string) ?? '';
     const orientation = ((req.query.orientation as string) ?? 'landscape') as 'landscape' | 'portrait';
@@ -498,7 +491,59 @@ export function createScriptStudioRouter(): Router {
     if (!query) { res.status(400).json({ error: 'query is required' }); return; }
 
     try {
-      if (service === 'pixabay') {
+      if (service === 'images') {
+        // Fetch stock images from both Pexels and Pixabay in parallel
+        const { searchPexelsPhotos } = await import('../services/pexels.service');
+        const { searchPixabayImages } = await import('../services/pixabay.service');
+        const halfPage = Math.max(3, Math.ceil(perPage / 2));
+
+        const [pexelsPhotos, pixabayImages] = await Promise.allSettled([
+          searchPexelsPhotos(query, orientation, halfPage),
+          searchPixabayImages(query, orientation, halfPage),
+        ]);
+
+        const candidates: Array<Record<string, unknown>> = [];
+        if (pexelsPhotos.status === 'fulfilled') {
+          for (const p of pexelsPhotos.value) {
+            candidates.push({
+              imageId: p.pexelsId,
+              source: 'pexels',
+              thumbnail: p.thumbnail,
+              downloadUrl: p.downloadUrl,
+              width: p.width,
+              height: p.height,
+              pageUrl: p.pexelsUrl,
+              title: p.alt || p.photographer,
+            });
+          }
+        }
+        if (pixabayImages.status === 'fulfilled') {
+          for (const p of pixabayImages.value) {
+            candidates.push({
+              imageId: p.pixabayId,
+              source: 'pixabay',
+              thumbnail: p.thumbnail,
+              downloadUrl: p.downloadUrl,
+              width: p.width,
+              height: p.height,
+              pageUrl: p.pageURL,
+              title: p.tags,
+            });
+          }
+        }
+
+        // Interleave results from both sources
+        const interleaved: typeof candidates = [];
+        const pxl = candidates.filter(c => c.source === 'pexels');
+        const pxb = candidates.filter(c => c.source === 'pixabay');
+        const maxLen = Math.max(pxl.length, pxb.length);
+        for (let i = 0; i < maxLen; i++) {
+          if (i < pxl.length) interleaved.push(pxl[i]);
+          if (i < pxb.length) interleaved.push(pxb[i]);
+        }
+
+        res.json({ candidates: interleaved.slice(0, perPage), service: 'images' });
+      } else if (service === 'pixabay') {
         const { searchPixabayCandidates } = await import('../services/pixabay.service');
         const candidates = await searchPixabayCandidates(query, orientation, perPage);
         res.json({ candidates, service: 'pixabay' });
@@ -539,15 +584,391 @@ export function createScriptStudioRouter(): Router {
         const bgPath = path.join(docDir, result.filename);
         const composited = await compositeChartOnBg(block, bgPath, docId, 'landscape');
         if (composited) {
-          updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, duration: result.duration });
           return;
         }
       }
 
-      updateBlockClip(docId, blockIndex, result.filename, 'pixabay');
       res.json({ ok: true, filename: result.filename, duration: result.duration });
     } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Apply a stock image (Pexels photo or Pixabay image) to a block — downloads image, converts to video clip via FFmpeg
+  router.post('/docs/:id/blocks/:blockIndex/apply-stock-image', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string);
+    if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
+
+    const { downloadUrl, source, width, height, zoomEffect } = req.body as {
+      downloadUrl?: string; source?: string; width?: number; height?: number; zoomEffect?: 'zoom-in' | 'zoom-out';
+    };
+    if (!downloadUrl) { res.status(400).json({ error: 'downloadUrl is required' }); return; }
+
+    try {
+      const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+      const docDir = path.join(rendersDir, `doc_${docId}`);
+      fs.mkdirSync(docDir, { recursive: true });
+
+      // Download image
+      let imgResult: { filename: string; url: string };
+      if (source === 'pixabay') {
+        const { downloadPixabayImage } = await import('../services/pixabay.service');
+        imgResult = await downloadPixabayImage(downloadUrl, docDir);
+      } else {
+        const { downloadPexelsPhoto } = await import('../services/pexels.service');
+        imgResult = await downloadPexelsPhoto(downloadUrl, docDir);
+      }
+
+      // Get block audio duration for clip length
+      const block = getBlock(docId, blockIndex);
+      const durationSec = block?.audioDurationMs ? Math.ceil(block.audioDurationMs / 1000) : 5;
+
+      // Convert image to video with slow-zoom via FFmpeg
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const { resolveFfmpegPathSync } = await import('../services/import.service');
+      const ffmpegPath = resolveFfmpegPathSync('ffmpeg');
+
+      const imgPath = path.join(docDir, imgResult.filename);
+      const effectSuffix = (zoomEffect ?? 'zoom-in') === 'zoom-out' ? '_zout' : '_zin';
+      const videoFilename = imgResult.filename.replace(/\.(jpg|jpeg|png|webp)$/i, `${effectSuffix}_clip.mp4`);
+      const videoPath = path.join(docDir, videoFilename);
+
+      if (!fs.existsSync(videoPath)) {
+        const fps = 30;
+        const totalFrames = durationSec * fps;
+        const step = (0.05 / totalFrames).toFixed(8);
+        const zoomExpr = (zoomEffect ?? 'zoom-in') === 'zoom-out'
+          ? `'if(eq(on\\,1)\\,1.05\\,max(zoom-${step}\\,1.0))'`
+          : `'min(zoom+${step}\\,1.05)'`;
+        await execFileAsync(ffmpegPath, [
+          '-nostdin',
+          '-loop', '1',
+          '-i', imgPath,
+          '-vf', `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,zoompan=z=${zoomExpr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1920x1080:fps=${fps}`,
+          '-c:v', 'libx264',
+          '-preset', process.env.FFMPEG_PRESET || 'superfast',
+          '-pix_fmt', 'yuv420p',
+          '-t', String(durationSec),
+          '-y', videoPath,
+        ], { timeout: 60000 });
+      }
+
+      // Apply to block
+      if (block?.chartSpec) {
+        const composited = await compositeChartOnBg(block, videoPath, docId, 'landscape');
+        if (composited) {
+          res.json({ ok: true, filename: composited, duration: durationSec });
+          return;
+        }
+      }
+
+      res.json({ ok: true, filename: videoFilename, duration: durationSec });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Download a stock video to doc dir without applying to block (for split-screen etc.)
+  router.post('/docs/:id/download-stock', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const { service, downloadUrl, pexelsId, duration, width, height } = req.body as {
+      service: string; downloadUrl?: string; pexelsId?: number;
+      duration?: number; width?: number; height?: number;
+    };
+
+    try {
+      const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+      const docDir = path.join(rendersDir, `doc_${docId}`);
+      fs.mkdirSync(docDir, { recursive: true });
+
+      let filename: string;
+      let dur = duration ?? 0;
+
+      if (service === 'pexels' && pexelsId) {
+        const result = await downloadPexelsVideoById(pexelsId, docDir);
+        if (!result) { res.status(422).json({ error: 'Pexels video not found' }); return; }
+        filename = result.filename;
+        dur = result.duration;
+      } else if (service === 'pixabay' && downloadUrl) {
+        const { downloadPixabayVideoFromUrl } = await import('../services/pixabay.service');
+        const result = await downloadPixabayVideoFromUrl(downloadUrl, dur, width ?? 0, height ?? 0, docDir);
+        filename = result.filename;
+      } else if (service === 'mixkit' && downloadUrl) {
+        const { downloadMixkitVideo } = await import('../services/mixkit.service');
+        const result = await downloadMixkitVideo(downloadUrl, dur, width ?? 0, height ?? 0, docDir);
+        filename = result.filename;
+        dur = result.duration;
+      } else {
+        res.status(400).json({ error: 'Invalid service or missing params' }); return;
+      }
+
+      res.json({ ok: true, filename, duration: dur });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Split screen: combine two clips side-by-side with optional middle text ──
+  router.post('/docs/:id/blocks/:blockIndex/split-screen', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string);
+    if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
+
+    const { leftClip, rightClip, middleText, middleStyle, accentColor, leftLabel, rightLabel, labelPosition, labelStyle } = req.body as {
+      leftClip: string; rightClip: string;
+      middleText?: string; middleStyle?: string;
+      accentColor?: string; leftLabel?: string; rightLabel?: string;
+      labelPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
+      labelStyle?: 'badge' | 'outline' | 'shadow' | 'banner';
+    };
+    if (!leftClip || !rightClip) { res.status(400).json({ error: 'leftClip and rightClip are required' }); return; }
+    try {
+      const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+      const docDir = path.join(rendersDir, `doc_${docId}`);
+      fs.mkdirSync(docDir, { recursive: true });
+
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const { resolveFfmpegPathSync } = await import('../services/import.service');
+      const ffmpeg = resolveFfmpegPathSync('ffmpeg');
+
+      // Resolve clip paths
+      const leftPath = path.isAbsolute(leftClip) ? leftClip : path.join(docDir, leftClip);
+      const rightPath = path.isAbsolute(rightClip) ? rightClip : path.join(docDir, rightClip);
+      if (!fs.existsSync(leftPath)) { res.status(400).json({ error: `Left clip not found: ${leftClip}` }); return; }
+      if (!fs.existsSync(rightPath)) { res.status(400).json({ error: `Right clip not found: ${rightClip}` }); return; }
+
+      // Get block audio duration for target length
+      const block = getBlock(docId, blockIndex);
+      const durationSec = block?.audioDurationMs ? Math.ceil(block.audioDurationMs / 1000) : 5;
+
+      const outW = 1920;
+      const outH = 1080;
+      const mStyle = middleStyle || 'vs';
+      const accentHex = (accentColor || '#7c6af5').replace('#', '');
+      const accent = `0x${accentHex}`;
+
+      // Gap width and divider color per style
+      let gap: number;
+      let dividerColor: string;
+      switch (mStyle) {
+        case 'fire':   gap = 14; dividerColor = '0xFF4500'; break;
+        case 'neon':   gap = 10; dividerColor = accent; break;
+        case 'slash':  gap = 28; dividerColor = '0x000000'; break;
+        case 'clean':  gap = 3;  dividerColor = '0xCCCCCC'; break;
+        case 'none':   gap = 2;  dividerColor = accent; break;
+        case 'line':   gap = 3;  dividerColor = accent; break;
+        case 'glow':   gap = 20; dividerColor = accent; break;
+        case 'badge':  gap = 6;  dividerColor = accent; break;
+        default:       gap = 6;  dividerColor = accent; break; // vs
+      }
+      const panelW = Math.floor((outW - gap) / 2);
+
+      const filterParts: string[] = [];
+      filterParts.push(`[0:v]scale=${panelW}:${outH}:force_original_aspect_ratio=increase,crop=${panelW}:${outH},setsar=1[left]`);
+      filterParts.push(`[1:v]scale=${panelW}:${outH}:force_original_aspect_ratio=increase,crop=${panelW}:${outH},setsar=1[right]`);
+      filterParts.push(`color=c=${dividerColor}:s=${outW}x${outH}:d=${durationSec},format=yuv420p[bg]`);
+      filterParts.push(`[bg][left]overlay=0:0:shortest=1[tmp1]`);
+      filterParts.push(`[tmp1][right]overlay=${panelW + gap}:0:shortest=1[tmp2]`);
+      if (mStyle === 'glow') {
+        // Smooth glow: generate RGBA glow strip, blur it, overlay onto composed video
+        const cx = panelW + Math.floor(gap / 2);
+        const glowW = 160;
+        // Create glow source: transparent RGBA canvas with accent strip at center, gaussian-blurred
+        filterParts.push(`color=c=black@0:s=${glowW}x${outH}:d=${durationSec},format=rgba,drawbox=x=${glowW / 2 - 3}:y=0:w=6:h=ih:color=${accent}@0.9:t=fill,gblur=sigma=14[glow]`);
+        filterParts.push(`[tmp2][glow]overlay=x=${cx - glowW / 2}:y=0:shortest=1[base]`);
+      } else {
+        filterParts.push(`[tmp2]null[base]`);
+      }
+
+      // Draw text overlays
+      const drawTextParts: string[] = [];
+
+      // Label position coordinates
+      const lPos = labelPosition || 'top-center';
+      const labelY = lPos.startsWith('top') ? '30' : 'h-50';
+      const hAlign = lPos.split('-')[1]; // left, center, right
+      const leftLabelX = hAlign === 'center' ? `(${panelW}-tw)/2` : hAlign === 'right' ? `${panelW}-tw-20` : '20';
+      const rightLabelX = hAlign === 'center' ? `${panelW + gap}+(${panelW}-tw)/2` : hAlign === 'right' ? 'w-tw-20' : `${panelW + gap}+20`;
+
+      // Banner: draw semi-transparent bar behind labels
+      const lStyle = labelStyle || 'badge';
+      if (lStyle === 'banner' && (leftLabel || rightLabel)) {
+        const barY = lPos.startsWith('top') ? '0' : `h-60`;
+        drawTextParts.push(`drawbox=x=0:y=${barY}:w=iw:h=60:color=black@0.6:t=fill`);
+      }
+      const labelDrawOpts = (text: string, x: string) => {
+        const escaped = text.replace(/'/g, "\\'");
+        const base = `drawtext=text='${escaped}':fontsize=28:fontcolor=white:x=${x}:y=${labelY}`;
+        switch (lStyle) {
+          case 'badge':
+            return `${base}:box=1:boxcolor=black@0.7:boxborderw=8:borderw=0`;
+          case 'outline':
+            return `${base}:borderw=3:bordercolor=black@0.9`;
+          case 'shadow':
+            return `${base}:borderw=0:shadowcolor=black@0.8:shadowx=2:shadowy=2`;
+          case 'banner':
+            return `${base}:borderw=1:bordercolor=black@0.4`;
+          default:
+            return `${base}:borderw=2:bordercolor=black@0.6`;
+        }
+      };
+
+      // Left label
+      if (leftLabel) {
+        drawTextParts.push(labelDrawOpts(leftLabel, leftLabelX));
+      }
+      // Right label
+      if (rightLabel) {
+        drawTextParts.push(labelDrawOpts(rightLabel, rightLabelX));
+      }
+      // Middle text — some styles show text, others don't
+      const showsMiddleText = !['line', 'none'].includes(mStyle);
+      const mText = middleText || (showsMiddleText ? 'VS' : '');
+      if (mText) {
+        const escaped = mText.replace(/'/g, "\\'");
+        const mFontSize = mText.length <= 3 ? 48 : mText.length <= 8 ? 36 : 28;
+        const cx = '(w-tw)/2';
+        const cy = '(h-th)/2';
+        const dt = (opts: string) => `drawtext=text='${escaped}':fontsize=${opts}:x=${cx}:y=${cy}`;
+
+        switch (mStyle) {
+          case 'vs':
+            // White text on accent box with accent border
+            drawTextParts.push(dt(`${mFontSize}:fontcolor=white:borderw=3:bordercolor=${accent}:box=1:boxcolor=${accent}@0.85:boxborderw=12`));
+            break;
+          case 'badge':
+            // White text on solid accent rounded box
+            drawTextParts.push(dt(`${mFontSize}:fontcolor=white:borderw=0:box=1:boxcolor=${accent}:boxborderw=14`));
+            break;
+          case 'glow':
+            // Simulated glow: large accent-colored blurred border behind, then crisp white text on top
+            drawTextParts.push(dt(`${mFontSize + 12}:fontcolor=${accent}@0.4:borderw=12:bordercolor=${accent}@0.3:box=1:boxcolor=0x000000@0.0:boxborderw=0`));
+            drawTextParts.push(dt(`${mFontSize + 8}:fontcolor=${accent}@0.7:borderw=6:bordercolor=${accent}@0.5:box=1:boxcolor=0x000000@0.0:boxborderw=0`));
+            drawTextParts.push(dt(`${mFontSize + 4}:fontcolor=white:borderw=3:bordercolor=${accent}:box=1:boxcolor=0x000000@0.6:boxborderw=14`));
+            break;
+          case 'fire':
+            // Gold text on red/orange box
+            drawTextParts.push(dt(`${mFontSize + 4}:fontcolor=0xFFD700:borderw=3:bordercolor=0xFF0000:box=1:boxcolor=0xFF4500:boxborderw=14`));
+            break;
+          case 'neon':
+            // Accent text with white border on dark box
+            drawTextParts.push(dt(`${mFontSize}:fontcolor=${accent}:borderw=3:bordercolor=white:box=1:boxcolor=0x000000@0.6:boxborderw=10`));
+            break;
+          case 'slash':
+            // White text on accent box, over black diagonal gap
+            drawTextParts.push(dt(`${mFontSize - 4}:fontcolor=white:borderw=2:bordercolor=0x000000:box=1:boxcolor=${accent}:boxborderw=10`));
+            break;
+          case 'clean':
+            // Small white text on subtle dark box
+            drawTextParts.push(dt(`${Math.max(22, mFontSize - 8)}:fontcolor=white:borderw=1:bordercolor=0x444444:box=1:boxcolor=0x222222:boxborderw=6`));
+            break;
+        }
+      }
+
+      if (drawTextParts.length > 0) {
+        filterParts.push(`[base]${drawTextParts.join(',')}[out]`);
+      } else {
+        filterParts.push(`[base]null[out]`);
+      }
+
+      const splitFilename = `split_${Date.now()}.mp4`;
+      const splitPath = path.join(docDir, splitFilename);
+
+      const filterStr = filterParts.join(';');
+      console.log('[split-screen] style=%s labelStyle=%s filter=%s', mStyle, lStyle, filterStr);
+      await execFileAsync(ffmpeg, [
+        '-nostdin',
+        '-stream_loop', '-1', '-i', leftPath,
+        '-stream_loop', '-1', '-i', rightPath,
+        '-filter_complex', filterStr,
+        '-map', '[out]',
+        '-c:v', 'libx264',
+        '-preset', process.env.FFMPEG_PRESET || 'superfast',
+        '-pix_fmt', 'yuv420p',
+        '-t', String(durationSec),
+        '-y', splitPath,
+      ], { timeout: 120000 });
+
+      // Mark block as 'split' visual type and sync clip_asset_path so the producer uses it as-is
+      updateBlockVisual(docId, blockIndex, { visualType: 'split', clipAssetPath: splitFilename });
+
+      res.json({ ok: true, filename: splitFilename, duration: durationSec });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Upload a pasted/dropped image and convert to video clip with zoom effect
+  const pasteUpload = multer({ dest: path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard', '_uploads'), limits: { fileSize: 10 * 1024 * 1024 } });
+  router.post('/docs/:id/blocks/:blockIndex/paste-image', pasteUpload.single('image'), async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string);
+    if (isNaN(blockIndex) || !req.file) { res.status(400).json({ error: 'Invalid blockIndex or no file' }); return; }
+
+    const zoomEffect = (req.body?.zoomEffect as string) || 'zoom-in';
+
+    try {
+      const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+      const docDir = path.join(rendersDir, `doc_${docId}`);
+      fs.mkdirSync(docDir, { recursive: true });
+
+      // Move uploaded file to doc dir with proper extension
+      const ext = path.extname(req.file.originalname || '.png') || '.png';
+      const imgFilename = `paste_${Date.now()}${ext}`;
+      const imgPath = path.join(docDir, imgFilename);
+      fs.renameSync(req.file.path, imgPath);
+
+      // Get block audio duration for clip length
+      const block = getBlock(docId, blockIndex);
+      const durationSec = block?.audioDurationMs ? Math.ceil(block.audioDurationMs / 1000) : 5;
+
+      // Convert image to video with zoom effect via FFmpeg
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const { resolveFfmpegPathSync } = await import('../services/import.service');
+      const ffmpegPath = resolveFfmpegPathSync('ffmpeg');
+
+      const effectSuffix = zoomEffect === 'zoom-out' ? '_zout' : '_zin';
+      const videoFilename = imgFilename.replace(/\.[^.]+$/, `${effectSuffix}_clip.mp4`);
+      const videoPath = path.join(docDir, videoFilename);
+
+      const fps = 30;
+      const totalFrames = durationSec * fps;
+      const step = (0.15 / totalFrames).toFixed(8);
+      const zoomExpr = zoomEffect === 'zoom-out'
+        ? `'if(eq(on\\,1)\\,1.15\\,max(zoom-${step}\\,1.0))'`
+        : `'min(zoom+${step}\\,1.15)'`;
+      await execFileAsync(ffmpegPath, [
+        '-nostdin',
+        '-loop', '1',
+        '-i', imgPath,
+        '-vf', `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,zoompan=z=${zoomExpr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1920x1080:fps=${fps}`,
+        '-c:v', 'libx264',
+        '-preset', process.env.FFMPEG_PRESET || 'superfast',
+        '-pix_fmt', 'yuv420p',
+        '-t', String(durationSec),
+        '-y', videoPath,
+      ], { timeout: 60000 });
+
+      if (block?.chartSpec) {
+        const composited = await compositeChartOnBg(block, videoPath, docId, 'landscape');
+        if (composited) {
+          res.json({ ok: true, filename: composited, duration: durationSec });
+          return;
+        }
+      }
+
+      res.json({ ok: true, filename: videoFilename, duration: durationSec });
+    } catch (err) {
+      // Clean up uploaded file on error
+      if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -576,13 +997,11 @@ export function createScriptStudioRouter(): Router {
         const bgPath = path.join(docDir, result.filename);
         const composited = await compositeChartOnBg(block, bgPath, docId, 'landscape');
         if (composited) {
-          updateBlockClip(docId, blockIndex, composited, 'chart');
           res.json({ ok: true, filename: composited, duration: result.duration });
           return;
         }
       }
 
-      updateBlockClip(docId, blockIndex, result.filename, 'mixkit');
       res.json({ ok: true, filename: result.filename, duration: result.duration });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -707,6 +1126,92 @@ export function createScriptStudioRouter(): Router {
     }
   });
 
+  // Regenerate TTS for all blocks (batch)
+  router.post('/docs/:id/tts-all', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const doc = getDoc(docId);
+    if (!doc) { res.status(404).json({ error: 'Doc not found' }); return; }
+
+    const engine = (req.body as any)?.engine as string | undefined;
+    const force = true; // Always force re-gen when applying to all
+    const blocks = listBlocks(docId);
+    const narrationBlocks = blocks.filter(b => b.narration?.trim());
+
+    setupNDJSON(res);
+    ndLine(res, { type: 'start', total: narrationBlocks.length });
+
+    const s = getSettings();
+    const voice = s.get('default_voice') ?? 'en-US-GuyNeural';
+    const rate = s.get('default_tts_rate') ?? '0';
+    const voiceGroups: VoiceGroup[] = doc.parsed?.voiceGroups ?? [];
+    const docVoiceConfig: string | null = doc.parsed?.voiceConfig ?? null;
+    const cacheDir = path.resolve(process.env.CACHE_DIR ?? './cache');
+    const audioDir = path.resolve(cacheDir, 'block_audio');
+    fs.mkdirSync(audioDir, { recursive: true });
+
+    let done = 0;
+    let errors = 0;
+    for (const block of narrationBlocks) {
+      try {
+        const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate });
+        const targetEngine = (engine === 'omnivoice' || engine === 'edge-tts') ? engine : resolved.engine;
+
+        const norm = normalizeTtsText(block.narration);
+        const ttsText = norm.normalized;
+        const cacheComponents = [ttsText, targetEngine, resolved.voiceId, resolved.emotion ?? '', resolved.rate ?? ''].join('|');
+        const contentHash = createHash('sha256').update(cacheComponents).digest('hex').slice(0, 16);
+        const audioFilename = `block_${docId.slice(0, 8)}_${block.blockIndex}_${targetEngine}_${contentHash}.mp3`;
+        const audioPath = path.join(audioDir, audioFilename);
+        const wordsPath = `${audioPath}.words.json`;
+
+        // Skip if already exists with same hash
+        if (fs.existsSync(audioPath) && block.contentHash === contentHash) {
+          done++;
+          ndLine(res, { type: 'progress', done, total: narrationBlocks.length, blockIndex: block.blockIndex, cached: true });
+          continue;
+        }
+
+        let totalMs = 0;
+        let wordCount = 0;
+        let actualEngine = targetEngine;
+
+        if (targetEngine === 'omnivoice') {
+          const reachable = await omnivoiceReachable();
+          if (reachable) {
+            const result = await runOmnivoiceTts(ttsText, resolved, audioPath, wordsPath);
+            totalMs = result.totalMs; wordCount = result.wordCount;
+          } else {
+            actualEngine = 'edge-tts';
+            const edgeVoice = resolved.fallbackVoice || voice;
+            const edgeRate = resolved.rate ?? rate;
+            const result = await runBlockTts(ttsText, edgeVoice, edgeRate, audioPath, wordsPath);
+            totalMs = result.totalMs; wordCount = result.wordCount;
+          }
+        } else {
+          const edgeVoice = resolved.voiceId || voice;
+          const edgeRate = resolved.rate ?? rate;
+          const result = await runBlockTts(ttsText, edgeVoice, edgeRate, audioPath, wordsPath);
+          totalMs = result.totalMs; wordCount = result.wordCount;
+        }
+
+        const wordsJson = fs.existsSync(wordsPath) ? fs.readFileSync(wordsPath, 'utf-8') : '[]';
+        updateBlockAudio(docId, block.blockIndex, {
+          contentHash, audioPath: audioFilename, audioDurationMs: totalMs, wordsJson, audioEngine: actualEngine,
+        });
+
+        done++;
+        ndLine(res, { type: 'progress', done, total: narrationBlocks.length, blockIndex: block.blockIndex, audioDurationMs: totalMs, engine: actualEngine });
+      } catch (err) {
+        errors++;
+        done++;
+        ndLine(res, { type: 'error', done, total: narrationBlocks.length, blockIndex: block.blockIndex, error: (err as Error).message });
+      }
+    }
+
+    ndLine(res, { type: 'done', total: narrationBlocks.length, errors });
+    res.end();
+  });
+
   // Set clip trim range (start/end seconds within the stock video)
   router.post('/docs/:id/blocks/:blockIndex/trim', (req: Request, res: Response) => {
     const docId = req.params.id as string;
@@ -733,6 +1238,19 @@ export function createScriptStudioRouter(): Router {
 
     updateBlockClips(docId, blockIndex, clips);
     res.json({ ok: true, clips });
+  });
+
+  // Split a block into two at sentence boundary (displays as 3a, 3b)
+  router.post('/docs/:id/blocks/:blockIndex/split-block', (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string);
+    if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
+    try {
+      const result = splitBlock(docId, blockIndex);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
   });
 
   // OmniVoice health check
@@ -784,6 +1302,9 @@ export function createScriptStudioRouter(): Router {
     const animationDurationSec = req.body?.animationDurationSec != null
       ? Math.max(0.5, parseFloat(req.body.animationDurationSec))
       : undefined;
+    const accentColor = typeof req.body?.accentColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(req.body.accentColor)
+      ? req.body.accentColor
+      : '#7c6af5';
 
     res.setHeader('Content-Type', 'application/x-ndjson');
     res.setHeader('Cache-Control', 'no-cache');
@@ -792,12 +1313,110 @@ export function createScriptStudioRouter(): Router {
     try {
       const result = await reproduceSingleBlock(docId, blockIndex, orientation, chartOpacity, animationDurationSec, (msg) => {
         send({ type: 'log', message: msg });
-      });
+      }, accentColor);
       send({ type: 'result', ...result });
     } catch (err) {
       send({ type: 'error', error: (err as Error).message });
     }
     res.end();
+  });
+
+  // ── Render a Remotion composition and add as clip ──
+  router.post('/docs/:id/blocks/:blockIndex/render-remotion', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string, 10);
+    const doc = getDoc(docId);
+    if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
+
+    const {
+      compositionId,
+      durationSec = 4,
+      orientation = 'landscape',
+      props: userProps = {},
+    } = req.body as {
+      compositionId: string;
+      durationSec?: number;
+      orientation?: string;
+      props?: Record<string, unknown>;
+    };
+
+    if (!compositionId) { res.status(400).json({ error: 'compositionId is required' }); return; }
+
+    const allowed = ['Intro', 'Outro', 'ChartBigNumber', 'ChartLine', 'ChartBars', 'ChartVs'];
+    if (!allowed.includes(compositionId)) {
+      res.status(400).json({ error: `Unsupported composition: ${compositionId}. Allowed: ${allowed.join(', ')}` });
+      return;
+    }
+
+    const isPortrait = orientation === 'portrait';
+    const w = isPortrait ? 1080 : 1920;
+    const h = isPortrait ? 1920 : 1080;
+    const durationInFrames = Math.max(Math.round(durationSec * 24), 24);
+
+    const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+    const docDir = path.join(rendersDir, `doc_${docId}`);
+    fs.mkdirSync(docDir, { recursive: true });
+
+    const hash = createHash('sha256').update(JSON.stringify({ compositionId, userProps, durationSec, orientation, t: Date.now() })).digest('hex').slice(0, 12);
+    const filename = `remotion_${compositionId.toLowerCase()}_${hash}.mp4`;
+    const outputPath = path.join(docDir, filename);
+
+    try {
+      const { renderChart } = await import('../services/chart-renderer.service');
+
+      if (compositionId.startsWith('Chart')) {
+        // Chart compositions — use chart-renderer
+        const chartType = compositionId === 'ChartBigNumber' ? 'big-number'
+          : compositionId === 'ChartLine' ? 'line'
+          : compositionId === 'ChartBars' ? 'bars'
+          : 'vs';
+
+        const chartSpec = {
+          type: chartType as any,
+          title: (userProps.title as string) ?? undefined,
+          sourceLabel: (userProps.sourceLabel as string) ?? undefined,
+          data: '',
+          parsedData: userProps.parsedData as any ?? userProps,
+        };
+
+        const accentColor = (userProps.accentColor as string) ?? '#7c6af5';
+        const bgColor = (userProps.bgColor as string) ?? '#0d0e12';
+        const result = await renderChart(chartSpec, isPortrait ? 'portrait' : 'landscape', accentColor, bgColor, durationSec);
+
+        // Copy to doc dir
+        const cacheDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'charts');
+        const srcPath = path.join(cacheDir, result.filename);
+        if (srcPath !== outputPath) fs.copyFileSync(srcPath, outputPath);
+
+        res.json({ ok: true, filename, durationSec: result.durationSec });
+      } else {
+        // Intro / Outro — use remotion-renderer
+        const { renderIntroClip, renderOutroClip } = await import('../services/remotion-renderer.service');
+        const finalProps = { ...userProps, durationInFrames };
+
+        if (compositionId === 'Intro') {
+          await renderIntroClip(outputPath, {
+            creatorName: (userProps.creatorName as string) ?? 'Creator',
+            tagline: (userProps.tagline as string) ?? undefined,
+            accentColor: (userProps.accentColor as string) ?? '#7c6af5',
+            style: (userProps.style as any) ?? 'minimal',
+            durationInFrames,
+          });
+        } else {
+          await renderOutroClip(outputPath, {
+            creatorName: (userProps.creatorName as string) ?? 'Creator',
+            socialHandle: (userProps.socialHandle as string) ?? undefined,
+            ctaText: (userProps.ctaText as string) ?? 'Subscribe!',
+            accentColor: (userProps.accentColor as string) ?? '#7c6af5',
+            durationInFrames,
+          });
+        }
+
+        res.json({ ok: true, filename, durationSec });
+      }
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   router.get('/docs/:id/produce/status', (req: Request, res: Response) => {

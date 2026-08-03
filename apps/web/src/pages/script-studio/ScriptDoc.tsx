@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -6,7 +6,7 @@ import {
   ArrowLeft, ChevronDown, ChevronUp, AlertTriangle, Info, Check,
   Play, Loader2, BarChart2, Video, Mic, Settings, RefreshCw, X,
   Volume2, Film, Square, ChevronRight, ChevronLeft, Pencil, Music2,
-  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload,
+  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2,
 } from 'lucide-react';
 import { scriptStudioApi, queueApi, ttsApi, musicApi, type SubtitleStyle } from '../../lib/api';
 import { useAppStore } from '../../store';
@@ -43,6 +43,7 @@ interface ScriptBlock {
   voiceConfig: string | null;
   clipStartSec: number | null;
   clipEndSec: number | null;
+  displayNumber: number | null;
 }
 
 interface LogEntry { ts: string; level: string; message: string; operation?: string; }
@@ -251,12 +252,14 @@ function autoFlowPrompt(block: ScriptBlock, orientation: 'landscape' | 'portrait
 
 // ── Block Step Editor (one-by-one preview + edit) ──
 
-function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0 }: {
+function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0, ttsEngine, onTtsEngineChange }: {
   blocks: ScriptBlock[];
   docId: string;
   orientation: 'landscape' | 'portrait';
   onBlockUpdated: () => void;
   initialIdx?: number;
+  ttsEngine: 'omnivoice' | 'edge-tts';
+  onTtsEngineChange: (engine: 'omnivoice' | 'edge-tts') => void;
 }) {
   const { t } = useTranslation();
   const [idx, setIdx] = useState(initialIdx);
@@ -267,23 +270,48 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   const [fetchingPixabay, setFetchingPixabay] = useState(false);
   const [generatingAi, setGeneratingAi] = useState(false);
   const [generatingTts, setGeneratingTts] = useState(false);
-  const [ttsEngine, setTtsEngine] = useState<'omnivoice' | 'edge-tts'>('edge-tts');
+  const [ttsAllRunning, setTtsAllRunning] = useState(false);
+  const [ttsAllProgress, setTtsAllProgress] = useState<{ done: number; total: number } | null>(null);
   const [actionLog, setActionLog] = useState<{ level: string; msg: string }[]>([]);
 
   // Stock picker state
   const [showPexelsPicker, setShowPexelsPicker] = useState(false);
-  const [pickerService, setPickerService] = useState<'pexels' | 'pixabay' | 'mixkit'>('pexels');
+  const [remotionRendering, setRemotionRendering] = useState(false);
+  const [pickerService, setPickerService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'images'>('pexels');
   const [pickerOrientation, setPickerOrientation] = useState<'landscape' | 'portrait'>('landscape');
   const [pickerQuery, setPickerQuery] = useState('');
   const [pickerCandidates, setPickerCandidates] = useState<Array<{
-    id: number; thumbnail: string; previewUrl: string | null;
+    id: number; thumbnail: string; previewUrl?: string | null;
     downloadUrl?: string; duration: number; width: number; height: number;
-    pageUrl?: string; title?: string;
+    pageUrl?: string; title?: string; source?: string;
   }>>([]);
   const [loadingPicker, setLoadingPicker] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [applyingPexelsId, setApplyingPexelsId] = useState<number | null>(null);
   const [regenningQuery, setRegenningQuery] = useState(false);
+  const [imageZoomEffect, setImageZoomEffect] = useState<'zoom-in' | 'zoom-out'>('zoom-in');
+  const [pastingImage, setPastingImage] = useState(false);
+  // Split screen state
+  const [showSplitPanel, setShowSplitPanel] = useState(false);
+  const [splitRendering, setSplitRendering] = useState(false);
+  const [splitLeftClip, setSplitLeftClip] = useState('');
+  const [splitRightClip, setSplitRightClip] = useState('');
+  const [splitMiddleText, setSplitMiddleText] = useState('VS');
+  const [splitMiddleStyle, setSplitMiddleStyle] = useState<'vs' | 'line' | 'glow' | 'badge' | 'fire' | 'neon' | 'slash' | 'clean' | 'none'>('vs');
+  const [splitAccentColor, setSplitAccentColor] = useState('#7c6af5');
+  const [splitLeftLabel, setSplitLeftLabel] = useState('');
+  const [splitRightLabel, setSplitRightLabel] = useState('');
+  const [splitLabelPosition, setSplitLabelPosition] = useState<'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right'>('top-center');
+  const [splitLabelStyle, setSplitLabelStyle] = useState<'badge' | 'outline' | 'shadow' | 'banner'>('badge');
+  // Split stock search per side
+  const [splitSearchSide, setSplitSearchSide] = useState<'left' | 'right' | null>(null);
+  const [splitSearchService, setSplitSearchService] = useState<'pexels' | 'pixabay' | 'mixkit'>('pexels');
+  const [splitSearchQuery, setSplitSearchQuery] = useState('');
+  const [splitSearchResults, setSplitSearchResults] = useState<Array<{ id: number; thumbnail: string; previewUrl?: string | null; downloadUrl?: string; duration: number; width: number; height: number; pageUrl?: string; title?: string }>>([]);
+  const [splitSearchLoading, setSplitSearchLoading] = useState(false);
+  const [splitDownloading, setSplitDownloading] = useState<number | null>(null);
+  // Lightbox state
+  const [lightbox, setLightbox] = useState<{ type: 'video' | 'image'; src: string; title?: string } | null>(null);
   const [trimStart, setTrimStart] = useState<string>('');
   const [trimEnd, setTrimEnd] = useState<string>('');
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -639,22 +667,23 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   };
 
   // Shared: fetch candidates for the given service + query + orientation
-  const fetchPickerCandidates = async (service: 'pexels' | 'pixabay' | 'mixkit', query: string, orient: 'landscape' | 'portrait') => {
+  const fetchPickerCandidates = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'images', query: string, orient: 'landscape' | 'portrait') => {
     setLoadingPicker(true);
     setPickerCandidates([]);
     setPickerError(null);
     try {
       const data = await scriptStudioApi.getAlternatives(docId, query, orient, 12, service);
-      setPickerCandidates((data.candidates ?? []).map((c) => ({
-        id: (c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? 0) as number,
+      setPickerCandidates((data.candidates ?? []).map((c: any) => ({
+        id: (c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? c.imageId ?? 0) as number,
         thumbnail: c.thumbnail,
         previewUrl: c.previewUrl,
         downloadUrl: c.downloadUrl,
-        duration: c.duration,
+        duration: c.duration ?? 0,
         width: c.width,
         height: c.height,
-        pageUrl: c.pexelsUrl ?? c.pageURL,
+        pageUrl: c.pexelsUrl ?? c.pageURL ?? c.pageUrl,
         title: c.title,
+        source: c.source,
       })));
     } catch (err: any) {
       setPickerError(err.response?.data?.error ?? err.message ?? 'Search failed');
@@ -671,7 +700,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     await fetchPickerCandidates(service, query, pickerOrientation);
   };
 
-  const switchPickerService = async (service: 'pexels' | 'pixabay' | 'mixkit') => {
+  const switchPickerService = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'images') => {
     if (service === pickerService) return;
     setPickerService(service);
     await fetchPickerCandidates(service, pickerQuery, pickerOrientation);
@@ -705,7 +734,9 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setApplyingPexelsId(candidate.id);
     try {
       let data: any;
-      if (pickerService === 'pexels') {
+      if (pickerService === 'images') {
+        data = await scriptStudioApi.applyStockImage(docId, block.blockIndex, candidate.downloadUrl!, candidate.source || 'pexels', candidate.width, candidate.height, imageZoomEffect);
+      } else if (pickerService === 'pexels') {
         data = await scriptStudioApi.applyPexelsById(docId, block.blockIndex, candidate.id);
       } else if (pickerService === 'mixkit') {
         data = await scriptStudioApi.applyMixkitFromUrl(docId, block.blockIndex, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
@@ -729,6 +760,134 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
       setActionLog([{ level: 'error', msg: err.response?.data?.error ?? err.message }]);
     }
     setApplyingPexelsId(null);
+  };
+
+  // Handle pasted/dropped image file in Image tab
+  const handlePasteImage = async (file: File) => {
+    if (pastingImage) return;
+    setPastingImage(true);
+    setActionLog([{ level: 'info', msg: 'Converting image to clip...' }]);
+    try {
+      const data = await scriptStudioApi.pasteImage(docId, block.blockIndex, file, imageZoomEffect);
+      const newClip = { assetPath: data.filename, startSec: 0, endSec: null as number | null };
+      const merged = blockClips.length > 0 ? [...blockClips, newClip] : [newClip];
+      await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
+      setActiveClipIdx(merged.length - 1);
+      onBlockUpdated();
+      setActionLog([{ level: 'success', msg: `Image clip added (${data.duration}s)` }]);
+    } catch (err: any) {
+      setActionLog([{ level: 'error', msg: err.response?.data?.error ?? err.message }]);
+    }
+    setPastingImage(false);
+  };
+
+  // Handle split screen render
+  const handleSplitScreen = async () => {
+    if (splitRendering || !splitLeftClip || !splitRightClip) return;
+    setSplitRendering(true);
+    setActionLog([{ level: 'info', msg: 'Rendering split screen...' }]);
+    try {
+      const splitOpts = {
+        middleText: splitMiddleText || undefined,
+        middleStyle: splitMiddleStyle,
+        accentColor: splitAccentColor,
+        leftLabel: splitLeftLabel || undefined,
+        rightLabel: splitRightLabel || undefined,
+        labelPosition: splitLabelPosition,
+        labelStyle: splitLabelStyle,
+      };
+      const data = await scriptStudioApi.splitScreen(docId, block.blockIndex, splitLeftClip, splitRightClip, splitOpts);
+      const newClip = {
+        assetPath: data.filename, startSec: 0, endSec: null as number | null,
+        splitSources: [splitLeftClip, splitRightClip],
+        splitConfig: {
+          middleText: splitMiddleText,
+          middleStyle: splitMiddleStyle,
+          accentColor: splitAccentColor,
+          leftLabel: splitLeftLabel,
+          rightLabel: splitRightLabel,
+          labelPosition: splitLabelPosition,
+          labelStyle: splitLabelStyle,
+        },
+      };
+      // Split clip must be the FIRST clip so clip_asset_path points to it for production
+      const merged = [newClip];
+      await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
+      setActiveClipIdx(merged.length - 1);
+      onBlockUpdated();
+      setActionLog([{ level: 'success', msg: `Split screen added (${data.duration}s)` }]);
+      setShowSplitPanel(false);
+    } catch (err: any) {
+      setActionLog([{ level: 'error', msg: err.response?.data?.error ?? err.message }]);
+    }
+    setSplitRendering(false);
+  };
+
+  // Auto-populate split screen clips from current block clips
+  const openSplitPanel = () => {
+    // Restore split sources and config from existing split clip if available
+    const existingSplit = blockClips.find((c: any) => c.splitSources?.length === 2);
+    setSplitLeftClip((existingSplit as any)?.splitSources?.[0] || '');
+    setSplitRightClip((existingSplit as any)?.splitSources?.[1] || '');
+    // Restore split config (style, text, colors, labels)
+    const cfg = (existingSplit as any)?.splitConfig;
+    if (cfg) {
+      setSplitMiddleText(cfg.middleText ?? 'VS');
+      setSplitMiddleStyle(cfg.middleStyle ?? 'vs');
+      setSplitAccentColor(cfg.accentColor ?? '#7c6af5');
+      setSplitLeftLabel(cfg.leftLabel ?? '');
+      setSplitRightLabel(cfg.rightLabel ?? '');
+      setSplitLabelPosition(cfg.labelPosition ?? 'top-center');
+      setSplitLabelStyle(cfg.labelStyle ?? 'badge');
+    }
+    setSplitSearchSide(null);
+    setSplitSearchResults([]);
+    setSplitSearchService('pexels');
+    const q = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 5).join(' ');
+    setSplitSearchQuery(q);
+    setShowSplitPanel(true);
+    setShowPexelsPicker(false);
+    // Auto-search
+    if (q) splitStockSearch(q, 'pexels');
+  };
+
+  // Search stock for split panel
+  const splitStockSearch = async (query: string, service?: 'pexels' | 'pixabay' | 'mixkit') => {
+    if (!query.trim()) return;
+    const svc = service ?? splitSearchService;
+    setSplitSearchLoading(true);
+    setSplitSearchResults([]);
+    try {
+      const data = await scriptStudioApi.getAlternatives(docId, query.trim(), 'landscape', 12, svc);
+      setSplitSearchResults((data.candidates ?? []).map((c: any) => ({
+        id: c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? 0,
+        thumbnail: c.thumbnail,
+        previewUrl: c.previewUrl,
+        downloadUrl: c.downloadUrl,
+        duration: c.duration ?? 0,
+        width: c.width,
+        height: c.height,
+        pageUrl: c.pexelsUrl ?? c.pageURL,
+        title: c.title,
+      })));
+    } catch { /* ignore */ }
+    setSplitSearchLoading(false);
+  };
+
+  // Download a stock clip for split panel and assign to a side
+  const splitSelectStock = async (candidate: typeof splitSearchResults[0], side: 'left' | 'right') => {
+    if (splitDownloading) return;
+    setSplitDownloading(candidate.id);
+    setSplitSearchSide(side);
+    try {
+      const data = await scriptStudioApi.downloadStock(docId, splitSearchService, candidate);
+      if (side === 'left') setSplitLeftClip(data.filename);
+      else setSplitRightClip(data.filename);
+      setActionLog([{ level: 'success', msg: `${side} clip ready (${data.duration}s)` }]);
+    } catch (err: any) {
+      setActionLog([{ level: 'error', msg: err.response?.data?.error ?? err.message }]);
+    }
+    setSplitDownloading(null);
   };
 
   // Fetch top Pexels clip and apply it to this block (kept for direct use)
@@ -997,12 +1156,12 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
               {t('scriptStudio.studio.defaultVoice')}
             </span>
           )}
-          {/* TTS engine selector + regenerate */}
-          {block.narration && !generatingTts && (
+          {/* TTS engine selector + regenerate + apply all */}
+          {block.narration && !generatingTts && !ttsAllRunning && (
             <>
               <select
                 value={ttsEngine}
-                onChange={(e) => setTtsEngine(e.target.value as 'omnivoice' | 'edge-tts')}
+                onChange={(e) => onTtsEngineChange(e.target.value as 'omnivoice' | 'edge-tts')}
                 className="text-[10px] px-1 py-0.5 rounded bg-c-elevated border border-c-border text-c-text cursor-pointer focus:outline-none focus:border-c-accent/40"
               >
                 <option value="omnivoice">OmniVoice</option>
@@ -1025,7 +1184,34 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 <RefreshCw className="w-2.5 h-2.5" />
                 {t('scriptStudio.studio.regenVoice')}
               </button>
+              <button
+                className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/25 text-amber-400 hover:bg-amber-500/20 hover:border-amber-500/40 transition-colors cursor-pointer"
+                title="Regenerate TTS for all blocks with current engine"
+                onClick={() => {
+                  setTtsAllRunning(true);
+                  setTtsAllProgress({ done: 0, total: blocks.length });
+                  setActionLog([{ level: 'info', msg: `Regenerating TTS for all blocks [${ttsEngine}]...` }]);
+                  scriptStudioApi.ttsAll(docId, ttsEngine, (data) => {
+                    if (data.total) setTtsAllProgress({ done: data.done, total: data.total });
+                    if (data.error) setActionLog(prev => [...prev, { level: 'error', msg: `Block ${data.blockIndex}: ${data.error}` }]);
+                  }).then(() => {
+                    setActionLog(prev => [...prev, { level: 'success', msg: 'All blocks TTS done!' }]);
+                    onBlockUpdated();
+                  }).catch((err) => {
+                    setActionLog(prev => [...prev, { level: 'error', msg: `TTS all failed: ${err.message}` }]);
+                  }).finally(() => { setTtsAllRunning(false); setTtsAllProgress(null); });
+                }}
+              >
+                <Zap className="w-2.5 h-2.5" />
+                Apply all
+              </button>
             </>
+          )}
+          {(generatingTts || ttsAllRunning) && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-amber-400/70">
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              {ttsAllRunning && ttsAllProgress ? `TTS ${ttsAllProgress.done}/${ttsAllProgress.total}` : 'Generating...'}
+            </span>
           )}
         </div>
         </div>
@@ -1044,25 +1230,42 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
         </button>
         <div className="flex-1" />
         {clipUrl && (
-          <button
-            onClick={() => {
-              if (playing) { videoRef.current?.pause(); audioRef.current?.pause(); setPlaying(false); }
-              const updated = blockClips.length > 1
-                ? blockClips.filter((_, i) => i !== safeClipIdx)
-                : [];
-              scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => {
-                setActiveClipIdx(Math.max(0, safeClipIdx - 1));
-                setVideoDuration(null);
-                setCurrentTime(0);
-                onBlockUpdated();
-              });
-            }}
-            className="flex items-center gap-1 text-[10px] text-c-dim hover:text-red-400 transition-colors cursor-pointer"
-            title="Remove current clip"
-          >
-            <X className="w-3 h-3" />
-            <span>Remove clip</span>
-          </button>
+          <>
+            <button
+              onClick={() => {
+                const vid = videoRef.current;
+                if (!vid) return;
+                if (document.fullscreenElement) {
+                  document.exitFullscreen();
+                } else {
+                  vid.requestFullscreen?.().catch(() => {});
+                }
+              }}
+              className="flex items-center gap-1 text-[10px] text-c-dim hover:text-c-text transition-colors cursor-pointer"
+              title="Fullscreen"
+            >
+              <Maximize2 className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => {
+                if (playing) { videoRef.current?.pause(); audioRef.current?.pause(); setPlaying(false); }
+                const updated = blockClips.length > 1
+                  ? blockClips.filter((_, i) => i !== safeClipIdx)
+                  : [];
+                scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => {
+                  setActiveClipIdx(Math.max(0, safeClipIdx - 1));
+                  setVideoDuration(null);
+                  setCurrentTime(0);
+                  onBlockUpdated();
+                });
+              }}
+              className="flex items-center gap-1 text-[10px] text-c-dim hover:text-red-400 transition-colors cursor-pointer"
+              title="Remove current clip"
+            >
+              <X className="w-3 h-3" />
+              <span>Remove clip</span>
+            </button>
+          </>
         )}
       </div>
       {!playerCollapsed && (
@@ -1400,7 +1603,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
       <div className="px-3 py-1.5 border-t border-c-border bg-c-surface flex items-center gap-1.5">
         {block.visualType !== 'ai' && block.visualType !== 'chart' && (
           <button
-            onClick={() => setShowPexelsPicker((v) => !v)}
+            onClick={() => { setShowPexelsPicker((v) => !v); setShowSplitPanel(false); }}
             disabled={loadingPicker}
             className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all disabled:opacity-50 cursor-pointer ${showPexelsPicker ? 'bg-c-accent/15 border-c-accent/40 text-c-accent' : 'bg-c-elevated border-c-border text-c-muted hover:border-c-accent/40 hover:text-c-accent'}`}
           >
@@ -1418,6 +1621,14 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             AI Gen
           </button>
         )}
+        <button
+          onClick={openSplitPanel}
+          disabled={splitRendering}
+          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all disabled:opacity-50 cursor-pointer ${showSplitPanel ? 'bg-teal-500/15 border-teal-500/40 text-teal-400' : 'bg-c-elevated border-c-border text-c-muted hover:border-teal-500/40 hover:text-teal-400'}`}
+        >
+          {splitRendering ? <Loader2 className="w-3 h-3 animate-spin" /> : <Columns className="w-3 h-3" />}
+          Split
+        </button>
         {fetchingPixabay && (
           <span className="inline-flex items-center gap-1 text-[10px] text-c-dim">
             <Loader2 className="w-3 h-3 animate-spin" />
@@ -1431,6 +1642,354 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
         )}
       </div>
 
+      {/* ── Split screen panel ── */}
+      {showSplitPanel && (
+        <div className="border-t-2 border-teal-500/30 bg-gradient-to-b from-teal-500/[0.03] to-transparent">
+
+          {/* ── Header bar ── */}
+          <div className="px-4 py-2 flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-md bg-teal-500/15 flex items-center justify-center">
+                <Columns className="w-3.5 h-3.5 text-teal-400" />
+              </div>
+              <span className="text-[12px] font-semibold text-c-text tracking-wide">Split Screen</span>
+            </div>
+            <div className="flex-1" />
+            <button
+              onClick={handleSplitScreen}
+              disabled={splitRendering || !splitLeftClip || !splitRightClip}
+              className="px-4 py-1.5 rounded-lg text-[11px] font-semibold bg-teal-500 text-white hover:bg-teal-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center gap-1.5 shadow-sm shadow-teal-500/25"
+            >
+              {splitRendering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Columns className="w-3.5 h-3.5" />}
+              {splitRendering ? 'Rendering...' : 'Render Split'}
+            </button>
+            <button onClick={() => setShowSplitPanel(false)} className="p-1.5 rounded-lg hover:bg-c-elevated text-c-dim hover:text-c-text transition-colors cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* ── Preview area: left + VS + right ── */}
+          <div className="px-4 pb-3">
+            <div className="flex items-stretch gap-0 rounded-xl overflow-hidden border border-c-border/60 bg-black/40">
+              {/* Left panel */}
+              <div
+                className={`flex-1 relative group cursor-pointer transition-all ${splitSearchSide === 'left' ? 'ring-2 ring-teal-400/60 ring-inset' : ''}`}
+                onClick={() => setSplitSearchSide('left')}
+              >
+                {splitLeftClip ? (
+                  <>
+                    <video
+                      src={`/renders/storyboard/doc_${docId}/${splitLeftClip}`}
+                      muted loop playsInline
+                      className="w-full aspect-video object-cover"
+                      onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
+                      onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+                    />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setLightbox({ type: 'video', src: `/renders/storyboard/doc_${docId}/${splitLeftClip}`, title: 'Left clip' }); }}
+                      className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/50 text-white/60 hover:text-white hover:bg-black/70 opacity-0 group-hover:opacity-100 transition-all cursor-pointer backdrop-blur-sm"
+                    >
+                      <Maximize2 className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setSplitLeftClip(''); }}
+                      className="absolute top-1.5 left-1.5 p-1 rounded-md bg-black/50 text-white/60 hover:text-red-400 hover:bg-black/70 opacity-0 group-hover:opacity-100 transition-all cursor-pointer backdrop-blur-sm"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </>
+                ) : (
+                  <div className="aspect-video flex flex-col items-center justify-center gap-1.5 bg-c-elevated/30">
+                    <Film className="w-5 h-5 text-c-dim/40" />
+                    <span className="text-[10px] text-c-dim/60">Click to pick left</span>
+                  </div>
+                )}
+                {/* Side label */}
+                <div className={`absolute px-2 py-1 ${splitLabelPosition.startsWith('top') ? 'top-0' : 'bottom-0'} inset-x-0 ${splitLabelStyle === 'banner' ? (splitLabelPosition.startsWith('top') ? 'bg-gradient-to-b from-black/80 to-transparent' : 'bg-gradient-to-t from-black/80 to-transparent') : ''} ${splitLabelPosition.endsWith('right') ? 'text-right' : splitLabelPosition.endsWith('center') ? 'text-center' : 'text-left'}`}>
+                  <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                    splitLabelStyle === 'badge' ? 'bg-black/70 text-white px-1.5 py-0.5 rounded' :
+                    splitLabelStyle === 'outline' ? 'text-white' :
+                    splitLabelStyle === 'shadow' ? 'text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]' :
+                    'text-white'
+                  }`} style={splitLabelStyle === 'outline' ? { WebkitTextStroke: '1px rgba(0,0,0,0.8)' } : undefined}>
+                    {splitLeftLabel || 'Left'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Middle divider */}
+              {splitMiddleStyle === 'none' ? (
+                <div className="w-1.5 shrink-0" style={{ background: splitAccentColor }} />
+              ) : splitMiddleStyle === 'line' ? (
+                <div className="w-1 shrink-0 relative">
+                  <div className="absolute inset-0" style={{ background: splitAccentColor }} />
+                </div>
+              ) : splitMiddleStyle === 'slash' ? (
+                <div className="w-6 shrink-0 relative overflow-hidden" style={{ background: '#000' }}>
+                  <div className="absolute inset-0" style={{ background: `linear-gradient(155deg, transparent 40%, ${splitAccentColor} 40%, ${splitAccentColor} 60%, transparent 60%)` }} />
+                </div>
+              ) : splitMiddleStyle === 'clean' ? (
+                <div className="w-[3px] shrink-0 relative bg-white/30">
+                  <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-center">
+                    <span className="text-[8px] font-medium text-white/60 bg-black/60 px-1 py-0.5 rounded-sm whitespace-nowrap">{splitMiddleText || 'VS'}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className={`shrink-0 flex flex-col items-center justify-center gap-1 relative ${splitMiddleStyle === 'glow' || splitMiddleStyle === 'neon' ? 'w-12' : splitMiddleStyle === 'fire' ? 'w-14' : 'w-10'}`}
+                  style={{ background: splitMiddleStyle === 'glow' || splitMiddleStyle === 'neon' || splitMiddleStyle === 'fire' ? 'transparent' : splitAccentColor + '20' }}>
+                  {splitMiddleStyle === 'glow' && (
+                    <div className="absolute inset-0 blur-md" style={{ background: `radial-gradient(ellipse at center, ${splitAccentColor}90, transparent 70%)` }} />
+                  )}
+                  {splitMiddleStyle === 'neon' && (
+                    <>
+                      <div className="absolute inset-0 blur-lg" style={{ background: `radial-gradient(ellipse at center, ${splitAccentColor}cc, transparent 60%)` }} />
+                      <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[2px]" style={{ background: splitAccentColor, boxShadow: `0 0 8px ${splitAccentColor}, 0 0 16px ${splitAccentColor}80` }} />
+                    </>
+                  )}
+                  {splitMiddleStyle === 'fire' && (
+                    <>
+                      <div className="absolute inset-0 blur-lg" style={{ background: 'radial-gradient(ellipse at center, #ff4500cc, #ff8c0060, transparent 70%)' }} />
+                      <div className="absolute inset-0 blur-sm opacity-60" style={{ background: 'radial-gradient(ellipse at center bottom, #ffd70090, transparent 60%)' }} />
+                    </>
+                  )}
+                  {splitMiddleStyle === 'vs' && (
+                    <div className="absolute inset-0 opacity-20" style={{ background: `linear-gradient(180deg, transparent, ${splitAccentColor}40, transparent)` }} />
+                  )}
+                  <span className={`text-[11px] font-bold relative z-10 ${
+                    splitMiddleStyle === 'badge' ? 'px-1.5 py-0.5 rounded text-white' :
+                    splitMiddleStyle === 'glow' ? 'text-white drop-shadow-lg' :
+                    splitMiddleStyle === 'neon' ? 'text-white font-extrabold' :
+                    splitMiddleStyle === 'fire' ? 'text-yellow-200 font-extrabold' :
+                    'text-white/80 drop-shadow-sm'
+                  }`} style={
+                    splitMiddleStyle === 'badge' ? { background: splitAccentColor + 'dd' } :
+                    splitMiddleStyle === 'neon' ? { textShadow: `0 0 6px ${splitAccentColor}, 0 0 12px ${splitAccentColor}` } :
+                    splitMiddleStyle === 'fire' ? { textShadow: '0 0 8px #ff4500, 0 0 16px #ff8c00, 0 0 24px #ff450080' } :
+                    undefined
+                  }>
+                    {splitMiddleText || 'VS'}
+                  </span>
+                </div>
+              )}
+
+              {/* Right panel */}
+              <div
+                className={`flex-1 relative group cursor-pointer transition-all ${splitSearchSide === 'right' ? 'ring-2 ring-teal-400/60 ring-inset' : ''}`}
+                onClick={() => setSplitSearchSide('right')}
+              >
+                {splitRightClip ? (
+                  <>
+                    <video
+                      src={`/renders/storyboard/doc_${docId}/${splitRightClip}`}
+                      muted loop playsInline
+                      className="w-full aspect-video object-cover"
+                      onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
+                      onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+                    />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setLightbox({ type: 'video', src: `/renders/storyboard/doc_${docId}/${splitRightClip}`, title: 'Right clip' }); }}
+                      className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/50 text-white/60 hover:text-white hover:bg-black/70 opacity-0 group-hover:opacity-100 transition-all cursor-pointer backdrop-blur-sm"
+                    >
+                      <Maximize2 className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setSplitRightClip(''); }}
+                      className="absolute top-1.5 left-1.5 p-1 rounded-md bg-black/50 text-white/60 hover:text-red-400 hover:bg-black/70 opacity-0 group-hover:opacity-100 transition-all cursor-pointer backdrop-blur-sm"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </>
+                ) : (
+                  <div className="aspect-video flex flex-col items-center justify-center gap-1.5 bg-c-elevated/30">
+                    <Film className="w-5 h-5 text-c-dim/40" />
+                    <span className="text-[10px] text-c-dim/60">Click to pick right</span>
+                  </div>
+                )}
+                <div className={`absolute px-2 py-1 ${splitLabelPosition.startsWith('top') ? 'top-0' : 'bottom-0'} inset-x-0 ${splitLabelStyle === 'banner' ? (splitLabelPosition.startsWith('top') ? 'bg-gradient-to-b from-black/80 to-transparent' : 'bg-gradient-to-t from-black/80 to-transparent') : ''} ${splitLabelPosition.endsWith('right') ? 'text-right' : splitLabelPosition.endsWith('center') ? 'text-center' : 'text-left'}`}>
+                  <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                    splitLabelStyle === 'badge' ? 'bg-black/70 text-white px-1.5 py-0.5 rounded' :
+                    splitLabelStyle === 'outline' ? 'text-white' :
+                    splitLabelStyle === 'shadow' ? 'text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]' :
+                    'text-white'
+                  }`} style={splitLabelStyle === 'outline' ? { WebkitTextStroke: '1px rgba(0,0,0,0.8)' } : undefined}>
+                    {splitRightLabel || 'Right'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Settings ── */}
+          <div className="px-4 pb-3 space-y-2">
+            {/* Row 1: Labels + middle text */}
+            <div className="flex items-end gap-1.5">
+              <div className="flex-1 min-w-[60px]">
+                <label className="text-[10px] text-c-muted block mb-1">Left label</label>
+                <input type="text" value={splitLeftLabel} onChange={(e) => setSplitLeftLabel(e.target.value)}
+                  placeholder="e.g. iPhone"
+                  className="w-full text-[11px] bg-c-bg border border-c-border rounded-lg px-2.5 py-1.5 text-c-text placeholder-c-dim/50 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all" />
+              </div>
+              <div className="w-16">
+                <label className="text-[10px] text-c-muted block mb-1">Middle</label>
+                <input type="text" value={splitMiddleText} onChange={(e) => setSplitMiddleText(e.target.value)}
+                  placeholder="VS"
+                  className="w-full text-[11px] text-center bg-c-bg border border-c-border rounded-lg px-2 py-1.5 text-c-text placeholder-c-dim/50 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all" />
+              </div>
+              <div className="flex-1 min-w-[60px]">
+                <label className="text-[10px] text-c-muted block mb-1">Right label</label>
+                <input type="text" value={splitRightLabel} onChange={(e) => setSplitRightLabel(e.target.value)}
+                  placeholder="e.g. Samsung"
+                  className="w-full text-[11px] bg-c-bg border border-c-border rounded-lg px-2.5 py-1.5 text-c-text placeholder-c-dim/50 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all" />
+              </div>
+            </div>
+            {/* Row 2: Divider style + color */}
+            <div className="flex items-end gap-2">
+              <div className="flex-1 min-w-0">
+                <label className="text-[10px] text-c-muted block mb-1">Divider style</label>
+                <div className="flex flex-wrap gap-1">
+                  {(['vs', 'badge', 'glow', 'fire', 'neon', 'slash', 'clean', 'line', 'none'] as const).map((s) => (
+                    <button key={s} onClick={() => setSplitMiddleStyle(s)}
+                      className={`px-2 py-1 text-[10px] rounded-md transition-all cursor-pointer border ${
+                        splitMiddleStyle === s ? 'bg-teal-500/20 text-teal-300 font-semibold border-teal-500/40' : 'bg-c-bg text-c-dim hover:text-c-text hover:bg-c-elevated border-c-border'
+                      }`}
+                    >{s}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-c-muted block mb-1">Color</label>
+                <input type="color" value={splitAccentColor} onChange={(e) => setSplitAccentColor(e.target.value)}
+                  className="w-8 h-8 rounded-lg border border-c-border cursor-pointer appearance-none" style={{ padding: 2 }} />
+              </div>
+            </div>
+            {/* Row 3: Label style + label position */}
+            <div className="flex items-end gap-2">
+              <div>
+                <label className="text-[10px] text-c-muted block mb-1">Label style</label>
+                <div className="flex gap-1">
+                  {(['badge', 'outline', 'shadow', 'banner'] as const).map((s) => (
+                    <button key={s} onClick={() => setSplitLabelStyle(s)}
+                      className={`px-2 py-1 text-[10px] rounded-md transition-all cursor-pointer border ${
+                        splitLabelStyle === s ? 'bg-teal-500/20 text-teal-300 font-semibold border-teal-500/40' : 'bg-c-bg text-c-dim hover:text-c-text hover:bg-c-elevated border-c-border'
+                      }`}
+                    >{s}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-c-muted block mb-1">Label pos</label>
+                <div className="grid grid-cols-3 gap-px rounded-lg border border-c-border overflow-hidden w-[66px] h-[30px]">
+                  {(['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'] as const).map((pos) => (
+                    <button key={pos} onClick={() => setSplitLabelPosition(pos)}
+                      className={`flex items-center justify-center transition-all cursor-pointer ${
+                        splitLabelPosition === pos ? 'bg-teal-500/30' : 'bg-c-bg hover:bg-c-elevated'
+                      }`}
+                      title={pos}
+                    >
+                      <div className={`w-1.5 h-1.5 rounded-full ${splitLabelPosition === pos ? 'bg-teal-400' : 'bg-c-dim/40'}`} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Stock search bar ── */}
+          <div className="mx-4 mb-2 flex items-center gap-1.5 bg-c-bg rounded-xl border border-c-border p-1">
+            {(['pexels', 'pixabay', 'mixkit'] as const).map((svc) => (
+              <button
+                key={svc}
+                onClick={() => { setSplitSearchService(svc); splitStockSearch(splitSearchQuery, svc); }}
+                className={`px-3 py-1.5 text-[11px] font-medium rounded-lg transition-all cursor-pointer ${splitSearchService === svc
+                  ? 'bg-teal-500/15 text-teal-400 shadow-sm'
+                  : 'text-c-dim hover:text-c-text hover:bg-c-elevated'}`}
+              >
+                {svc.charAt(0).toUpperCase() + svc.slice(1)}
+              </button>
+            ))}
+            <div className="w-px h-5 bg-c-border mx-0.5" />
+            <input
+              type="text"
+              value={splitSearchQuery}
+              onChange={(e) => setSplitSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && splitStockSearch(splitSearchQuery)}
+              placeholder={`Search ${splitSearchService}...`}
+              className="flex-1 min-w-0 text-[11px] bg-transparent px-2 py-1 text-c-text placeholder-c-dim/50 focus:outline-none"
+            />
+            <button
+              onClick={() => splitStockSearch(splitSearchQuery)}
+              disabled={splitSearchLoading}
+              className="shrink-0 p-1.5 rounded-lg bg-teal-500 text-white hover:bg-teal-400 disabled:opacity-40 transition-all cursor-pointer"
+            >
+              {splitSearchLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          {/* Results grid */}
+          {splitSearchLoading && (
+            <div className="grid gap-2 px-4 pb-3 grid-cols-4 sm:grid-cols-5">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="rounded-lg overflow-hidden bg-c-elevated/50 aspect-video animate-pulse" />
+              ))}
+            </div>
+          )}
+          {!splitSearchLoading && splitSearchResults.length === 0 && (
+            <div className="flex flex-col items-center gap-2 py-8 text-c-dim">
+              <Film className="w-8 h-8 opacity-15" />
+              <p className="text-[11px] opacity-40">Search for stock videos, then click to assign left or right</p>
+            </div>
+          )}
+          {!splitSearchLoading && splitSearchResults.length > 0 && (
+            <div className="grid gap-2 px-4 pb-3 grid-cols-4 sm:grid-cols-5">
+              {splitSearchResults.map((c) => (
+                <div key={c.id} className="relative rounded-xl overflow-hidden group bg-black ring-1 ring-white/[0.06] hover:ring-teal-400/40 transition-all">
+                  {c.previewUrl || c.downloadUrl ? (
+                    <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} />
+                  ) : (
+                    <img src={c.thumbnail} alt="" className="w-full aspect-video object-cover" />
+                  )}
+                  {/* Expand button */}
+                  <button
+                    onClick={() => setLightbox({
+                      type: 'video',
+                      src: c.downloadUrl || c.previewUrl || c.thumbnail,
+                      title: c.title,
+                    })}
+                    className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/50 backdrop-blur-sm text-white/60 hover:text-white hover:bg-black/70 opacity-0 group-hover:opacity-100 transition-all cursor-pointer pointer-events-auto z-10"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                  </button>
+                  {/* Hover overlay with Left / Right split buttons */}
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-opacity flex items-stretch pointer-events-none">
+                    <button
+                      onClick={() => splitSelectStock(c, 'left')}
+                      disabled={!!splitDownloading}
+                      className="flex-1 flex items-center justify-center text-[11px] font-semibold text-white/80 hover:bg-teal-500/30 hover:text-white transition-all cursor-pointer pointer-events-auto border-r border-white/10"
+                    >
+                      {splitDownloading === c.id && splitSearchSide === 'left' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><ChevronLeft className="w-3.5 h-3.5" /> Left</>}
+                    </button>
+                    <button
+                      onClick={() => splitSelectStock(c, 'right')}
+                      disabled={!!splitDownloading}
+                      className="flex-1 flex items-center justify-center text-[11px] font-semibold text-white/80 hover:bg-teal-500/30 hover:text-white transition-all cursor-pointer pointer-events-auto"
+                    >
+                      {splitDownloading === c.id && splitSearchSide === 'right' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <>Right <ChevronRight className="w-3.5 h-3.5" /></>}
+                    </button>
+                  </div>
+                  {/* Duration badge */}
+                  {c.duration > 0 && (
+                    <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-sm">
+                      <span className="text-white/70 text-[9px] font-mono tabular-nums">{c.duration}s</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+        </div>
+      )}
+
       {/* ── Stock picker panel ── */}
       {showPexelsPicker && (
         <div className="border-t border-c-border bg-c-surface">
@@ -1438,58 +1997,20 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
           <div className="px-3 pt-2 pb-1.5 flex items-center gap-1.5 flex-wrap">
             {/* Service tabs */}
             <div className="flex rounded-md border border-c-border overflow-hidden shrink-0">
-              {(['pexels', 'pixabay', 'mixkit'] as const).map((svc) => (
+              {(['pexels', 'pixabay', 'mixkit', 'images'] as const).map((svc) => (
                 <button
                   key={svc}
                   onClick={() => switchPickerService(svc)}
                   className={`px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${svc !== 'pexels' ? 'border-l border-c-border' : ''} ${pickerService === svc
-                    ? svc === 'pexels' ? 'bg-c-accent text-white' : svc === 'pixabay' ? 'bg-emerald-600 text-white' : 'bg-orange-600 text-white'
+                    ? svc === 'pexels' ? 'bg-c-accent text-white' : svc === 'pixabay' ? 'bg-emerald-600 text-white' : svc === 'mixkit' ? 'bg-orange-600 text-white' : 'bg-purple-600 text-white'
                     : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
                 >
-                  {svc.charAt(0).toUpperCase() + svc.slice(1)}
+                  {svc === 'images' ? 'Image' : svc.charAt(0).toUpperCase() + svc.slice(1)}
                 </button>
               ))}
             </div>
-            {/* Orientation toggle */}
-            <div className="flex rounded-md border border-c-border overflow-hidden shrink-0">
-              <button
-                onClick={() => switchPickerOrientation('landscape')}
-                className={`px-1.5 py-1 text-[11px] transition-colors cursor-pointer flex items-center gap-0.5 ${pickerOrientation === 'landscape' ? 'bg-c-accent text-white' : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
-                title="16:9"
-              >
-                <span className="inline-block w-3 h-2 border border-current rounded-[1px]" />
-              </button>
-              <button
-                onClick={() => switchPickerOrientation('portrait')}
-                className={`px-1.5 py-1 text-[11px] transition-colors cursor-pointer border-l border-c-border flex items-center gap-0.5 ${pickerOrientation === 'portrait' ? 'bg-c-accent text-white' : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
-                title="9:16"
-              >
-                <span className="inline-block w-1.5 h-3 border border-current rounded-[1px]" />
-              </button>
-            </div>
-            <input
-              type="text"
-              value={pickerQuery}
-              onChange={(e) => setPickerQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && searchPicker()}
-              className="flex-1 min-w-0 text-[11px] bg-c-elevated border border-c-border rounded-md px-2 py-1 text-c-text placeholder-c-dim focus:outline-none focus:border-c-accent/50"
-              placeholder={`Search ${pickerService}...`}
-            />
-            <button
-              onClick={regenPickerQuery}
-              disabled={regenningQuery || loadingPicker}
-              title="AI: regenerate search query"
-              className="shrink-0 p-1 rounded-md bg-violet-500/10 border border-violet-500/25 text-violet-300 hover:bg-violet-500/20 disabled:opacity-50 transition-colors cursor-pointer"
-            >
-              {regenningQuery ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-            </button>
-            <button
-              onClick={searchPicker}
-              disabled={loadingPicker || regenningQuery}
-              className="shrink-0 p-1 rounded-md bg-c-accent text-white hover:bg-c-accent/80 disabled:opacity-50 transition-colors cursor-pointer"
-            >
-              {loadingPicker ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-            </button>
+            {/* Close button (always visible) */}
+            <div className="flex-1" />
             <button
               onClick={() => setShowPexelsPicker(false)}
               className="shrink-0 p-1 rounded-md hover:bg-c-elevated text-c-dim hover:text-c-text transition-colors cursor-pointer"
@@ -1497,73 +2018,198 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
               <X className="w-3 h-3" />
             </button>
           </div>
-          {loadingPicker && (
-            <div className={`grid gap-1.5 px-3 pb-2 ${isPortrait ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="rounded-md overflow-hidden border border-c-border bg-c-elevated aspect-video animate-pulse" />
-              ))}
-            </div>
-          )}
-          {!loadingPicker && pickerError && (
-            <div className="flex items-center gap-2 mx-3 mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              {pickerError}
-            </div>
-          )}
-          {!loadingPicker && !pickerError && pickerCandidates.length === 0 && (
-            <div className="flex flex-col items-center gap-2 py-8 text-c-dim">
-              <Film className="w-8 h-8 opacity-20" />
-              <p className="text-xs opacity-50">No results — try a different keyword</p>
-            </div>
-          )}
-          {!loadingPicker && pickerCandidates.length > 0 && (
-            <div className={`grid gap-1.5 px-3 pb-2 ${isPortrait ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
-              {pickerCandidates.map((c) => {
-                const isApplied = block.clipAssetPath?.includes(String(c.id));
-                return (
-                  <div key={c.id} className={`relative rounded-lg overflow-hidden border group bg-black transition-all ${isApplied ? 'border-c-accent ring-1 ring-c-accent/40' : 'border-c-border hover:border-c-border-hover'}`}>
-                    {c.previewUrl || c.downloadUrl ? (
-                      <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} />
-                    ) : (
-                      <img src={c.thumbnail} alt="" className="w-full aspect-video object-cover" />
-                    )}
-                    {/* Apply overlay on hover — pointer-events-none so scrub bar works */}
-                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 pointer-events-none">
-                      <button
-                        onClick={() => applyPexelsVideo(c)}
-                        disabled={!!applyingPexelsId}
-                        className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-c-accent text-white font-medium hover:bg-c-accent/80 disabled:opacity-50 transition-colors cursor-pointer shadow-lg pointer-events-auto"
-                      >
-                        {applyingPexelsId === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                        Use
-                      </button>
-                      {c.pageUrl && (
-                        <a
-                          href={c.pageUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors pointer-events-auto"
-                          onClick={(e) => e.stopPropagation()}
+
+          {/* Stock search + grid (all tabs including Image) */}
+          {(
+            <>
+              <div className="px-3 pb-1.5 flex items-center gap-1.5 flex-wrap">
+                {/* Orientation toggle */}
+                <div className="flex rounded-md border border-c-border overflow-hidden shrink-0">
+                  <button
+                    onClick={() => switchPickerOrientation('landscape')}
+                    className={`px-1.5 py-1 text-[11px] transition-colors cursor-pointer flex items-center gap-0.5 ${pickerOrientation === 'landscape' ? 'bg-c-accent text-white' : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
+                    title="16:9"
+                  >
+                    <span className="inline-block w-3 h-2 border border-current rounded-[1px]" />
+                  </button>
+                  <button
+                    onClick={() => switchPickerOrientation('portrait')}
+                    className={`px-1.5 py-1 text-[11px] transition-colors cursor-pointer border-l border-c-border flex items-center gap-0.5 ${pickerOrientation === 'portrait' ? 'bg-c-accent text-white' : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
+                    title="9:16"
+                  >
+                    <span className="inline-block w-1.5 h-3 border border-current rounded-[1px]" />
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={pickerQuery}
+                  onChange={(e) => setPickerQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && searchPicker()}
+                  className="flex-1 min-w-0 text-[11px] bg-c-elevated border border-c-border rounded-md px-2 py-1 text-c-text placeholder-c-dim focus:outline-none focus:border-c-accent/50"
+                  placeholder={`Search ${pickerService}...`}
+                />
+                <button
+                  onClick={regenPickerQuery}
+                  disabled={regenningQuery || loadingPicker}
+                  title="AI: regenerate search query"
+                  className="shrink-0 p-1 rounded-md bg-violet-500/10 border border-violet-500/25 text-violet-300 hover:bg-violet-500/20 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {regenningQuery ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                </button>
+                <button
+                  onClick={searchPicker}
+                  disabled={loadingPicker || regenningQuery}
+                  className="shrink-0 p-1 rounded-md bg-c-accent text-white hover:bg-c-accent/80 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {loadingPicker ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                </button>
+              </div>
+              {loadingPicker && (
+                <div className={`grid gap-1.5 px-3 pb-2 ${isPortrait ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="rounded-md overflow-hidden border border-c-border bg-c-elevated aspect-video animate-pulse" />
+                  ))}
+                </div>
+              )}
+              {!loadingPicker && pickerError && (
+                <div className="flex items-center gap-2 mx-3 mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  {pickerError}
+                </div>
+              )}
+              {!loadingPicker && !pickerError && pickerCandidates.length === 0 && (
+                <div className="flex flex-col items-center gap-2 py-8 text-c-dim">
+                  <Film className="w-8 h-8 opacity-20" />
+                  <p className="text-xs opacity-50">No results — try a different keyword</p>
+                </div>
+              )}
+              {!loadingPicker && pickerCandidates.length > 0 && (
+                <div className={`grid gap-1.5 px-3 pb-2 ${isPortrait ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
+                  {pickerCandidates.map((c, ci) => {
+                    const isApplied = block.clipAssetPath?.includes(String(c.id));
+                    const isImageMode = pickerService === 'images';
+                    return (
+                      <div key={`${c.id}-${ci}`} className={`relative rounded-lg overflow-hidden border group bg-black transition-all ${isApplied ? 'border-c-accent ring-1 ring-c-accent/40' : 'border-c-border hover:border-c-border-hover'}`}>
+                        {isImageMode ? (
+                          <img src={c.thumbnail} alt={c.title || ''} className="w-full aspect-video object-cover" loading="lazy" />
+                        ) : c.previewUrl || c.downloadUrl ? (
+                          <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} />
+                        ) : (
+                          <img src={c.thumbnail} alt="" className="w-full aspect-video object-cover" />
+                        )}
+                        {/* Source badge for image mode */}
+                        {isImageMode && c.source && (
+                          <div className={`absolute top-1 left-1 text-[9px] font-medium px-1 py-0.5 rounded ${c.source === 'pexels' ? 'bg-c-accent/80' : 'bg-emerald-600/80'} text-white`}>
+                            {c.source}
+                          </div>
+                        )}
+                        {/* Expand button */}
+                        <button
+                          onClick={() => setLightbox({
+                            type: isImageMode ? 'image' : 'video',
+                            src: isImageMode ? (c.downloadUrl || c.thumbnail) : (c.downloadUrl || c.previewUrl || c.thumbnail),
+                            title: c.title,
+                          })}
+                          className="absolute top-1 right-1 p-1 rounded bg-black/60 text-white/70 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-all cursor-pointer pointer-events-auto z-10"
                         >
-                          <ExternalLink className="w-2.5 h-2.5" />
-                          Source
-                        </a>
-                      )}
-                    </div>
-                    {/* Bottom bar */}
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 flex items-center justify-between gap-1">
-                      <span className="text-white/80 text-[10px] truncate flex-1">{c.title || ''}</span>
-                      {c.duration > 0 && <span className="text-white/50 text-[10px] font-mono shrink-0">{c.duration}s</span>}
-                    </div>
-                    {/* Applied badge */}
-                    {isApplied && (
-                      <div className="absolute top-1 right-1 bg-c-accent rounded-full p-0.5">
-                        <Check className="w-2.5 h-2.5 text-white" />
+                          <Maximize2 className="w-3 h-3" />
+                        </button>
+                        {/* Apply overlay on hover */}
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 pointer-events-none">
+                          <button
+                            onClick={() => applyPexelsVideo(c)}
+                            disabled={!!applyingPexelsId}
+                            className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-c-accent text-white font-medium hover:bg-c-accent/80 disabled:opacity-50 transition-colors cursor-pointer shadow-lg pointer-events-auto"
+                          >
+                            {applyingPexelsId === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                            Use
+                          </button>
+                          {c.pageUrl && (
+                            <a
+                              href={c.pageUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors pointer-events-auto"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="w-2.5 h-2.5" />
+                              Source
+                            </a>
+                          )}
+                        </div>
+                        {/* Bottom bar */}
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 flex items-center justify-between gap-1">
+                          <span className="text-white/80 text-[10px] truncate flex-1">{c.title || ''}</span>
+                          {c.duration > 0 && <span className="text-white/50 text-[10px] font-mono shrink-0">{c.duration}s</span>}
+                        </div>
+                        {/* Applied badge */}
+                        {isApplied && (
+                          <div className="absolute top-1 right-7 bg-c-accent rounded-full p-0.5">
+                            <Check className="w-2.5 h-2.5 text-white" />
+                          </div>
+                        )}
                       </div>
-                    )}
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Zoom effect + paste zone for Image tab */}
+          {pickerService === 'images' && (
+            <div className="px-3 pb-2 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-c-muted">Effect:</span>
+                {(['zoom-in', 'zoom-out'] as const).map((z) => (
+                  <button
+                    key={z}
+                    onClick={() => setImageZoomEffect(z)}
+                    className={`text-[10px] px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
+                      imageZoomEffect === z
+                        ? 'border-c-accent/40 bg-c-accent/10 text-c-accent font-medium'
+                        : 'border-c-border bg-c-elevated text-c-dim hover:text-c-text'
+                    }`}
+                  >
+                    {z === 'zoom-in' ? '🔍 Zoom In' : '🔎 Zoom Out'}
+                  </button>
+                ))}
+              </div>
+              {/* Paste / drop zone */}
+              <div
+                className={`border-2 border-dashed rounded-lg px-3 py-2.5 text-center transition-colors ${pastingImage ? 'border-c-accent/50 bg-c-accent/5' : 'border-c-border hover:border-c-accent/30'}`}
+                onPaste={(e) => {
+                  const items = e.clipboardData?.items;
+                  if (!items) return;
+                  for (const item of items) {
+                    if (item.type.startsWith('image/')) {
+                      e.preventDefault();
+                      const file = item.getAsFile();
+                      if (file) handlePasteImage(file);
+                      return;
+                    }
+                  }
+                }}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const file = e.dataTransfer?.files?.[0];
+                  if (file && file.type.startsWith('image/')) handlePasteImage(file);
+                }}
+                tabIndex={0}
+              >
+                {pastingImage ? (
+                  <div className="flex items-center justify-center gap-1.5 text-c-accent">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span className="text-[11px]">Converting image...</span>
                   </div>
-                );
-              })}
+                ) : (
+                  <div className="text-[11px] text-c-dim">
+                    <span className="font-medium text-c-muted">Ctrl+V</span> to paste image or <span className="font-medium text-c-muted">drag & drop</span> here
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1579,6 +2225,12 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             orientation={orientation}
             isProducing={false}
             onBlockUpdated={onBlockUpdated}
+            displayLabel={(() => {
+              const dn = block.displayNumber ?? (block.blockIndex + 1);
+              const siblings = blocks.filter(b => (b.displayNumber ?? (b.blockIndex + 1)) === dn);
+              if (siblings.length <= 1) return String(dn);
+              return `${dn}${String.fromCharCode(97 + siblings.indexOf(block))}`;
+            })()}
           />
         </div>
       )}
@@ -1598,6 +2250,41 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
           {block.status}
         </span>
       </div>
+
+      {/* ── Lightbox modal ── */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            onClick={() => setLightbox(null)}
+            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer z-10"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          {lightbox.title && (
+            <div className="absolute top-4 left-4 text-white/70 text-sm max-w-[60%] truncate">{lightbox.title}</div>
+          )}
+          <div className="max-w-[90vw] max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
+            {lightbox.type === 'video' ? (
+              <video
+                src={lightbox.src}
+                controls
+                autoPlay
+                loop
+                className="max-w-full max-h-[85vh] rounded-lg shadow-2xl"
+              />
+            ) : (
+              <img
+                src={lightbox.src}
+                alt={lightbox.title || ''}
+                className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain"
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1969,12 +2656,13 @@ function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, block
 
 // ── Block Card ──
 
-function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
+function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, displayLabel }: {
   block: ScriptBlock;
   docId: string;
   orientation: 'landscape' | 'portrait';
   isProducing: boolean;
   onBlockUpdated: () => void;
+  displayLabel: string;
 }) {
   const { t } = useTranslation();
   const [editingQuery, setEditingQuery] = useState(false);
@@ -1983,6 +2671,8 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
   const [showAlts, setShowAlts] = useState(false);
   const [alts, setAlts] = useState<any[]>([]);
   const [loadingAlts, setLoadingAlts] = useState(false);
+  const [altService, setAltService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'remotion'>('pexels');
+  const [remotionRendering, setRemotionRendering] = useState(false);
   const [saving, setSaving] = useState(false);
   const [fetchingStock, setFetchingStock] = useState<'pexels' | 'pixabay' | null>(null);
   const [fetchLog, setFetchLog] = useState<string | null>(null);
@@ -1996,7 +2686,9 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
   const [aiGenLog, setAiGenLog] = useState<string[]>([]);
   const [reproducing, setReproducing] = useState(false);
   const [reproduceLog, setReproduceLog] = useState<string[]>([]);
+  const [splittingBlock, setSplittingBlock] = useState(false);
   const [chartOpacity, setChartOpacity] = useState(0.5);
+  const [chartColor, setChartColor] = useState('#7c6af5');
   const defaultAnimSec = block.audioDurationMs ? (block.audioDurationMs / 1000) / 2 : 4;
   const [animationSec, setAnimationSec] = useState(parseFloat(defaultAnimSec.toFixed(1)));
 
@@ -2009,6 +2701,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
         docId, block.blockIndex, orientation, chartOpacity,
         block.chartSpec ? animationSec : undefined,
         (msg) => setReproduceLog(prev => [...prev, msg]),
+        chartColor,
       );
       if (result?.type === 'error') {
         setReproduceLog(prev => [...prev, `ERROR: ${result.error}`]);
@@ -2020,6 +2713,18 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
       setReproduceLog(prev => [...prev, `ERROR: ${err.message}`]);
     }
     setReproducing(false);
+  };
+
+  const handleSplitBlock = async () => {
+    if (splittingBlock) return;
+    setSplittingBlock(true);
+    try {
+      await scriptStudioApi.splitBlock(docId, block.blockIndex);
+      onBlockUpdated();
+    } catch (err: any) {
+      setFetchLog(`Split failed: ${err.response?.data?.error ?? err.message}`);
+    }
+    setSplittingBlock(false);
   };
 
   const saveQuery = async () => {
@@ -2036,10 +2741,18 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
     setFetchingStock(source);
     setFetchLog(null);
     try {
+      // Save existing clips before fetch (backend replaces single clip)
+      const existingClips = [...blockClips];
       const data = source === 'pexels'
         ? await scriptStudioApi.fetchBlockPexels(docId, block.blockIndex, orientation)
         : await scriptStudioApi.fetchBlockPixabay(docId, block.blockIndex, orientation);
-      setFetchLog(`${source === 'pexels' ? 'Pexels' : 'Pixabay'} clip fetched (${data.duration}s)`);
+      // Append new clip to existing clips
+      if (existingClips.length > 0) {
+        const newClip = { assetPath: data.filename, startSec: 0, endSec: null };
+        const merged = [...existingClips, newClip];
+        await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
+      }
+      setFetchLog(`${source === 'pexels' ? 'Pexels' : 'Pixabay'} clip added (${data.duration}s)`);
       onBlockUpdated();
     } catch (err: any) {
       setFetchLog(`Error: ${err.response?.data?.error ?? err.message}`);
@@ -2055,24 +2768,57 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
     setEditingMotion(false);
   };
 
-  const fetchAlts = async () => {
+  const fetchAlts = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'remotion' = altService) => {
     if (loadingAlts) return;
-    setLoadingAlts(true);
+    setAltService(service);
     setShowAlts(true);
+    if (service === 'remotion') return; // No search needed for remotion tab
+    setLoadingAlts(true);
     try {
       const query = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 4).join(' ');
-      const data = await scriptStudioApi.getAlternatives(docId, query, orientation);
+      const data = await scriptStudioApi.getAlternatives(docId, query, orientation, 15, service);
       setAlts(data.candidates ?? []);
     } catch { setAlts([]); }
     setLoadingAlts(false);
   };
 
-  const selectAlt = async (pexelsId: number) => {
+  const renderRemotion = async (compositionId: string, durationSec: number, props: Record<string, unknown>) => {
+    if (remotionRendering) return;
+    setRemotionRendering(true);
     try {
-      await scriptStudioApi.updateBlock(docId, block.blockIndex, { clipAssetPath: `pexels_id:${pexelsId}` });
+      const result = await scriptStudioApi.renderRemotion(docId, block.blockIndex, compositionId, durationSec, orientation, props);
+      // Append to existing clips
+      const newClip = { assetPath: result.filename, startSec: 0, endSec: null };
+      const merged = blockClips.length > 0 ? [...blockClips, newClip] : [newClip];
+      await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
+      onBlockUpdated();
+      setFetchLog(`Remotion ${compositionId} rendered (${result.durationSec}s)`);
+    } catch (err: any) {
+      setFetchLog(`Error: ${err.response?.data?.error ?? err.message}`);
+    }
+    setRemotionRendering(false);
+  };
+
+  const selectAlt = async (alt: { pexelsId?: number; pixabayId?: number; mixkitId?: number; downloadUrl?: string; duration: number; width: number; height: number }) => {
+    try {
+      let newFilename: string | null = null;
+      if (alt.pexelsId) {
+        const result = await scriptStudioApi.applyPexelsById(docId, block.blockIndex, alt.pexelsId);
+        newFilename = result.filename;
+      } else if (alt.pixabayId && alt.downloadUrl) {
+        const result = await scriptStudioApi.applyPixabayFromUrl(docId, block.blockIndex, alt.downloadUrl, alt.duration, alt.width, alt.height);
+        newFilename = result.filename;
+      } else if (alt.mixkitId && alt.downloadUrl) {
+        const result = await scriptStudioApi.applyMixkitFromUrl(docId, block.blockIndex, alt.downloadUrl, alt.duration, alt.width, alt.height);
+        newFilename = result.filename;
+      }
+      // Append to existing clips instead of replacing
+      if (newFilename && blockClips.length > 0) {
+        const merged = [...blockClips, { assetPath: newFilename, startSec: 0, endSec: null }];
+        await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
+      }
       onBlockUpdated();
     } catch { /* ignore */ }
-    setShowAlts(false);
   };
 
   const saveAiPrompt = async () => {
@@ -2127,19 +2873,38 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
   const audioDurSec = block.audioDurationMs != null ? (block.audioDurationMs / 1000).toFixed(1) : null;
   const isError = block.status === 'error';
 
+  // Detect split scene
+  const isSplitBlock = block.visualType === 'split' || block.clipAssetPath?.startsWith('split_') || block.clips?.some((c: any) => c.splitSources?.length > 0);
+
+  // Detect video < audio duration warning
+  const blockClips = block.clips?.length > 0
+    ? block.clips
+    : (block.clipAssetPath ? [{ assetPath: block.clipAssetPath, startSec: block.clipStartSec ?? 0, endSec: block.clipEndSec, sourceDurationSec: block.audioDurationMs ? block.audioDurationMs / 1000 : undefined }] : []);
+  const clipsDur = blockClips.reduce((sum: number, c: any) => {
+    const start = c.startSec ?? 0;
+    const end = c.endSec ?? c.sourceDurationSec ?? null;
+    return sum + (end != null ? Math.max(0, end - start) : 0);
+  }, 0);
+  const audioDurNum = block.audioDurationMs ? block.audioDurationMs / 1000 : 0;
+  const isVideoShort = audioDurNum > 0 && clipsDur > 0 && clipsDur < audioDurNum - 0.5;
+
   return (
     <div className={`rounded-xl border transition-all ${
       isError
         ? 'bg-red-500/5 border-red-500/25'
-        : block.status === 'rendered'
-          ? 'bg-green-500/3 border-green-500/15'
-          : 'bg-c-surface border-c-border hover:border-c-border-hover'
+        : isVideoShort
+          ? 'bg-amber-500/5 border-amber-500/25'
+          : isSplitBlock
+            ? 'bg-teal-500/5 border-teal-500/25'
+            : block.status === 'rendered'
+              ? 'bg-green-500/3 border-green-500/15'
+              : 'bg-c-surface border-c-border hover:border-c-border-hover'
     }`}>
       {/* Header row */}
       <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
         {/* Block number badge */}
-        <span className="w-5 h-5 rounded bg-c-elevated border border-c-border text-xs font-mono font-bold text-c-muted flex items-center justify-center shrink-0">
-          {block.blockIndex + 1}
+        <span className="min-w-5 h-5 px-1 rounded bg-c-elevated border border-c-border text-xs font-mono font-bold text-c-muted flex items-center justify-center shrink-0">
+          {displayLabel}
         </span>
         {/* Segment · Scene label */}
         <span className="text-xs text-c-dim shrink-0 whitespace-nowrap tabular-nums">
@@ -2172,6 +2937,21 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
               : 'bg-orange-500/10 text-orange-400 border-orange-500/20'
           }`} title={t(`scriptStudio.studio.pace_${block.paceHint}`)}>
             {block.paceHint === 'slow' ? t('scriptStudio.studio.paceSlow') : t('scriptStudio.studio.paceFast')}
+          </span>
+        )}
+
+        {/* Split scene badge */}
+        {isSplitBlock && (
+          <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-teal-500/15 text-teal-400 border border-teal-500/20">
+            <Columns className="w-3 h-3" />
+            Split
+          </span>
+        )}
+        {/* Video too short warning */}
+        {isVideoShort && (
+          <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/20" title={`Video ${clipsDur.toFixed(1)}s < Audio ${audioDurNum.toFixed(1)}s`}>
+            <AlertTriangle className="w-3 h-3" />
+            {clipsDur.toFixed(1)}s / {audioDurNum.toFixed(1)}s
           </span>
         )}
 
@@ -2240,9 +3020,27 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
             {reproducing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
             {reproducing ? 'Reproducing...' : 'Reproduce'}
           </button>
+          <button
+            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer bg-c-elevated border-c-border text-c-muted hover:text-amber-400 hover:border-amber-500/30 disabled:opacity-50"
+            onClick={handleSplitBlock}
+            disabled={splittingBlock || isProducing || (block.narration?.split(/\s+/).length ?? 0) < 6}
+            title="Split this block into two at sentence boundary"
+          >
+            {splittingBlock ? <Loader2 className="w-3 h-3 animate-spin" /> : <Scissors className="w-3 h-3" />}
+            Split
+          </button>
           {block.chartSpec && (
             <>
-              <label className="inline-flex items-center gap-1 text-[10px] text-c-muted" title="Chart rectangle opacity (0 = transparent, 1 = solid)">
+              <label className="inline-flex items-center gap-1 text-[10px] text-c-muted" title={t('scriptStudio.studio.chartColor')}>
+                <input
+                  type="color"
+                  value={chartColor}
+                  onChange={(e) => setChartColor(e.target.value)}
+                  className="w-5 h-5 rounded border border-c-border cursor-pointer"
+                  style={{ padding: 0 }}
+                />
+              </label>
+              <label className="inline-flex items-center gap-1 text-[10px] text-c-muted" title={t('scriptStudio.studio.chartOpacity')}>
                 <span>Opacity</span>
                 <input
                   type="number"
@@ -2252,7 +3050,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
                   className="w-12 px-1 py-0.5 rounded border border-c-border bg-c-elevated text-c-text text-[10px] font-mono text-center"
                 />
               </label>
-              <label className="inline-flex items-center gap-1 text-[10px] text-c-muted" title="Animation duration in seconds">
+              <label className="inline-flex items-center gap-1 text-[10px] text-c-muted" title={t('scriptStudio.studio.chartAnim')}>
                 <span>Anim</span>
                 <input
                   type="number"
@@ -2524,36 +3322,218 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated }: {
       {showAlts && (
         <div className="px-3.5 pb-3 space-y-2 border-t border-c-border pt-2.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-c-muted">{t('scriptStudio.studio.alternatives')}</span>
+            <div className="flex items-center gap-1">
+              {(['pexels', 'pixabay', 'mixkit', 'remotion'] as const).map((svc) => (
+                <button
+                  key={svc}
+                  className={`text-[10px] px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
+                    altService === svc
+                      ? 'border-c-accent/40 bg-c-accent/10 text-c-accent font-medium'
+                      : 'border-c-border bg-c-elevated text-c-dim hover:text-c-text'
+                  }`}
+                  onClick={() => fetchAlts(svc)}
+                  disabled={loadingAlts}
+                >
+                  {svc === 'remotion' ? 'Remotion' : svc.charAt(0).toUpperCase() + svc.slice(1)}
+                </button>
+              ))}
+            </div>
             <button className="text-xs text-c-dim hover:text-c-text cursor-pointer p-0.5 rounded hover:bg-c-elevated" onClick={() => setShowAlts(false)}>
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
-          {loadingAlts && (
-            <div className="flex items-center gap-2 text-xs text-c-muted py-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              {t('common.loading')}
-            </div>
+
+          {/* Stock video grid */}
+          {altService !== 'remotion' && (
+            <>
+              {loadingAlts && (
+                <div className="flex items-center gap-2 text-xs text-c-muted py-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  {t('common.loading')}
+                </div>
+              )}
+              {!loadingAlts && alts.length === 0 && (
+                <p className="text-xs text-c-dim py-1">{t('scriptStudio.studio.noAlternatives')}</p>
+              )}
+              {alts.length > 0 && (
+                <div className="grid grid-cols-3 gap-2">
+                  {[...alts].sort((a, b) => a.duration - b.duration).map((alt) => (
+                    <button
+                      key={alt.pexelsId ?? alt.pixabayId ?? alt.mixkitId ?? alt.downloadUrl}
+                      className="relative aspect-video rounded-lg overflow-hidden border border-c-border hover:border-c-accent transition-all cursor-pointer group"
+                      onClick={() => selectAlt(alt)}
+                    >
+                      <img src={alt.thumbnail} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
+                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-between px-1.5 py-1">
+                        <span className="text-white text-[10px] font-mono">{alt.duration}s</span>
+                        <Plus className="w-3 h-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
-          {!loadingAlts && alts.length === 0 && (
-            <p className="text-xs text-c-dim py-1">{t('scriptStudio.studio.noAlternatives')}</p>
+
+          {/* Remotion compositions */}
+          {altService === 'remotion' && (
+            <RemotionPanel
+              onRender={renderRemotion}
+              rendering={remotionRendering}
+            />
           )}
-          {alts.length > 0 && (
-            <div className="grid grid-cols-3 gap-2">
-              {alts.map((alt) => (
-                <button
-                  key={alt.pexelsId}
-                  className="relative aspect-video rounded-lg overflow-hidden border border-c-border hover:border-c-accent transition-all cursor-pointer group"
-                  onClick={() => selectAlt(alt.pexelsId)}
-                >
-                  <img src={alt.thumbnail} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent text-white text-xs px-1.5 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {alt.duration}s
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Remotion Panel ──
+
+const REMOTION_COMPOSITIONS = [
+  { id: 'Intro', label: 'Intro Card', icon: '🎬', fields: ['creatorName', 'tagline', 'style'] },
+  { id: 'Outro', label: 'Outro / CTA', icon: '🔚', fields: ['creatorName', 'socialHandle', 'ctaText'] },
+  { id: 'ChartBars', label: 'Bar Chart', icon: '📊', fields: ['title', 'sourceLabel', 'bars'] },
+  { id: 'ChartLine', label: 'Line Chart', icon: '📈', fields: ['title', 'sourceLabel', 'dataPoints'] },
+  { id: 'ChartBigNumber', label: 'Big Number', icon: '🔢', fields: ['value', 'prefix', 'suffix', 'label'] },
+  { id: 'ChartVs', label: 'VS Compare', icon: '⚔️', fields: ['leftLabel', 'leftValue', 'rightLabel', 'rightValue', 'title'] },
+] as const;
+
+function RemotionPanel({ onRender, rendering }: {
+  onRender: (compositionId: string, durationSec: number, props: Record<string, unknown>) => void;
+  rendering: boolean;
+}) {
+  const { t } = useTranslation();
+  const [selected, setSelected] = useState<string | null>(null);
+  const [durationSec, setDurationSec] = useState(4);
+  const [accentColor, setAccentColor] = useState('#7c6af5');
+  const [formData, setFormData] = useState<Record<string, string>>({});
+
+  const comp = REMOTION_COMPOSITIONS.find((c) => c.id === selected);
+
+  const setField = (key: string, val: string) => setFormData((prev) => ({ ...prev, [key]: val }));
+
+  const handleRender = () => {
+    if (!selected || rendering) return;
+    const props: Record<string, unknown> = { accentColor };
+
+    if (selected === 'Intro') {
+      props.creatorName = formData.creatorName || 'Creator';
+      props.tagline = formData.tagline || undefined;
+      props.style = formData.style || 'minimal';
+    } else if (selected === 'Outro') {
+      props.creatorName = formData.creatorName || 'Creator';
+      props.socialHandle = formData.socialHandle || undefined;
+      props.ctaText = formData.ctaText || 'Subscribe!';
+    } else if (selected === 'ChartBars') {
+      props.title = formData.title || undefined;
+      props.sourceLabel = formData.sourceLabel || undefined;
+      // Parse bars: "Label1:100, Label2:200"
+      const barsStr = formData.bars || '';
+      props.parsedData = {
+        bars: barsStr.split(',').map((s) => s.trim()).filter(Boolean).map((s) => {
+          const [name, val] = s.split(':').map((p) => p.trim());
+          return { name: name || '?', value: parseFloat(val) || 0 };
+        }),
+      };
+    } else if (selected === 'ChartLine') {
+      props.title = formData.title || undefined;
+      props.sourceLabel = formData.sourceLabel || undefined;
+      // Parse points: "Jan:100, Feb:200"
+      const ptsStr = formData.dataPoints || '';
+      props.parsedData = {
+        points: ptsStr.split(',').map((s) => s.trim()).filter(Boolean).map((s) => {
+          const [label, val] = s.split(':').map((p) => p.trim());
+          return { label: label || '?', value: parseFloat(val) || 0 };
+        }),
+      };
+    } else if (selected === 'ChartBigNumber') {
+      props.parsedData = {
+        value: parseFloat(formData.value || '0') || 0,
+        prefix: formData.prefix || undefined,
+        suffix: formData.suffix || undefined,
+      };
+      props.title = formData.label || undefined;
+    } else if (selected === 'ChartVs') {
+      props.parsedData = {
+        leftLabel: formData.leftLabel || 'A',
+        leftValue: formData.leftValue || '0',
+        rightLabel: formData.rightLabel || 'B',
+        rightValue: formData.rightValue || '0',
+      };
+      props.title = formData.title || undefined;
+    }
+
+    onRender(selected, durationSec, props);
+  };
+
+  return (
+    <div className="space-y-2">
+      {/* Composition grid */}
+      <div className="grid grid-cols-3 gap-1.5">
+        {REMOTION_COMPOSITIONS.map((c) => (
+          <button
+            key={c.id}
+            className={`flex flex-col items-center gap-0.5 px-2 py-2 rounded-lg border text-center transition-all cursor-pointer ${
+              selected === c.id
+                ? 'border-c-accent/50 bg-c-accent/10 text-c-accent'
+                : 'border-c-border bg-c-elevated text-c-dim hover:text-c-text hover:border-c-border-hover'
+            }`}
+            onClick={() => { setSelected(selected === c.id ? null : c.id); setFormData({}); }}
+          >
+            <span className="text-base">{c.icon}</span>
+            <span className="text-[10px] font-medium leading-tight">{c.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Selected composition form */}
+      {comp && (
+        <div className="space-y-2 rounded-lg border border-c-border bg-c-surface p-2.5">
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] text-c-muted">{t('scriptStudio.studio.chartColor')}</label>
+            <input type="color" value={accentColor} onChange={(e) => setAccentColor(e.target.value)}
+              className="w-5 h-5 rounded border border-c-border cursor-pointer" style={{ padding: 0 }} />
+            <label className="text-[10px] text-c-muted ml-2">Duration</label>
+            <input type="number" min={1} max={30} step={0.5} value={durationSec}
+              onChange={(e) => setDurationSec(Math.max(1, parseFloat(e.target.value) || 4))}
+              className="w-12 px-1 py-0.5 rounded border border-c-border bg-c-elevated text-c-text text-[10px] font-mono text-center" />
+            <span className="text-[10px] text-c-dim">s</span>
+          </div>
+
+          {/* Dynamic fields */}
+          <div className="grid grid-cols-2 gap-1.5">
+            {comp.fields.map((field) => (
+              <div key={field}>
+                <label className="text-[10px] text-c-muted block mb-0.5">{field}</label>
+                {field === 'style' ? (
+                  <select className="input w-full text-xs py-0.5" value={formData[field] ?? 'minimal'}
+                    onChange={(e) => setField(field, e.target.value)}>
+                    <option value="minimal">Minimal</option>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="bold">Bold</option>
+                  </select>
+                ) : field === 'bars' || field === 'dataPoints' ? (
+                  <input className="input w-full text-xs py-0.5 col-span-2" value={formData[field] ?? ''}
+                    onChange={(e) => setField(field, e.target.value)}
+                    placeholder="Label1:100, Label2:200, ..." />
+                ) : (
+                  <input className="input w-full text-xs py-0.5" value={formData[field] ?? ''}
+                    onChange={(e) => setField(field, e.target.value)}
+                    placeholder={field} />
+                )}
+              </div>
+            ))}
+          </div>
+
+          <button
+            className="w-full flex items-center justify-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-c-accent text-white font-medium hover:bg-c-accent/80 disabled:opacity-50 transition-colors cursor-pointer"
+            onClick={handleRender}
+            disabled={rendering}
+          >
+            {rendering ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+            {rendering ? t('scriptStudio.studio.rendering') : t('scriptStudio.studio.renderAdd')}
+          </button>
         </div>
       )}
     </div>
@@ -2669,7 +3649,6 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const [langFilter, setLangFilter] = useState('en');
   const subtitleStyle = options.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
 
   const { data: voiceData } = useQuery({ queryKey: ['tts-voices'], queryFn: ttsApi.voices });
@@ -2677,8 +3656,41 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
 
   const allVoices = Object.entries(voiceData?.voices ?? {}) as [string, { lang: string; label: string; flag: string; gender: string }][];
   const langs = [...new Set(allVoices.map(([, v]) => v.lang))].sort();
+
+  // Auto-detect language from saved voice
+  const savedVoiceLang = allVoices.find(([name]) => name === options.voice)?.[1]?.lang;
+  const [langFilter, setLangFilter] = useState(savedVoiceLang ?? 'en');
+  useEffect(() => { if (savedVoiceLang && savedVoiceLang !== langFilter) setLangFilter(savedVoiceLang); }, [savedVoiceLang]);
+
+  // Sort: US voices first, then by gender (female first), then alphabetical
   const filteredVoices = (langFilter ? allVoices.filter(([, v]) => v.lang === langFilter) : allVoices)
-    .sort((a, b) => a[0].localeCompare(b[0]));
+    .sort((a, b) => {
+      const aUS = a[0].startsWith('en-US') ? 0 : 1;
+      const bUS = b[0].startsWith('en-US') ? 0 : 1;
+      if (aUS !== bUS) return aUS - bUS;
+      const aG = a[1].gender === 'female' ? 0 : 1;
+      const bG = b[1].gender === 'female' ? 0 : 1;
+      if (aG !== bG) return aG - bG;
+      return a[1].label.localeCompare(b[1].label);
+    });
+
+  // Voice demo
+  const [demoPlaying, setDemoPlaying] = useState(false);
+  const demoAudioRef = useRef<HTMLAudioElement | null>(null);
+  const handleDemoVoice = async () => {
+    const voice = options.voice;
+    if (!voice || demoPlaying) return;
+    setDemoPlaying(true);
+    try {
+      const result = await ttsApi.generate({ text: 'Hello! This is a preview of my voice.', voice, rate: options.rate ?? '+0%' });
+      if (demoAudioRef.current) { demoAudioRef.current.pause(); demoAudioRef.current = null; }
+      const audio = new Audio(`/api/tts/audio/${result.filename}`);
+      demoAudioRef.current = audio;
+      audio.onended = () => setDemoPlaying(false);
+      audio.onerror = () => setDemoPlaying(false);
+      await audio.play();
+    } catch { setDemoPlaying(false); }
+  };
 
   const musicEnabled = options.music?.enabled ?? false;
   const musicTrackId = options.music?.trackId ?? '';
@@ -2701,8 +3713,8 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
         </div>
 
         <div className="space-y-3">
-          {/* Row 1: Voice language + Voice + Rate + Speed + Orientation */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          {/* Row 1: Voice language + Voice + Rate + Speed + Orientation + Chart Color */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
             {/* Voice language filter */}
             <div>
               <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.voiceLang')}</label>
@@ -2714,15 +3726,25 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
               </select>
             </div>
 
-            {/* Voice select */}
+            {/* Voice select + demo */}
             <div>
               <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.voice')}</label>
-              <select className="input w-full text-sm" value={options.voice ?? 'en-US-GuyNeural'} onChange={(e) => onChange('voice', e.target.value)}>
-                <option value="">{t('scriptStudio.produce.voiceDefault')}</option>
-                {filteredVoices.map(([name, v]) => (
-                  <option key={name} value={name}>{v.flag} {v.label}</option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1">
+                <select className="input flex-1 text-sm min-w-0" value={options.voice ?? ''} onChange={(e) => onChange('voice', e.target.value)}>
+                  <option value="">{t('scriptStudio.produce.voiceDefault')}</option>
+                  {filteredVoices.map(([name, v]) => (
+                    <option key={name} value={name}>{v.flag} {v.gender === 'female' ? '♀' : '♂'} {v.label}</option>
+                  ))}
+                </select>
+                <button
+                  className="shrink-0 p-1.5 rounded border border-c-border bg-c-elevated text-c-muted hover:text-c-accent hover:border-c-accent/30 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  onClick={handleDemoVoice}
+                  disabled={!options.voice || demoPlaying}
+                  title={t('scriptStudio.produce.demoVoice')}
+                >
+                  {demoPlaying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                </button>
+              </div>
             </div>
 
             {/* TTS Rate */}
@@ -2752,6 +3774,21 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
                 <option value="landscape">{t('scriptStudio.produce.landscape')}</option>
                 <option value="portrait">{t('scriptStudio.produce.portrait')}</option>
               </select>
+            </div>
+
+            {/* Chart accent color */}
+            <div>
+              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.chartColor')}</label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="color"
+                  value={options.accentColor ?? '#7c6af5'}
+                  onChange={(e) => onChange('accentColor', e.target.value)}
+                  className="w-8 h-8 rounded border border-c-border cursor-pointer"
+                  style={{ padding: 0 }}
+                />
+                <span className="text-xs font-mono text-c-dim">{options.accentColor ?? '#7c6af5'}</span>
+              </div>
             </div>
           </div>
 
@@ -3313,6 +4350,28 @@ export default function ScriptDoc() {
   const hasNotes = !!(notes?.sourcesText || notes?.chaptersText || notes?.thumbnailText);
   const [notesOpen, setNotesOpen] = useState(false);
 
+  // Compute display labels: blocks sharing the same displayNumber get a/b/c suffixes
+  const blockDisplayLabels = useMemo(() => {
+    const labels: Record<number, string> = {};
+    // Group by displayNumber
+    const groups = new Map<number, number[]>();
+    for (const b of blocks) {
+      const dn = b.displayNumber ?? (b.blockIndex + 1);
+      if (!groups.has(dn)) groups.set(dn, []);
+      groups.get(dn)!.push(b.blockIndex);
+    }
+    for (const [dn, indices] of groups) {
+      if (indices.length === 1) {
+        labels[indices[0]] = String(dn);
+      } else {
+        indices.forEach((idx, i) => {
+          labels[idx] = `${dn}${String.fromCharCode(97 + i)}`; // a, b, c...
+        });
+      }
+    }
+    return labels;
+  }, [blocks]);
+
   // Segment grouping
   const segmentGroups: Array<{ name: string; segIndex: number; blocks: ScriptBlock[] }> = [];
   for (const block of blocks) {
@@ -3324,6 +4383,8 @@ export default function ScriptDoc() {
     }
   }
   const orientation = (produceOptions.orientation ?? 'landscape') as 'landscape' | 'portrait';
+  const ttsEngine = (produceOptions.ttsEngine ?? 'edge-tts') as 'omnivoice' | 'edge-tts';
+  const setTtsEngine = (engine: 'omnivoice' | 'edge-tts') => setProduceOptions(prev => ({ ...prev, ttsEngine: engine }));
 
   if (docQ.isLoading) {
     return (
@@ -3359,22 +4420,14 @@ export default function ScriptDoc() {
             </span>
           </div>
         </div>
-        <button
-          className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-c-border bg-c-elevated text-c-muted hover:text-c-text hover:border-c-border-hover transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-          onClick={handleResyncBlocks}
-          disabled={resyncing || isProducing}
-          title={t('scriptStudio.studio.resyncTitle')}
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${resyncing ? 'animate-spin' : ''}`} />
-          <span className="hidden sm:inline">{t('scriptStudio.studio.resync')}</span>
-        </button>
+        {/* Re-sync removed: too dangerous, wipes user-assigned clips and audio */}
       </div>
 
       {/* ── Production Notes ── */}
       {hasNotes && (
-        <div className="border-b border-c-border shrink-0">
+        <div className="border-b border-c-border shrink-0 flex flex-col" style={{ maxHeight: notesOpen ? '40vh' : undefined }}>
           <button
-            className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-c-elevated/50 transition-colors cursor-pointer"
+            className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-c-elevated/50 transition-colors cursor-pointer shrink-0"
             onClick={() => setNotesOpen((v) => !v)}
           >
             <span className="text-xs font-semibold text-red-400 uppercase tracking-widest">
@@ -3384,7 +4437,7 @@ export default function ScriptDoc() {
             {notesOpen ? <ChevronUp className="w-3.5 h-3.5 text-c-dim shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-c-dim shrink-0" />}
           </button>
           {notesOpen && (
-            <div className="px-4 pb-3 space-y-2.5">
+            <div className="px-4 pb-3 space-y-2.5 overflow-y-auto min-h-0">
               {notes?.chaptersText && (
                 <div>
                   <p className="text-xs font-semibold text-c-muted mb-1">Chapter markers</p>
@@ -3505,6 +4558,8 @@ export default function ScriptDoc() {
                 docId={id!}
                 orientation={orientation}
                 onBlockUpdated={handleBlockUpdated}
+                ttsEngine={ttsEngine}
+                onTtsEngineChange={setTtsEngine}
               />
             </div>
           ) : (
@@ -3530,6 +4585,7 @@ export default function ScriptDoc() {
                           orientation={orientation}
                           isProducing={isProducing}
                           onBlockUpdated={handleBlockUpdated}
+                          displayLabel={blockDisplayLabels[block.blockIndex] ?? String(block.blockIndex + 1)}
                         />
                       ))}
                     </div>

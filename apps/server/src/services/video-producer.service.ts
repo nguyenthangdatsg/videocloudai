@@ -860,6 +860,7 @@ export async function reproduceSingleBlock(
   chartOpacity = 0.5,
   animationDurationSec?: number,
   onLog?: (msg: string) => void,
+  accentColor = '#7c6af5',
 ): Promise<{ clipPath: string; filename: string; durationSec: number }> {
   const doc = getDoc(docId);
   if (!doc) throw new Error('Script doc not found');
@@ -870,7 +871,6 @@ export async function reproduceSingleBlock(
   const log = onLog ?? ((m: string) => console.log(`[reproduce] ${m}`));
   const ffmpeg = resolveFfmpegPathSync('ffmpeg');
   const s = getSettings();
-  const accentColor = '#7c6af5';
   const isPortrait = orientation === 'portrait';
   const w = isPortrait ? 1080 : 1920;
   const h = isPortrait ? 1920 : 1080;
@@ -1025,8 +1025,8 @@ export async function produceBlocks(
   const preset = options.preset || process.env.FFMPEG_PRESET || 'superfast';
 
   const s = getSettings();
-  const voice = options.voice ?? s.get('default_voice') ?? 'en-US-GuyNeural';
-  const rate = options.rate ?? s.get('default_tts_rate') ?? '0';
+  const voice = options.voice || s.get('default_voice') || 'en-US-GuyNeural';
+  const rate = options.rate || s.get('default_tts_rate') || '0';
 
   const cacheDir = path.resolve(process.env.CACHE_DIR ?? './cache');
   const audioDir = path.resolve(cacheDir, 'block_audio');
@@ -1529,6 +1529,27 @@ export async function produceBlocks(
       }
     }
 
+    // Split blocks: if clip_asset_path is stale, try resolving from clips_json
+    if (block.clipAssetPath?.startsWith('split_') || block.visualType === 'split') {
+      // Check if clips_json has a valid split file that clip_asset_path missed
+      const clips: Array<{ assetPath?: string }> = block.clipsJson ? JSON.parse(block.clipsJson) : [];
+      const jsonClip = clips.find(c => c.assetPath?.startsWith('split_'));
+      if (jsonClip?.assetPath && fs.existsSync(path.join(imageDir, jsonClip.assetPath))) {
+        // Sync clip_asset_path from clips_json
+        updateBlockClip(docId, i, jsonClip.assetPath, 'split');
+        blocksAfterAudio[i] = { ...block, clipAssetPath: jsonClip.assetPath, visualType: 'split', status: 'clip_ready' };
+        emit('info', `${ref(block)}: split video loaded`, pct);
+        lastGoodClip = jsonClip.assetPath;
+        lastGoodVisualType = 'split';
+        continue;
+      }
+      emit('warn', `${ref(block)}: split clip missing (${block.clipAssetPath}), skipping — re-render split screen from UI`, pct);
+      if (lastGoodClip) {
+        blocksAfterAudio[i] = { ...block, clipAssetPath: lastGoodClip, visualType: lastGoodVisualType, status: 'clip_ready' };
+      }
+      continue;
+    }
+
     // Pexels block — fetch N candidates for N planned shots
     if (block.visualType === 'pexels') {
       const query = block.pexelsQuery || block.narration?.split(/\s+/).slice(0, 5).join(' ') || 'abstract';
@@ -1697,13 +1718,17 @@ export async function produceBlocks(
     const candidates = blockCandidates.get(i) ?? [];
     const primaryClipPath = resolveClipPath(block.clipAssetPath, block.visualType);
 
-    // Chart blocks: already composited in Stage 2 — just re-encode to segment format
-    if (block.visualType === 'chart' && primaryClipPath) {
+    // Pre-composed blocks (chart, split): already composited — just re-encode to segment format
+    // Also detect split clips by filename pattern for backwards compatibility
+    const isSplit = block.visualType === 'split' || (block.clipAssetPath?.startsWith('split_') ?? false);
+    if ((block.visualType === 'chart' || isSplit) && primaryClipPath) {
       try {
         const shotDurSec = (block.audioDurationMs ?? 6000) / 1000;
         const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
-        addLog(docId, 'info', 'produce', `${ref(block)}: encoding chart clip ${path.basename(primaryClipPath)}`);
+        const vLabel = isSplit ? 'split' : 'chart';
+        addLog(docId, 'info', 'produce', `${ref(block)}: encoding ${vLabel} clip ${path.basename(primaryClipPath)}`);
         await execFileWithCancel(ffmpeg, [
+          '-stream_loop', '-1',
           '-i', primaryClipPath,
           '-vf', `${scaleVf},format=yuv420p`,
           '-t', shotDurSec.toFixed(3),
@@ -1715,11 +1740,11 @@ export async function produceBlocks(
         updateBlockRendered(docId, i, persistentPath);
         blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
         encodedCount++;
-        emit('info', `${ref(block)}: chart clip encoded`, pct);
+        emit('info', `${ref(block)}: ${vLabel} clip encoded`, pct);
       } catch (err) {
         const msg = (err as Error).message.slice(0, 200);
-        emit('warn', `${ref(block)}: chart encode failed — ${msg}`, pct);
-        updateBlockError(docId, i, `Chart encode failed: ${msg}`);
+        emit('warn', `${ref(block)}: ${block.visualType} encode failed — ${msg}`, pct);
+        updateBlockError(docId, i, `${block.visualType} encode failed: ${msg}`);
       }
       continue;
     }

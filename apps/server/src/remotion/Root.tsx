@@ -8,9 +8,11 @@ import { ChartBigNumber } from './compositions/ChartBigNumber';
 import { ChartLine } from './compositions/ChartLine';
 import { ChartBars } from './compositions/ChartBars';
 import { ChartVs } from './compositions/ChartVs';
+import { SplitScreen } from './compositions/SplitScreen';
 import type {
   IntroConfig, OutroConfig, SceneClipConfig, ComparisonSceneConfig,
   ChartBigNumberConfig, ChartLineConfig, ChartBarsConfig, ChartVsConfig,
+  SplitScreenConfig,
 } from './types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,6 +31,8 @@ const ChartLineComp = ChartLine as React.ComponentType<any>;
 const ChartBarsComp = ChartBars as React.ComponentType<any>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ChartVsComp = ChartVs as React.ComponentType<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const SplitScreenComp = SplitScreen as React.ComponentType<any>;
 
 function RemotionRoot() {
   return (
@@ -173,6 +177,25 @@ function RemotionRoot() {
           accentColor: '#7c6af5',
           bgColor: '#0d0e12',
         } satisfies ChartVsConfig}
+      />
+      <Composition
+        id="SplitScreen"
+        component={SplitScreenComp}
+        durationInFrames={144}
+        fps={24}
+        width={1920}
+        height={1080}
+        defaultProps={{
+          durationInFrames: 144,
+          leftSrc: '',
+          leftType: 'image',
+          rightSrc: '',
+          rightType: 'image',
+          middleText: 'VS',
+          middleStyle: 'vs',
+          accentColor: '#7c6af5',
+          bgColor: '#0d0e12',
+        } satisfies SplitScreenConfig}
       />
     </>
   );
