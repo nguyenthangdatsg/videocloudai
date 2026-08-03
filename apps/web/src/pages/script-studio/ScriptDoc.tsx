@@ -62,27 +62,28 @@ const MOTION_EFFECTS = ['static', 'slow-zoom', 'ken-burns-in', 'ken-burns-out', 
 
 // ── Step Indicator ──
 
-function StepIndicator({ step, totalBlocks, audioReady, rendered, isProducing, hasResult, onStepClick }: {
-  step: 1 | 2 | 3 | 4;
+function StepIndicator({ step, totalBlocks, audioReady, rendered, isProducing, hasResult, onStepClick, settingsOpen, onToggleSettings }: {
+  step: 1 | 2 | 3;
   totalBlocks: number;
   audioReady: number;
   rendered: number;
   isProducing: boolean;
   hasResult: boolean;
-  onStepClick: (s: 1 | 2 | 3 | 4) => void;
+  onStepClick: (s: 1 | 2 | 3) => void;
+  settingsOpen: boolean;
+  onToggleSettings: () => void;
 }) {
   const steps = [
-    { num: 1 as const, label: 'Configure', sublabel: 'voice & settings', enabled: true },
-    { num: 2 as const, label: 'Review Blocks', sublabel: `${totalBlocks} blocks`, enabled: true },
-    { num: 3 as const, label: 'Produce', sublabel: isProducing ? `${rendered}/${totalBlocks} rendered` : rendered > 0 ? `${rendered}/${totalBlocks} done` : 'generate video', enabled: true },
-    { num: 4 as const, label: 'Result', sublabel: hasResult ? 'video ready' : 'pending', enabled: hasResult },
+    { num: 1 as const, label: 'Review Blocks', sublabel: `${totalBlocks} blocks`, enabled: true },
+    { num: 2 as const, label: 'Produce', sublabel: isProducing ? `${rendered}/${totalBlocks} rendered` : rendered > 0 ? `${rendered}/${totalBlocks} done` : 'generate video', enabled: true },
+    { num: 3 as const, label: 'Result', sublabel: hasResult ? 'video ready' : 'pending', enabled: hasResult },
   ];
 
   return (
     <div className="flex items-center gap-0 px-4 py-3 border-b border-c-border bg-c-surface shrink-0">
       {steps.map((s, i) => {
         const isActive = step === s.num;
-        const isDone = (step > s.num && s.num < 4) || (s.num === 4 && hasResult && step !== 4);
+        const isDone = (step > s.num && s.num < 3) || (s.num === 3 && hasResult && step !== 3);
         return (
           <div key={s.num} className="flex items-center">
             <button
@@ -105,7 +106,7 @@ function StepIndicator({ step, totalBlocks, audioReady, rendered, isProducing, h
                 <p className={`text-xs font-semibold leading-tight ${isActive ? 'text-c-text' : isDone ? 'text-green-400' : s.enabled ? 'text-c-muted' : 'text-c-dim'}`}>
                   {s.label}
                 </p>
-                <p className={`text-xs leading-tight ${s.num === 4 && hasResult ? 'text-green-400' : 'text-c-dim'}`}>{s.sublabel}</p>
+                <p className={`text-xs leading-tight ${s.num === 3 && hasResult ? 'text-green-400' : 'text-c-dim'}`}>{s.sublabel}</p>
               </div>
             </button>
             {i < steps.length - 1 && (
@@ -115,7 +116,7 @@ function StepIndicator({ step, totalBlocks, audioReady, rendered, isProducing, h
         );
       })}
 
-      {/* Progress pills */}
+      {/* Progress pills + Settings gear */}
       <div className="ml-auto flex items-center gap-2">
         <span className="text-xs text-c-dim hidden md:block">
           <span className={audioReady === totalBlocks && totalBlocks > 0 ? 'text-blue-400' : 'text-c-dim'}>
@@ -130,6 +131,17 @@ function StepIndicator({ step, totalBlocks, audioReady, rendered, isProducing, h
           </span>
           {' '}rendered
         </span>
+        <button
+          className={`ml-1 p-1.5 rounded-lg border transition-all cursor-pointer ${
+            settingsOpen
+              ? 'bg-c-accent/15 border-c-accent/40 text-c-accent'
+              : 'bg-c-elevated border-c-border text-c-muted hover:text-c-text hover:border-c-border-hover'
+          }`}
+          onClick={onToggleSettings}
+          title="Produce Settings"
+        >
+          <Settings className="w-4 h-4" />
+        </button>
       </div>
     </div>
   );
@@ -3699,22 +3711,22 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
     onChange('music', { enabled: musicEnabled, trackId: musicTrackId, volumeDb: musicVolumeDb, ...patch });
 
   return (
-    <div className="border-b border-c-border bg-c-elevated shrink-0 max-h-[60vh] overflow-y-auto">
-      <div className="px-4 py-3">
+    <div className="flex-1 overflow-y-auto">
+      <div className="px-5 py-4">
         {/* Header */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded-full bg-c-accent flex items-center justify-center text-xs font-bold text-white">1</div>
-            <h3 className="text-sm font-semibold text-c-text">{t('scriptStudio.studio.produceSettings')}</h3>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2.5">
+            <Settings className="w-5 h-5 text-c-accent" />
+            <h3 className="text-base font-semibold text-c-text">{t('scriptStudio.studio.produceSettings')}</h3>
           </div>
-          <button className="text-c-dim hover:text-c-text cursor-pointer p-1 rounded hover:bg-c-surface transition-colors" onClick={onClose}>
+          <button className="text-c-dim hover:text-c-text cursor-pointer p-1.5 rounded-lg hover:bg-c-elevated transition-colors" onClick={onClose}>
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="space-y-3">
-          {/* Row 1: Voice language + Voice + Rate + Speed + Orientation + Chart Color */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
+          {/* Voice language + Voice + Rate + Speed + Orientation + Chart Color */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {/* Voice language filter */}
             <div>
               <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.voiceLang')}</label>
@@ -3761,7 +3773,7 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
             <div>
               <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.speedRate')}</label>
               <select className="input w-full text-sm" value={options.speedRate ?? 1} onChange={(e) => onChange('speedRate', Number(e.target.value))}>
-                {[1, 2.5, 5, 7.5, 10].map((r) => (
+                {[1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2].map((r) => (
                   <option key={r} value={r}>{r}x</option>
                 ))}
               </select>
@@ -3902,6 +3914,19 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
   const [genYt, setGenYt] = useState(false);
   const [copiedDesc, setCopiedDesc] = useState(false);
   const [copiedTags, setCopiedTags] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [exportResults, setExportResults] = useState<Record<string, { url: string; filename: string; sizeKB: number }>>({});
+
+  const handleExport = async (preset: '2k' | '3k' | '4k') => {
+    setExporting(preset);
+    try {
+      const result = await scriptStudioApi.exportUpscale(docId, preset, orientation);
+      setExportResults(prev => ({ ...prev, [preset]: { url: result.url, filename: result.filename, sizeKB: result.sizeKB } }));
+    } catch (err) {
+      console.error('Export failed:', err);
+    }
+    setExporting(null);
+  };
 
   const generateYt = async () => {
     setGenYt(true);
@@ -3990,6 +4015,36 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
           <Trash2 className="w-4 h-4" />
           {t('scriptStudio.studio.removeProduce')}
         </button>
+      </div>
+
+      {/* Export upscale */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-c-dim font-medium">Export:</span>
+        {(['2k', '3k', '4k'] as const).map((preset) => {
+          const result = exportResults[preset];
+          const isExporting = exporting === preset;
+          return result ? (
+            <a
+              key={preset}
+              href={result.url}
+              download={result.filename}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 transition-all"
+            >
+              <Check className="w-3 h-3" />
+              {preset.toUpperCase()} ({(result.sizeKB / 1024).toFixed(1)} MB)
+            </a>
+          ) : (
+            <button
+              key={preset}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-c-elevated border border-c-border text-c-muted hover:text-c-text hover:border-c-border-hover transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => handleExport(preset)}
+              disabled={isExporting || exporting !== null}
+            >
+              {isExporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Maximize2 className="w-3 h-3" />}
+              {preset.toUpperCase()}
+            </button>
+          );
+        })}
       </div>
 
       {/* Synthetic content disclosure notice */}
@@ -4127,7 +4182,7 @@ function ProducePanel({
 
       {/* Action row */}
       <div className="flex items-center gap-2 px-4 py-3">
-        {/* Step 2 — Settings toggle */}
+        {/* Settings toggle */}
         <button
           className={`flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg border transition-all cursor-pointer ${
             showSettings
@@ -4138,12 +4193,11 @@ function ProducePanel({
         >
           <Settings className="w-4 h-4" />
           <span className="hidden sm:inline">{t('scriptStudio.studio.settings')}</span>
-          <div className="w-5 h-5 rounded-full border border-current/30 flex items-center justify-center text-xs font-bold opacity-60">2</div>
         </button>
 
         <div className="flex-1" />
 
-        {/* Step 3 — Produce / Stop */}
+        {/* Produce / Stop */}
         {isProducing ? (
           <button
             className="flex items-center gap-2 text-sm px-5 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-all cursor-pointer font-medium"
@@ -4179,7 +4233,8 @@ export default function ScriptDoc() {
   const [logExpanded, setLogExpanded] = useState(false);
   const [logsClearedAt, setLogsClearedAt] = useState('');
   const [streamLogs, setStreamLogs] = useState<LogEntry[]>([]);
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'step' | 'list' | 'markdown'>('step');
   const [produceOptions, setProduceOptions] = useState<Record<string, any>>(() => ({
     subtitleStyle: { ...DEFAULT_SUBTITLE_STYLE }
@@ -4266,7 +4321,7 @@ export default function ScriptDoc() {
   const handleProduce = async () => {
     if (!id || producing || isProducing) return;
     setProducing(true);
-    setStep(3);
+    setStep(2);
     try {
       await scriptStudioApi.produce(id, produceOptions);
       qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
@@ -4293,7 +4348,7 @@ export default function ScriptDoc() {
       await scriptStudioApi.deleteProduce(id);
       qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
       qc.invalidateQueries({ queryKey: ['script-studio-doc', id] });
-      setStep(3);
+      setStep(2);
     } catch (err) {
       console.error(err);
     }
@@ -4328,7 +4383,7 @@ export default function ScriptDoc() {
     if (url) {
       if (url !== prevResultUrlRef.current) {
         prevResultUrlRef.current = url;
-        setStep(4);
+        setStep(3);
       }
     } else {
       prevResultUrlRef.current = null;
@@ -4337,15 +4392,15 @@ export default function ScriptDoc() {
 
   // Advance to step 3 when production starts
   useEffect(() => {
-    if (isProducing) setStep(3);
+    if (isProducing) setStep(2);
   }, [isProducing]);
 
-  const handleStepClick = (s: 1 | 2 | 3 | 4) => {
-    if (s === 4 && !hasResult) return;
+  const handleStepClick = (s: 1 | 2 | 3) => {
+    if (s === 3 && !hasResult) return;
     setStep(s);
   };
 
-  const showSettings = step === 1;
+  const showSettings = settingsOpen;
   const notes = doc?.parsed?.productionNotes;
   const hasNotes = !!(notes?.sourcesText || notes?.chaptersText || notes?.thumbnailText);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -4470,39 +4525,17 @@ export default function ScriptDoc() {
         isProducing={isProducing}
         hasResult={hasResult}
         onStepClick={handleStepClick}
+        settingsOpen={settingsOpen}
+        onToggleSettings={() => setSettingsOpen(v => !v)}
       />
 
-      {/* ── OmniVoice health banner (only on Settings step) ── */}
-      {showSettings && omnivoiceReachable === false && (
-        <div className="mx-3 mb-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-          <span className="text-xs text-amber-400">{t('scriptStudio.studio.omnivoiceOffline')}</span>
-        </div>
-      )}
-      {showSettings && omnivoiceReachable === true && (
-        <div className="mx-3 mb-2 px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center gap-2">
-          <Check className="w-3.5 h-3.5 text-green-400 shrink-0" />
-          <span className="text-xs text-green-400">{t('scriptStudio.studio.omnivoiceOnline')}</span>
-        </div>
-      )}
-
-      {/* ── Step 2: Settings panel ── */}
-      {showSettings && (
-        <SettingsPanel
-          docId={id}
-          options={produceOptions}
-          onChange={(k, v) => setProduceOptions((prev) => ({ ...prev, [k]: v }))}
-          onClose={() => setStep(2)}
-        />
-      )}
-
-      {/* ── Step 4: Result view ── */}
-      {step === 4 ? (
+      {/* ── Main content ── */}
+      {step === 3 ? (
         <div className="flex-1 overflow-hidden">
           <ResultView
             jobResult={jobResult}
             orientation={orientation}
-            onRerun={() => setStep(3)}
+            onRerun={() => setStep(2)}
             onRemove={handleRemoveProduce}
             docId={id!}
           />
@@ -4513,10 +4546,9 @@ export default function ScriptDoc() {
           <p className="text-sm">{t('scriptStudio.studio.noBlocks')}</p>
         </div>
       ) : (
-        /* ── Steps 1/2/3: Block content ── */
         <div className="flex-1 overflow-hidden flex flex-col">
           {/* View-mode toggle (step 1 only) */}
-          {step === 2 && !isProducing && (
+          {step === 1 && !isProducing && (
             <div className="flex items-center justify-between px-4 py-1.5 border-b border-c-border bg-c-surface/50 shrink-0">
               <span className="text-xs text-c-dim">
                 {viewMode === 'step' ? t('scriptStudio.studio.viewStep') : viewMode === 'markdown' ? t('scriptStudio.studio.viewMarkdown') : t('scriptStudio.studio.viewList')}
@@ -4543,15 +4575,15 @@ export default function ScriptDoc() {
             </div>
           )}
 
-          {/* Markdown raw view (step 1 + markdown mode) */}
-          {step === 2 && viewMode === 'markdown' ? (
+          {/* Markdown raw view */}
+          {step === 1 && viewMode === 'markdown' ? (
             <div className="flex-1 overflow-y-auto p-4">
               <pre className="font-mono text-xs text-c-text leading-relaxed whitespace-pre-wrap break-words bg-c-elevated border border-c-border rounded-xl p-4">
                 {doc.rawMarkdown ?? ''}
               </pre>
             </div>
-          ) : /* Step-by-step editor (step 1 + step mode) */
-          step === 2 && viewMode === 'step' && !isProducing ? (
+          ) : /* Step-by-step editor */
+          step === 1 && viewMode === 'step' && !isProducing ? (
             <div className="flex-1 overflow-hidden">
               <BlockStepEditor
                 blocks={blocks}
@@ -4563,7 +4595,7 @@ export default function ScriptDoc() {
               />
             </div>
           ) : (
-            /* List view (step 1 list mode, step 2 settings overlay, step 3) */
+            /* List view */
             <div className="flex-1 overflow-y-auto">
               <div className="p-4 space-y-5">
                 {segmentGroups.map((group) => (
@@ -4597,8 +4629,8 @@ export default function ScriptDoc() {
         </div>
       )}
 
-      {/* ── Produce panel (step 3 only) ── */}
-      {step === 3 && (
+      {/* Produce panel (step 2 only) */}
+      {step === 2 && (
         <>
           <ProducePanel
             isProducing={isProducing}
@@ -4606,7 +4638,7 @@ export default function ScriptDoc() {
             activeProduceJob={activeProduceJob}
             jobResult={jobResult}
             showSettings={showSettings}
-            onToggleSettings={() => setStep((step as number) === 1 ? 2 : 1)}
+            onToggleSettings={() => setSettingsOpen(v => !v)}
             onProduce={handleProduce}
             onStop={handleStop}
           />
@@ -4617,6 +4649,34 @@ export default function ScriptDoc() {
             onClear={() => { setStreamLogs([]); setLogsClearedAt(new Date().toISOString()); }}
           />
         </>
+      )}
+
+      {/* ── Settings Modal ── */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSettingsOpen(false)} />
+          <div className="relative w-full max-w-2xl max-h-[85vh] mx-4 rounded-2xl border border-c-border bg-c-surface shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            {/* OmniVoice health banners */}
+            {omnivoiceReachable === false && (
+              <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="text-xs text-amber-400">{t('scriptStudio.studio.omnivoiceOffline')}</span>
+              </div>
+            )}
+            {omnivoiceReachable === true && (
+              <div className="mx-4 mt-3 px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center gap-2">
+                <Check className="w-3.5 h-3.5 text-green-400 shrink-0" />
+                <span className="text-xs text-green-400">{t('scriptStudio.studio.omnivoiceOnline')}</span>
+              </div>
+            )}
+            <SettingsPanel
+              docId={id}
+              options={produceOptions}
+              onChange={(k, v) => setProduceOptions((prev) => ({ ...prev, [k]: v }))}
+              onClose={() => setSettingsOpen(false)}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

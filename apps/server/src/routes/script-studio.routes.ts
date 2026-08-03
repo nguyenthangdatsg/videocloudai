@@ -1465,6 +1465,84 @@ export function createScriptStudioRouter(): Router {
     res.json({ ok: true });
   });
 
+  // ── Export / upscale produced video to 2K/3K/4K ──
+  const EXPORT_PRESETS: Record<string, { label: string; w: number; h: number }> = {
+    '2k':  { label: '2K (2560×1440)', w: 2560, h: 1440 },
+    '3k':  { label: '3K (3840×2160)', w: 3840, h: 2160 },
+    '4k':  { label: '4K (3840×2160)', w: 3840, h: 2160 },
+  };
+  const EXPORT_PRESETS_PORTRAIT: Record<string, { label: string; w: number; h: number }> = {
+    '2k':  { label: '2K (1440×2560)', w: 1440, h: 2560 },
+    '3k':  { label: '3K (2160×3840)', w: 2160, h: 3840 },
+    '4k':  { label: '4K (2160×3840)', w: 2160, h: 3840 },
+  };
+
+  router.post('/docs/:id/export-upscale', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const doc = getDoc(docId);
+    if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
+
+    const { preset, orientation } = req.body as { preset: string; orientation?: string };
+    const isPortrait = orientation === 'portrait';
+    const presets = isPortrait ? EXPORT_PRESETS_PORTRAIT : EXPORT_PRESETS;
+    const target = presets[preset];
+    if (!target) { res.status(400).json({ error: `Unknown preset: ${preset}. Use 2k, 3k, or 4k` }); return; }
+
+    // Find the produced video
+    const { dbGet } = await import('../db');
+    const job = dbGet<{ result: string }>(
+      `SELECT result FROM jobs WHERE type = 'script-studio-produce' AND payload LIKE ? AND status = 'completed' ORDER BY rowid DESC LIMIT 1`,
+      [`%${docId}%`],
+    );
+    if (!job?.result) { res.status(404).json({ error: 'No produced video found' }); return; }
+
+    let resultFilename: string;
+    try {
+      resultFilename = JSON.parse(job.result).resultFilename;
+    } catch { res.status(500).json({ error: 'Could not parse job result' }); return; }
+
+    const outDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+    const srcPath = path.join(outDir, resultFilename);
+    if (!fs.existsSync(srcPath)) { res.status(404).json({ error: 'Source video file not found' }); return; }
+
+    const ext = path.extname(resultFilename);
+    const base = path.basename(resultFilename, ext);
+    const exportFilename = `${base}_${preset}${ext}`;
+    const exportPath = path.join(outDir, exportFilename);
+
+    // If already exported, return immediately
+    if (fs.existsSync(exportPath)) {
+      const stat = fs.statSync(exportPath);
+      res.json({ ok: true, filename: exportFilename, url: `/api/storyboard/video/${exportFilename}`, sizeKB: Math.round(stat.size / 1024) });
+      return;
+    }
+
+    try {
+      const { promisify } = await import('util');
+      const { execFile } = await import('child_process');
+      const execFileAsync = promisify(execFile);
+      const { resolveFfmpegPathSync } = await import('../services/import.service');
+      const ffmpeg = resolveFfmpegPathSync('ffmpeg');
+
+      await execFileAsync(ffmpeg, [
+        '-i', srcPath,
+        '-vf', `scale=${target.w}:${target.h}:flags=lanczos`,
+        '-c:v', 'libx264',
+        '-preset', process.env.FFMPEG_PRESET || 'medium',
+        '-crf', '18',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        '-y', exportPath,
+      ], { timeout: 600000 });
+
+      const stat = fs.statSync(exportPath);
+      res.json({ ok: true, filename: exportFilename, url: `/api/storyboard/video/${exportFilename}`, sizeKB: Math.round(stat.size / 1024) });
+    } catch (err) {
+      if (fs.existsSync(exportPath)) fs.unlinkSync(exportPath);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Watermark logo upload / status ──
   const wmDir = path.resolve('assets', 'watermark');
   fs.mkdirSync(wmDir, { recursive: true });

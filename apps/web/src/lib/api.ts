@@ -1071,6 +1071,10 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/youtube-metadata`);
     return res.data as { description: string; tags: string[] };
   },
+  exportUpscale: async (id: string, preset: '2k' | '3k' | '4k', orientation: string) => {
+    const res = await api.post(`/script-studio/docs/${id}/export-upscale`, { preset, orientation }, { timeout: 600000 });
+    return res.data as { ok: boolean; filename: string; url: string; sizeKB: number };
+  },
   getNarration: async (id: string) => {
     const res = await api.get(`/script-studio/docs/${id}/narration`);
     return (res.data as { narration: string }).narration;
