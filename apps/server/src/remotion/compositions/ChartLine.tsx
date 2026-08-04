@@ -30,13 +30,15 @@ export function ChartLine(props: ChartLineConfig) {
 
   const isPortrait = H > W;
   const scale = Math.min(W, H) / 1080;
-  const padL = Math.round((isPortrait ? 100 : 140) * scale);
-  const padR = Math.round((isPortrait ? 60 : 100) * scale);
-  const padT = Math.round((isPortrait ? 120 : 160) * scale);
-  const padB = Math.round((isPortrait ? 120 : 160) * scale);
+  // Safe margin = 6% of min(W,H) used by FFmpeg crop overlay + buffer
+  const safeMargin = Math.round(Math.min(W, H) * 0.08);
+  const padL = Math.max(Math.round((isPortrait ? 100 : 140) * scale), safeMargin);
+  const padR = Math.max(Math.round((isPortrait ? 80 : 100) * scale), safeMargin);
+  const padT = Math.max(Math.round((isPortrait ? 120 : 160) * scale), safeMargin);
+  const padB = Math.max(Math.round((isPortrait ? 120 : 160) * scale), safeMargin);
   const chartW = W - padL - padR;
-  // In portrait, let chart use up to 1.4x width for height so it fills the tall frame
-  const chartH = Math.min(H - padT - padB, isPortrait ? Math.round(W * 1.4) : H - padT - padB);
+  // In portrait, let chart use up to 1.2x width for height so it fills the tall frame without overflow
+  const chartH = Math.min(H - padT - padB, isPortrait ? Math.round(W * 1.2) : H - padT - padB);
 
   const values = dataPoints.map((p) => p.value);
   const minV = Math.min(...values);

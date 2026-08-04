@@ -36,10 +36,11 @@ export function ChartBigNumber(props: ChartBigNumberConfig) {
   const displayValue = value * progress;
   const opacity = interpolate(frame, [0, Math.min(fps * 0.3, 7)], [0, 1], { extrapolateRight: 'clamp' });
 
-  const valueFontSize = Math.round((isPortrait ? 140 : 160) * scale);
-  const prefixFontSize = Math.round((isPortrait ? 56 : 64) * scale);
-  const labelFontSize = Math.round((isPortrait ? 38 : 42) * scale);
-  const sourceFontSize = Math.round((isPortrait ? 26 : 28) * scale);
+  const safeMargin = Math.round(Math.min(W, H) * 0.08);
+  const valueFontSize = Math.round((isPortrait ? 120 : 160) * scale);
+  const prefixFontSize = Math.round((isPortrait ? 48 : 64) * scale);
+  const labelFontSize = Math.round((isPortrait ? 36 : 42) * scale);
+  const sourceFontSize = Math.round((isPortrait ? 24 : 28) * scale);
 
   return (
     <div style={{
@@ -62,7 +63,7 @@ export function ChartBigNumber(props: ChartBigNumberConfig) {
           letterSpacing: '0.1em',
           marginBottom: Math.round(24 * scale),
           textAlign: 'center',
-          padding: `0 ${Math.round(60 * scale)}px`,
+          padding: `0 ${safeMargin}px`,
         }}>
           {label}
         </p>
@@ -72,6 +73,7 @@ export function ChartBigNumber(props: ChartBigNumberConfig) {
         display: 'flex',
         alignItems: 'baseline',
         gap: Math.round(8 * scale),
+        padding: `0 ${safeMargin}px`,
       }}>
         {prefix && (
           <span style={{ color: accentColor, fontSize: prefixFontSize, fontWeight: 700 }}>{prefix}</span>
@@ -106,7 +108,7 @@ export function ChartBigNumber(props: ChartBigNumberConfig) {
           fontSize: sourceFontSize,
           marginTop: Math.round(24 * scale),
           textAlign: 'center',
-          padding: `0 ${Math.round(60 * scale)}px`,
+          padding: `0 ${safeMargin}px`,
         }}>
           {sourceLabel}
         </p>

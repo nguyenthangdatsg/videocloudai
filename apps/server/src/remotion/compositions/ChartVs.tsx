@@ -32,10 +32,11 @@ export function ChartVs(props: ChartVsConfig) {
     extrapolateRight: 'clamp',
   });
 
-  const valueFontSize = Math.round((isPortrait ? 88 : 96) * scale);
-  const labelFontSize = Math.round((isPortrait ? 32 : 34) * scale);
-  const titleFontSize = Math.round((isPortrait ? 36 : 38) * scale);
-  const vsFontSize = Math.round((isPortrait ? 64 : 72) * scale);
+  const safeMargin = Math.round(Math.min(W, H) * 0.08);
+  const valueFontSize = Math.round((isPortrait ? 80 : 96) * scale);
+  const labelFontSize = Math.round((isPortrait ? 30 : 34) * scale);
+  const titleFontSize = Math.round((isPortrait ? 34 : 38) * scale);
+  const vsFontSize = Math.round((isPortrait ? 56 : 72) * scale);
 
   return (
     <div style={{
@@ -58,7 +59,7 @@ export function ChartVs(props: ChartVsConfig) {
           letterSpacing: '0.08em',
           marginBottom: Math.round((isPortrait ? 60 : 48) * scale),
           textAlign: 'center',
-          padding: `0 ${Math.round(40 * scale)}px`,
+          padding: `0 ${safeMargin}px`,
         }}>
           {title}
         </p>
@@ -98,7 +99,7 @@ export function ChartVs(props: ChartVsConfig) {
             fontSize: labelFontSize,
             marginTop: Math.round(16 * scale),
             textAlign: 'center',
-            padding: `0 ${Math.round(40 * scale)}px`,
+            padding: `0 ${safeMargin}px`,
           }}>
             {leftLabel}
           </div>
@@ -143,7 +144,7 @@ export function ChartVs(props: ChartVsConfig) {
             fontSize: labelFontSize,
             marginTop: Math.round(16 * scale),
             textAlign: 'center',
-            padding: `0 ${Math.round(40 * scale)}px`,
+            padding: `0 ${safeMargin}px`,
           }}>
             {rightLabel}
           </div>
