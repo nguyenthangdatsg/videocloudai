@@ -1183,11 +1183,11 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/tts`, opts ?? {});
     return res.data as { cached: boolean; audioDurationMs: number; wordCount?: number; engine?: string };
   },
-  ttsAll: async (id: string, engine: string, onProgress?: (data: { done: number; total: number; blockIndex?: number; error?: string }) => void) => {
+  ttsAll: async (id: string, engine: string, voice?: string, rate?: string, onProgress?: (data: { done: number; total: number; blockIndex?: number; error?: string }) => void) => {
     const res = await fetch(`${api.defaults.baseURL}/script-studio/docs/${id}/tts-all`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ engine }),
+      body: JSON.stringify({ engine, voice, rate }),
     });
     if (!res.ok) throw new Error(`TTS all failed: ${res.status}`);
     await readNDJSON(res, (parsed) => {

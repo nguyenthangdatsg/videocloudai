@@ -38,12 +38,13 @@ export function ChartBars(props: ChartBarsConfig) {
   const displayBars = sorted.slice(0, itemCount);
 
   // Scale dimensions proportionally to actual composition size
-  const scale = Math.min(W / 1920, H / 1080);
+  const isPortrait = H > W;
+  const scale = Math.min(W, H) / 1080;
   const barH = Math.round(54 * scale);
   const barGap = Math.round(20 * scale);
   const totalH = itemCount * (barH + barGap) - barGap;
-  const padL = Math.round(320 * scale);
-  const padR = Math.round(140 * scale);
+  const padL = Math.round((isPortrait ? 240 : 320) * scale);
+  const padR = Math.round((isPortrait ? 100 : 140) * scale);
   const barMaxW = W - padL - padR;
   // Shift bars down to leave room for title within the cropped overlay area
   const titleReserve = title ? Math.round(100 * scale) : 0;

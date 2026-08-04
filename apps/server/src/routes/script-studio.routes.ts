@@ -1141,8 +1141,8 @@ export function createScriptStudioRouter(): Router {
     ndLine(res, { type: 'start', total: narrationBlocks.length });
 
     const s = getSettings();
-    const voice = s.get('default_voice') ?? 'en-US-GuyNeural';
-    const rate = s.get('default_tts_rate') ?? '0';
+    const voice = (req.body as any)?.voice ?? s.get('default_voice') ?? 'en-US-GuyNeural';
+    const rate = (req.body as any)?.rate ?? s.get('default_tts_rate') ?? '0';
     const voiceGroups: VoiceGroup[] = doc.parsed?.voiceGroups ?? [];
     const docVoiceConfig: string | null = doc.parsed?.voiceConfig ?? null;
     const cacheDir = path.resolve(process.env.CACHE_DIR ?? './cache');
@@ -1507,7 +1507,8 @@ export function createScriptStudioRouter(): Router {
 
     const ext = path.extname(resultFilename);
     const base = path.basename(resultFilename, ext);
-    const exportFilename = `${base}_${preset}${ext}`;
+    const orientSuffix = isPortrait ? '_portrait' : '';
+    const exportFilename = `${base}_${preset}${orientSuffix}${ext}`;
     const exportPath = path.join(outDir, exportFilename);
 
     // If already exported, return immediately

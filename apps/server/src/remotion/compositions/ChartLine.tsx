@@ -28,22 +28,26 @@ export function ChartLine(props: ChartLineConfig) {
     return <div style={{ width: '100%', height: '100%', background: bgColor }} />;
   }
 
-  const scale = Math.min(W / 1920, H / 1080);
-  const padL = Math.round(140 * scale);
-  const padR = Math.round(100 * scale);
-  const padT = Math.round(160 * scale);
-  const padB = Math.round(160 * scale);
+  const isPortrait = H > W;
+  const scale = Math.min(W, H) / 1080;
+  const padL = Math.round((isPortrait ? 120 : 140) * scale);
+  const padR = Math.round((isPortrait ? 80 : 100) * scale);
+  const padT = Math.round((isPortrait ? 140 : 160) * scale);
+  const padB = Math.round((isPortrait ? 140 : 160) * scale);
   const chartW = W - padL - padR;
-  const chartH = H - padT - padB;
+  const chartH = Math.min(H - padT - padB, isPortrait ? Math.round(W * 1.0) : H - padT - padB);
 
   const values = dataPoints.map((p) => p.value);
   const minV = Math.min(...values);
   const maxV = Math.max(...values);
   const vRange = maxV - minV || 1;
 
+  // In portrait, center the chart area vertically
+  const chartTop = isPortrait ? Math.round((H - chartH) / 2) : padT;
+
   const pts = dataPoints.map((p, i) => ({
     x: padL + (i / (dataPoints.length - 1 || 1)) * chartW,
-    y: padT + chartH - ((p.value - minV) / vRange) * chartH,
+    y: chartTop + chartH - ((p.value - minV) / vRange) * chartH,
     label: p.label,
     value: p.value,
   }));
@@ -80,7 +84,7 @@ export function ChartLine(props: ChartLineConfig) {
       {title && (
         <div style={{
           position: 'absolute',
-          top: Math.round(120 * scale),
+          top: chartTop - Math.round(60 * scale),
           left: padL,
           right: padR,
           color: 'rgba(255,255,255,0.85)',
@@ -95,7 +99,7 @@ export function ChartLine(props: ChartLineConfig) {
       <svg width={W} height={H} style={{ position: 'absolute', top: 0, left: 0 }}>
         {/* Grid lines */}
         {[0, 0.25, 0.5, 0.75, 1].map((frac) => {
-          const y = padT + frac * chartH;
+          const y = chartTop + frac * chartH;
           const val = maxV - frac * vRange;
           return (
             <g key={frac}>
@@ -124,7 +128,7 @@ export function ChartLine(props: ChartLineConfig) {
         {/* Area fill */}
         {polyPts.length > 1 && (
           <polygon
-            points={`${polylineStr} ${polyPts[polyPts.length - 1].x},${padT + chartH} ${polyPts[0].x},${padT + chartH}`}
+            points={`${polylineStr} ${polyPts[polyPts.length - 1].x},${chartTop + chartH} ${polyPts[0].x},${chartTop + chartH}`}
             fill={accentColor}
             opacity={0.12}
           />
@@ -143,7 +147,7 @@ export function ChartLine(props: ChartLineConfig) {
                 {p.value >= 1000 ? `${(p.value / 1000).toFixed(0)}k` : p.value}
               </text>
               {/* Label below x-axis */}
-              <text x={p.x} y={padT + chartH + Math.round(48 * scale)} textAnchor="middle"
+              <text x={p.x} y={chartTop + chartH + Math.round(48 * scale)} textAnchor="middle"
                 fill="rgba(255,255,255,0.55)" fontSize={Math.round(24 * scale)}>
                 {p.label}
               </text>
@@ -155,7 +159,7 @@ export function ChartLine(props: ChartLineConfig) {
       {sourceLabel && (
         <div style={{
           position: 'absolute',
-          bottom: Math.round(80 * scale),
+          top: chartTop + chartH + Math.round(80 * scale),
           left: padL,
           right: padR,
           color: 'rgba(255,255,255,0.3)',

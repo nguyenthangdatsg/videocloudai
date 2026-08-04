@@ -16,8 +16,10 @@ export function ChartVs(props: ChartVsConfig) {
   } = props;
 
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width: W, height: H } = useVideoConfig();
   const holdAt = animationFrames ?? Math.floor(durationInFrames * 0.95);
+  const isPortrait = H > W;
+  const scale = Math.min(W, H) / 1080;
 
   const progress = interpolate(frame, [0, holdAt], [0, 1], {
     easing: Easing.out(Easing.cubic),
@@ -25,10 +27,15 @@ export function ChartVs(props: ChartVsConfig) {
   });
 
   const fadeIn = interpolate(frame, [0, Math.min(fps * 0.3, 7)], [0, 1], { extrapolateRight: 'clamp' });
-  const vsScale = interpolate(frame, [0, Math.min(fps * 0.5, 12)], [0.5, 1], {
+  const vsScaleAnim = interpolate(frame, [0, Math.min(fps * 0.5, 12)], [0.5, 1], {
     easing: Easing.out(Easing.back(1.5)),
     extrapolateRight: 'clamp',
   });
+
+  const valueFontSize = Math.round((isPortrait ? 88 : 96) * scale);
+  const labelFontSize = Math.round((isPortrait ? 32 : 34) * scale);
+  const titleFontSize = Math.round((isPortrait ? 36 : 38) * scale);
+  const vsFontSize = Math.round((isPortrait ? 64 : 72) * scale);
 
   return (
     <div style={{
@@ -45,12 +52,13 @@ export function ChartVs(props: ChartVsConfig) {
       {title && (
         <p style={{
           color: 'rgba(255,255,255,0.6)',
-          fontSize: 38,
+          fontSize: titleFontSize,
           fontWeight: 600,
           textTransform: 'uppercase',
           letterSpacing: '0.08em',
-          marginBottom: 48,
+          marginBottom: Math.round((isPortrait ? 60 : 48) * scale),
           textAlign: 'center',
+          padding: `0 ${Math.round(40 * scale)}px`,
         }}>
           {title}
         </p>
@@ -58,6 +66,7 @@ export function ChartVs(props: ChartVsConfig) {
 
       <div style={{
         display: 'flex',
+        flexDirection: isPortrait ? 'column' : 'row',
         alignItems: 'center',
         gap: 0,
         width: '100%',
@@ -65,16 +74,18 @@ export function ChartVs(props: ChartVsConfig) {
       }}>
         {/* Left */}
         <div style={{
-          flex: 1,
+          flex: isPortrait ? undefined : 1,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           opacity: progress,
-          transform: `translateX(${(1 - progress) * -40}px)`,
+          transform: isPortrait
+            ? `translateY(${(1 - progress) * -40}px)`
+            : `translateX(${(1 - progress) * -40}px)`,
         }}>
           <div style={{
             color: '#ffffff',
-            fontSize: 96,
+            fontSize: valueFontSize,
             fontWeight: 900,
             letterSpacing: '-0.03em',
             lineHeight: 1,
@@ -84,10 +95,10 @@ export function ChartVs(props: ChartVsConfig) {
           </div>
           <div style={{
             color: 'rgba(255,255,255,0.5)',
-            fontSize: 34,
-            marginTop: 16,
+            fontSize: labelFontSize,
+            marginTop: Math.round(16 * scale),
             textAlign: 'center',
-            padding: '0 40px',
+            padding: `0 ${Math.round(40 * scale)}px`,
           }}>
             {leftLabel}
           </div>
@@ -96,11 +107,11 @@ export function ChartVs(props: ChartVsConfig) {
         {/* VS */}
         <div style={{
           color: accentColor,
-          fontSize: 72,
+          fontSize: vsFontSize,
           fontWeight: 900,
           letterSpacing: '-0.02em',
-          padding: '0 32px',
-          transform: `scale(${vsScale})`,
+          padding: isPortrait ? `${Math.round(40 * scale)}px 0` : `0 ${Math.round(32 * scale)}px`,
+          transform: `scale(${vsScaleAnim})`,
           textShadow: `0 0 40px ${accentColor}66`,
         }}>
           VS
@@ -108,16 +119,18 @@ export function ChartVs(props: ChartVsConfig) {
 
         {/* Right */}
         <div style={{
-          flex: 1,
+          flex: isPortrait ? undefined : 1,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           opacity: progress,
-          transform: `translateX(${(1 - progress) * 40}px)`,
+          transform: isPortrait
+            ? `translateY(${(1 - progress) * 40}px)`
+            : `translateX(${(1 - progress) * 40}px)`,
         }}>
           <div style={{
             color: '#ffffff',
-            fontSize: 96,
+            fontSize: valueFontSize,
             fontWeight: 900,
             letterSpacing: '-0.03em',
             lineHeight: 1,
@@ -127,10 +140,10 @@ export function ChartVs(props: ChartVsConfig) {
           </div>
           <div style={{
             color: 'rgba(255,255,255,0.5)',
-            fontSize: 34,
-            marginTop: 16,
+            fontSize: labelFontSize,
+            marginTop: Math.round(16 * scale),
             textAlign: 'center',
-            padding: '0 40px',
+            padding: `0 ${Math.round(40 * scale)}px`,
           }}>
             {rightLabel}
           </div>

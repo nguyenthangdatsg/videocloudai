@@ -264,7 +264,7 @@ function autoFlowPrompt(block: ScriptBlock, orientation: 'landscape' | 'portrait
 
 // ── Block Step Editor (one-by-one preview + edit) ──
 
-function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0, ttsEngine, onTtsEngineChange }: {
+function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0, ttsEngine, onTtsEngineChange, voice, rate }: {
   blocks: ScriptBlock[];
   docId: string;
   orientation: 'landscape' | 'portrait';
@@ -272,6 +272,8 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   initialIdx?: number;
   ttsEngine: 'omnivoice' | 'edge-tts';
   onTtsEngineChange: (engine: 'omnivoice' | 'edge-tts') => void;
+  voice?: string;
+  rate?: string;
 }) {
   const { t } = useTranslation();
   const [idx, setIdx] = useState(initialIdx);
@@ -421,7 +423,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setTrimEnd(b?.clipEndSec != null ? String(b.clipEndSec) : '');
     // Auto-open Pexels picker for every block
     setPickerService('pexels');
-    setPickerOrientation('landscape');
+    setPickerOrientation(orientation);
     setShowPexelsPicker(true);
     // Seek video to clipStartSec without auto-playing
     setTimeout(() => {
@@ -439,7 +441,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     const q = currentBlock.pexelsQuery || currentBlock.narration.split(/\s+/).slice(0, 5).join(' ');
     if (!q) return;
     setPickerQuery(q);
-    fetchPickerCandidates('pexels', q, 'landscape');
+    fetchPickerCandidates('pexels', q, orientation);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clampedIdx]);
 
@@ -450,7 +452,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     if (currentBlock.audioDurationMs && currentBlock.audioDurationMs > 0) return;
     let cancelled = false;
     setGeneratingTts(true);
-    scriptStudioApi.ttsBlock(docId, currentBlock.blockIndex, { engine: ttsEngine }).then((data: any) => {
+    scriptStudioApi.ttsBlock(docId, currentBlock.blockIndex, { engine: ttsEngine, voice, rate }).then((data: any) => {
       if (cancelled) return;
       const eng = data.engine ? ` [${data.engine}]` : '';
       setActionLog([{ level: 'success', msg: `TTS ready (${(data.audioDurationMs / 1000).toFixed(1)}s)${eng}` }]);
@@ -870,7 +872,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setSplitSearchLoading(true);
     setSplitSearchResults([]);
     try {
-      const data = await scriptStudioApi.getAlternatives(docId, query.trim(), 'landscape', 12, svc);
+      const data = await scriptStudioApi.getAlternatives(docId, query.trim(), orientation, 12, svc);
       setSplitSearchResults((data.candidates ?? []).map((c: any) => ({
         id: c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? 0,
         thumbnail: c.thumbnail,
@@ -1184,7 +1186,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 title={t('scriptStudio.studio.regenVoice')}
                 onClick={() => {
                   setGeneratingTts(true);
-                  scriptStudioApi.ttsBlock(docId, block.blockIndex, { force: true, engine: ttsEngine }).then((data: any) => {
+                  scriptStudioApi.ttsBlock(docId, block.blockIndex, { force: true, engine: ttsEngine, voice, rate }).then((data: any) => {
                     const eng = data.engine ? ` [${data.engine}]` : '';
                     setActionLog([{ level: 'success', msg: `TTS regenerated (${(data.audioDurationMs / 1000).toFixed(1)}s)${eng}` }]);
                     onBlockUpdated();
@@ -1203,7 +1205,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                   setTtsAllRunning(true);
                   setTtsAllProgress({ done: 0, total: blocks.length });
                   setActionLog([{ level: 'info', msg: `Regenerating TTS for all blocks [${ttsEngine}]...` }]);
-                  scriptStudioApi.ttsAll(docId, ttsEngine, (data) => {
+                  scriptStudioApi.ttsAll(docId, ttsEngine, voice, rate, (data) => {
                     if (data.total) setTtsAllProgress({ done: data.done, total: data.total });
                     if (data.error) setActionLog(prev => [...prev, { level: 'error', msg: `Block ${data.blockIndex}: ${data.error}` }]);
                   }).then(() => {
@@ -2387,7 +2389,7 @@ function PickerVideo({ previewUrl, downloadUrl, duration }: { previewUrl: string
 
 // ── Block Card Player (mini video player with draggable audio range) ──
 
-function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, blockIndex, onClipsUpdated }: {
+function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, blockIndex, onClipsUpdated, orientation = 'landscape' }: {
   audioSrc: string;
   durationMs: number | null;
   clips: Array<{ assetPath: string; startSec: number; endSec: number | null; sourceDurationSec?: number; label?: string }>;
@@ -2395,6 +2397,7 @@ function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, block
   docId: string;
   blockIndex: number;
   onClipsUpdated: () => void;
+  orientation?: 'landscape' | 'portrait';
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -2537,7 +2540,7 @@ function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, block
             muted
             playsInline
             preload="metadata"
-            className="w-full aspect-video object-cover cursor-pointer"
+            className={`w-full object-cover cursor-pointer ${orientation === 'portrait' ? 'aspect-[9/16] max-h-[400px]' : 'aspect-video'}`}
             onClick={toggle}
             onLoadedMetadata={(e) => {
               const d = (e.currentTarget as HTMLVideoElement).duration;
@@ -3013,6 +3016,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
           docId={docId}
           blockIndex={block.blockIndex}
           onClipsUpdated={onBlockUpdated}
+          orientation={orientation}
         />
       )}
 
@@ -3779,12 +3783,12 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
               </select>
             </div>
 
-            {/* Orientation */}
+            {/* Video Format */}
             <div>
-              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.orientation')}</label>
+              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.videoFormat')}</label>
               <select className="input w-full text-sm" value={options.orientation ?? 'landscape'} onChange={(e) => onChange('orientation', e.target.value)}>
-                <option value="landscape">{t('scriptStudio.produce.landscape')}</option>
-                <option value="portrait">{t('scriptStudio.produce.portrait')}</option>
+                <option value="landscape">{t('scriptStudio.produce.formatLong')}</option>
+                <option value="portrait">{t('scriptStudio.produce.formatShort')}</option>
               </select>
             </div>
 
@@ -3958,28 +3962,34 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
     );
   }
   const isPortrait = orientation === 'portrait';
-  return (
-    <div className="flex flex-col items-center justify-start p-6 gap-4 overflow-y-auto h-full">
+
+  const videoPlayer = (
+    <video
+      ref={videoRef}
+      key={jobResult.resultUrl}
+      src={jobResult.resultUrl}
+      controls
+      autoPlay
+      onLoadedMetadata={() => { if (videoRef.current) videoRef.current.playbackRate = playbackRate; }}
+      className={`rounded-xl border border-green-500/20 shadow-xl bg-black ${
+        isPortrait ? 'max-h-[75vh] w-full' : 'w-full max-w-4xl'
+      }`}
+    />
+  );
+
+  const controlsSection = (
+    <>
       <div className="flex items-center gap-2">
-        <Check className="w-5 h-5 text-green-400 shrink-0" />
-        <p className="text-sm text-green-400 font-medium truncate">
+        <Check className="w-4 h-4 text-green-400 shrink-0" />
+        <p className="text-xs text-green-400 font-medium truncate">
           {jobResult.resultFilename}
           {jobResult.resultSizeKB ? ` — ${(jobResult.resultSizeKB / 1024).toFixed(1)} MB` : ''}
         </p>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${isPortrait ? 'bg-violet-500/15 text-violet-400' : 'bg-blue-500/15 text-blue-400'}`}>
+          {isPortrait ? '9:16' : '16:9'}
+        </span>
       </div>
-      <video
-        ref={videoRef}
-        key={jobResult.resultUrl}
-        src={jobResult.resultUrl}
-        controls
-        autoPlay
-        onLoadedMetadata={() => { if (videoRef.current) videoRef.current.playbackRate = playbackRate; }}
-        className={`rounded-xl border border-green-500/20 shadow-xl bg-black ${
-          isPortrait ? 'max-h-[70vh] max-w-[360px] w-full' : 'w-full max-w-4xl'
-        }`}
-      />
-      <div className="flex items-center gap-3">
-        {/* Speed rate buttons */}
+      <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1 bg-c-elevated rounded-lg border border-c-border px-1.5 py-1">
           {SPEED_OPTIONS.map((rate) => (
             <button
@@ -3998,21 +4008,21 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
         <a
           href={jobResult.resultUrl}
           download={jobResult.resultFilename}
-          className="btn-primary flex items-center gap-2 text-sm px-4 py-2"
+          className="btn-primary flex items-center gap-2 text-xs px-3 py-1.5"
         >
           {t('scriptStudio.studio.download')}
         </a>
         <button
-          className="btn-secondary flex items-center gap-2 text-sm px-4 py-2"
+          className="btn-secondary flex items-center gap-2 text-xs px-3 py-1.5"
           onClick={onRerun}
         >
           {t('scriptStudio.studio.rerun')}
         </button>
         <button
-          className="btn-secondary flex items-center gap-2 text-sm px-4 py-2 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20 text-red-500 border border-red-500/10"
+          className="btn-secondary flex items-center gap-2 text-xs px-3 py-1.5 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20 text-red-500 border border-red-500/10"
           onClick={onRemove}
         >
-          <Trash2 className="w-4 h-4" />
+          <Trash2 className="w-3.5 h-3.5" />
           {t('scriptStudio.studio.removeProduce')}
         </button>
       </div>
@@ -4046,10 +4056,14 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
           );
         })}
       </div>
+    </>
+  );
 
+  const metadataSection = (
+    <>
       {/* Synthetic content disclosure notice */}
       {(jobResult.aiShotCount ?? 0) > 0 && (
-        <div className="flex items-start gap-2 px-4 py-3 rounded-xl bg-violet-500/8 border border-violet-500/20 max-w-2xl w-full">
+        <div className="flex items-start gap-2 px-4 py-3 rounded-xl bg-violet-500/8 border border-violet-500/20 w-full">
           <Wand2 className="w-4 h-4 text-violet-400 shrink-0 mt-0.5" />
           <p className="text-xs text-violet-300/80 leading-relaxed">
             <strong className="text-violet-300">{t('scriptStudio.studio.aiDisclosureTitle')}</strong>
@@ -4059,7 +4073,7 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
       )}
 
       {/* YouTube Metadata */}
-      <div className="max-w-2xl w-full mt-2 space-y-3">
+      <div className="w-full mt-2 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-c-text flex items-center gap-2">
             <ExternalLink className="w-4 h-4 text-red-400" />
@@ -4120,6 +4134,28 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
           </div>
         )}
       </div>
+    </>
+  );
+
+  return (
+    <div className={`h-full overflow-y-auto p-6 ${isPortrait ? 'flex gap-6' : 'flex flex-col items-center gap-4'}`}>
+      {isPortrait ? (
+        <>
+          <div className="shrink-0 flex flex-col items-center" style={{ maxWidth: '340px' }}>
+            {videoPlayer}
+          </div>
+          <div className="flex-1 min-w-0 flex flex-col gap-3">
+            {controlsSection}
+            {metadataSection}
+          </div>
+        </>
+      ) : (
+        <>
+          {videoPlayer}
+          {controlsSection}
+          {metadataSection}
+        </>
+      )}
     </div>
   );
 }
@@ -4473,6 +4509,9 @@ export default function ScriptDoc() {
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${STATUS_CLASSES[doc.status] ?? 'bg-gray-500/15 text-gray-400'}`}>
               {doc.status}
             </span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${orientation === 'portrait' ? 'bg-violet-500/15 text-violet-400' : 'bg-blue-500/15 text-blue-400'}`}>
+              {orientation === 'portrait' ? '9:16 Short' : '16:9 Long'}
+            </span>
           </div>
         </div>
         {/* Re-sync removed: too dangerous, wipes user-assigned clips and audio */}
@@ -4592,6 +4631,8 @@ export default function ScriptDoc() {
                 onBlockUpdated={handleBlockUpdated}
                 ttsEngine={ttsEngine}
                 onTtsEngineChange={setTtsEngine}
+                voice={produceOptions.voice}
+                rate={produceOptions.rate}
               />
             </div>
           ) : (

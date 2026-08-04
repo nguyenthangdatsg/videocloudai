@@ -23,8 +23,10 @@ export function ChartBigNumber(props: ChartBigNumberConfig) {
   } = props;
 
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width: W, height: H } = useVideoConfig();
   const holdAt = animationFrames ?? Math.floor(durationInFrames * 0.95);
+  const isPortrait = H > W;
+  const scale = Math.min(W, H) / 1080;
 
   const progress = interpolate(frame, [0, holdAt], [0, 1], {
     easing: Easing.out(Easing.cubic),
@@ -33,6 +35,11 @@ export function ChartBigNumber(props: ChartBigNumberConfig) {
 
   const displayValue = value * progress;
   const opacity = interpolate(frame, [0, Math.min(fps * 0.3, 7)], [0, 1], { extrapolateRight: 'clamp' });
+
+  const valueFontSize = Math.round((isPortrait ? 140 : 160) * scale);
+  const prefixFontSize = Math.round((isPortrait ? 56 : 64) * scale);
+  const labelFontSize = Math.round((isPortrait ? 38 : 42) * scale);
+  const sourceFontSize = Math.round((isPortrait ? 26 : 28) * scale);
 
   return (
     <div style={{
@@ -49,13 +56,13 @@ export function ChartBigNumber(props: ChartBigNumberConfig) {
       {label && (
         <p style={{
           color: 'rgba(255,255,255,0.6)',
-          fontSize: 42,
+          fontSize: labelFontSize,
           fontWeight: 600,
           textTransform: 'uppercase',
           letterSpacing: '0.1em',
-          marginBottom: 24,
+          marginBottom: Math.round(24 * scale),
           textAlign: 'center',
-          padding: '0 60px',
+          padding: `0 ${Math.round(60 * scale)}px`,
         }}>
           {label}
         </p>
@@ -64,43 +71,42 @@ export function ChartBigNumber(props: ChartBigNumberConfig) {
       <div style={{
         display: 'flex',
         alignItems: 'baseline',
-        gap: 8,
+        gap: Math.round(8 * scale),
       }}>
         {prefix && (
-          <span style={{ color: accentColor, fontSize: 64, fontWeight: 700 }}>{prefix}</span>
+          <span style={{ color: accentColor, fontSize: prefixFontSize, fontWeight: 700 }}>{prefix}</span>
         )}
         <span style={{
           color: '#ffffff',
-          fontSize: 160,
+          fontSize: valueFontSize,
           fontWeight: 900,
           lineHeight: 1,
           letterSpacing: '-0.04em',
-          tabularNums: 'proportional-nums',
           fontVariantNumeric: 'tabular-nums',
         } as React.CSSProperties}>
           {formatNumber(displayValue)}
         </span>
         {suffix && (
-          <span style={{ color: accentColor, fontSize: 64, fontWeight: 700 }}>{suffix}</span>
+          <span style={{ color: accentColor, fontSize: prefixFontSize, fontWeight: 700 }}>{suffix}</span>
         )}
       </div>
 
       <div style={{
-        width: 80,
-        height: 4,
+        width: Math.round(80 * scale),
+        height: Math.round(4 * scale),
         background: accentColor,
-        borderRadius: 2,
-        marginTop: 32,
+        borderRadius: Math.round(2 * scale),
+        marginTop: Math.round(32 * scale),
         opacity: progress,
       }} />
 
       {sourceLabel && (
         <p style={{
           color: 'rgba(255,255,255,0.35)',
-          fontSize: 28,
-          marginTop: 24,
+          fontSize: sourceFontSize,
+          marginTop: Math.round(24 * scale),
           textAlign: 'center',
-          padding: '0 60px',
+          padding: `0 ${Math.round(60 * scale)}px`,
         }}>
           {sourceLabel}
         </p>
