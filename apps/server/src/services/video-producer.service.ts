@@ -73,7 +73,7 @@ export interface ProduceOptions {
   brightness?: number;
   /** Contrast adjustment (0.5 to 2.0, 1 = no change). Applied via FFmpeg eq filter. */
   contrast?: number;
-  /** Chart rectangle overlay opacity (0 = fully transparent, 1 = fully opaque). Default 0.5 */
+  /** Chart rectangle overlay opacity (0 = fully transparent, 1 = fully opaque). Default 0.85 */
   chartOpacity?: number;
   preset?: string;
   /** Watermark / logo overlay on the final video */
@@ -861,7 +861,7 @@ export async function reproduceSingleBlock(
   docId: string,
   blockIndex: number,
   orientation: 'landscape' | 'portrait' = 'landscape',
-  chartOpacity = 0.5,
+  chartOpacity = 0.85,
   animationDurationSec?: number,
   onLog?: (msg: string) => void,
   accentColor = '#7c6af5',
@@ -1407,7 +1407,7 @@ export async function produceBlocks(
           if (fs.existsSync(directBgPath)) {
             try {
               emit('info', `${ref(block)}: compositing chart rectangle over direct bg video ${block.clipAssetPath}...`, pct);
-              const chartOp = (options.chartOpacity ?? 0.5).toFixed(2);
+              const chartOp = (options.chartOpacity ?? 0.85).toFixed(2);
               const bgHash = crypto.createHash('sha256').update(block.clipAssetPath).digest('hex').slice(0, 8);
               const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${darkResult.filename}`;
               const compositePath = path.join(imageDir, compositeFilename);
@@ -1462,7 +1462,7 @@ export async function produceBlocks(
                 emit('info', `${ref(block)}: compositing chart rectangle over bg video...`, pct);
 
                 // Overlay dark-bg chart as a centered rectangle on dimmed bg video
-                const chartOp = (options.chartOpacity ?? 0.5).toFixed(2);
+                const chartOp = (options.chartOpacity ?? 0.85).toFixed(2);
                 const bgHash = crypto.createHash('sha256').update(bgCandidates[0].filename).digest('hex').slice(0, 8);
                 const compositeFilename = `chart_comp_o${chartOp}_bg${bgHash}_${darkResult.filename}`;
                 const compositePath = path.join(imageDir, compositeFilename);
@@ -1660,7 +1660,7 @@ export async function produceBlocks(
         block.narration ?? '',
         orientation,
         block.clipsJson ?? '',
-        options.chartOpacity ?? 0.5,
+        options.chartOpacity ?? 0.85,
         accentColor
       ].join('|'))
       .digest('hex')

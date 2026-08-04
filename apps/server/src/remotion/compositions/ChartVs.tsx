@@ -113,7 +113,7 @@ export function ChartVs(props: ChartVsConfig) {
           letterSpacing: '-0.02em',
           padding: isPortrait ? `${Math.round(40 * scale)}px 0` : `0 ${Math.round(32 * scale)}px`,
           transform: `scale(${vsScaleAnim})`,
-          textShadow: `0 0 40px ${accentColor}66`,
+          textShadow: 'none',
         }}>
           VS
         </div>
