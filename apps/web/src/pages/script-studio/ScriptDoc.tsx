@@ -3060,12 +3060,12 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
             Split
           </button>
           <button
-            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer bg-c-elevated border-c-border text-c-muted hover:text-orange-400 hover:border-orange-500/30 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer bg-c-elevated border-c-border text-c-muted hover:text-orange-400 hover:border-orange-500/30 disabled:opacity-40"
             onClick={handleBreakdown}
-            disabled={breakingDown || isProducing || (block.narration?.split(/(?<=[.!?])\s+/).length ?? 0) < 2}
+            disabled={breakingDown || isProducing || (block.narration?.split(/[.!?]\s+/).length ?? 0) < 2}
             title={t('scriptStudio.studio.breakdownTitle')}
           >
-            {breakingDown ? <Loader2 className="w-3 h-3 animate-spin" /> : <List className="w-3 h-3" />}
+            {breakingDown ? <Loader2 className="w-3 h-3 animate-spin" /> : <Scissors className="w-3 h-3" />}
             {t('scriptStudio.studio.breakdown')}
           </button>
           {block.chartSpec && (
