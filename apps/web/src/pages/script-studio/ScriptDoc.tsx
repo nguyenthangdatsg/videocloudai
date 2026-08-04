@@ -3808,6 +3808,34 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
             </div>
           </div>
 
+          {/* Brightness & Contrast */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.brightness')} ({((options.brightness ?? 0) >= 0 ? '+' : '')}{((options.brightness ?? 0) * 100).toFixed(0)}%)</label>
+              <input
+                type="range"
+                min={-0.3}
+                max={0.3}
+                step={0.05}
+                value={options.brightness ?? 0}
+                onChange={(e) => onChange('brightness', parseFloat(e.target.value))}
+                className="w-full accent-c-accent cursor-pointer"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-c-muted mb-1 block">{t('scriptStudio.produce.contrast')} ({((options.contrast ?? 1) * 100).toFixed(0)}%)</label>
+              <input
+                type="range"
+                min={0.5}
+                max={1.5}
+                step={0.05}
+                value={options.contrast ?? 1}
+                onChange={(e) => onChange('contrast', parseFloat(e.target.value))}
+                className="w-full accent-c-accent cursor-pointer"
+              />
+            </div>
+          </div>
+
           {/* Row 2: Background music */}
           <div className="rounded-lg border border-c-border bg-c-surface p-2.5 space-y-2">
             <label className="flex items-center gap-2 cursor-pointer">

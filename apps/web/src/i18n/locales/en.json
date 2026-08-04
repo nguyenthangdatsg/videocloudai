@@ -1791,6 +1791,8 @@
       "demoVoice": "Preview voice",
       "rate": "TTS Rate",
       "speedRate": "Speed Rate",
+      "brightness": "Brightness",
+      "contrast": "Contrast",
       "orientation": "Orientation",
       "videoFormat": "Video Format",
       "formatLong": "Long (16:9) — YouTube",

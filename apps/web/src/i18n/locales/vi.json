@@ -1789,6 +1789,8 @@
       "demoVoice": "Nghe thử giọng",
       "rate": "Tốc độ TTS",
       "speedRate": "Tốc độ phát",
+      "brightness": "Độ sáng",
+      "contrast": "Tương phản",
       "orientation": "Hướng",
       "videoFormat": "Định dạng video",
       "formatLong": "Dài (16:9) — YouTube",

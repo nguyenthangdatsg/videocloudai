@@ -67,8 +67,12 @@ export interface ProduceOptions {
    *  'freeze_hold' (default): generate ONE clip, play it once, hold last frame for the remainder.
    *  'multi_generate': generate one clip PER sub-shot with character-locked prompts. */
   aiLongSceneMode?: 'freeze_hold' | 'multi_generate';
-  /** Playback speed multiplier for the final video (1 = normal, 2.5/5/7.5/10 = faster). */
+  /** Playback speed multiplier for the final video (1 = normal, up to 2.0 = faster). */
   speedRate?: number;
+  /** Brightness adjustment (-0.5 to 0.5, 0 = no change). Applied via FFmpeg eq filter. */
+  brightness?: number;
+  /** Contrast adjustment (0.5 to 2.0, 1 = no change). Applied via FFmpeg eq filter. */
+  contrast?: number;
   /** Chart rectangle overlay opacity (0 = fully transparent, 1 = fully opaque). Default 0.5 */
   chartOpacity?: number;
   preset?: string;
@@ -2100,39 +2104,59 @@ export async function produceBlocks(
     ], { timeout: 300_000 });
   }
 
-  // Speed rate: re-encode with faster playback if speedRate > 1
+  // Post-processing: speed rate + brightness/contrast (combined in one pass to avoid double re-encode)
   const speedRate = options.speedRate ?? 1;
+  const brightness = options.brightness ?? 0;
+  const contrast = options.contrast ?? 1;
   let finalOutput = outputFile;
   let finalDurationSec = totalDurationSec;
 
-  if (speedRate > 1) {
-    emit('info', `Applying ${speedRate}x speed...`, 98);
-    const spedUpFile = outputFile.replace(/\.mp4$/, `_${speedRate}x.mp4`);
+  const needsSpeed = speedRate > 1;
+  const needsEq = brightness !== 0 || contrast !== 1;
 
-    // Video: setpts=PTS/N makes it N times faster
-    // Audio: chain atempo filters (each max 2.0x) to reach target speed
-    const atempoFilters: string[] = [];
-    let remaining = speedRate;
-    while (remaining > 2.0) {
-      atempoFilters.push('atempo=2.0');
-      remaining /= 2.0;
+  if (needsSpeed || needsEq) {
+    const parts: string[] = [];
+    if (needsSpeed) parts.push(`${speedRate}x speed`);
+    if (needsEq) parts.push(`brightness=${brightness.toFixed(2)} contrast=${contrast.toFixed(2)}`);
+    emit('info', `Applying ${parts.join(', ')}...`, 98);
+
+    const suffix = [
+      needsSpeed ? `_${speedRate}x` : '',
+      needsEq ? `_b${brightness.toFixed(1)}_c${contrast.toFixed(1)}` : '',
+    ].join('');
+    const postFile = outputFile.replace(/\.mp4$/, `${suffix}.mp4`);
+
+    // Build video filters
+    const vFilters: string[] = [];
+    if (needsSpeed) vFilters.push(`setpts=PTS/${speedRate}`);
+    if (needsEq) vFilters.push(`eq=brightness=${brightness.toFixed(3)}:contrast=${contrast.toFixed(3)}`);
+
+    // Build audio filters
+    const aFilters: string[] = [];
+    if (needsSpeed) {
+      let remaining = speedRate;
+      while (remaining > 2.0) {
+        aFilters.push('atempo=2.0');
+        remaining /= 2.0;
+      }
+      aFilters.push(`atempo=${remaining.toFixed(4)}`);
     }
-    atempoFilters.push(`atempo=${remaining.toFixed(4)}`);
 
-    await execFileWithCancel(ffmpeg, [
-      '-i', outputFile,
-      '-vf', `setpts=PTS/${speedRate}`,
-      '-af', atempoFilters.join(','),
+    const args = ['-i', outputFile];
+    args.push('-vf', vFilters.join(','));
+    if (aFilters.length > 0) args.push('-af', aFilters.join(','));
+    args.push(
       '-c:v', 'libx264', '-preset', preset, '-crf', '23',
       '-c:a', 'aac', '-b:a', '192k',
-      '-movflags', '+faststart', '-y', spedUpFile,
-    ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
+      '-movflags', '+faststart', '-y', postFile,
+    );
 
-    // Replace original with sped-up version
+    await execFileWithCancel(ffmpeg, args, { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
+
     try { fs.unlinkSync(outputFile); } catch { /* ignore */ }
-    finalOutput = spedUpFile;
-    finalDurationSec = totalDurationSec / speedRate;
-    emit('info', `Speed ${speedRate}x applied → ${finalDurationSec.toFixed(1)}s`, 99);
+    finalOutput = postFile;
+    if (needsSpeed) finalDurationSec = totalDurationSec / speedRate;
+    emit('info', `Post-processing applied → ${path.basename(postFile)}`, 99);
   }
 
   // Clean up temp dir
