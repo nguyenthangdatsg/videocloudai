@@ -2748,7 +2748,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     setBreakingDown(true);
     try {
       const result = await scriptStudioApi.breakdownBlock(docId, block.blockIndex);
-      setActionLog([{ level: 'success', msg: `Block broken down into ${result.count} blocks` }]);
+      setFetchLog(`Block broken down into ${result.count} blocks`);
       onBlockUpdated();
     } catch (err: any) {
       setFetchLog(`Breakdown failed: ${err.response?.data?.error ?? err.message}`);
@@ -3036,7 +3036,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
 
       {/* Reproduce controls */}
       <div className="flex flex-col gap-1 px-3.5 pb-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
               reproducing
