@@ -1138,6 +1138,10 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-block`);
     return res.data as { ok: boolean; newBlockIndex: number; leftNarration: string; rightNarration: string };
   },
+  breakdownBlock: async (id: string, blockIndex: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/breakdown`);
+    return res.data as { ok: boolean; count: number; sentences: string[] };
+  },
   splitScreen: async (id: string, blockIndex: number, leftClip: string, rightClip: string, opts?: { middleText?: string; middleStyle?: string; accentColor?: string; leftLabel?: string; rightLabel?: string; labelPosition?: string; labelStyle?: string }) => {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-screen`, { leftClip, rightClip, ...opts });
     return res.data as { ok: boolean; filename: string; duration: number };

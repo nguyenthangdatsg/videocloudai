@@ -1678,6 +1678,78 @@ export function splitBlock(docId: string, blockIndex: number): { ok: boolean; ne
   return { ok: true, newBlockIndex: newIdx, leftNarration, rightNarration };
 }
 
+/**
+ * Break down a block into multiple blocks — one per sentence.
+ * Similar to splitBlock but produces N blocks instead of 2.
+ */
+export function breakdownBlock(docId: string, blockIndex: number): { ok: boolean; count: number; sentences: string[] } {
+  const row = dbGet<ScriptBlockRow>(
+    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    [docId, blockIndex],
+  );
+  if (!row) throw new Error(`Block ${blockIndex} not found`);
+  const narration = row.narration ?? '';
+  if (!narration.trim()) throw new Error('Cannot break down an empty block');
+
+  // Split narration into sentences
+  const sentences = narration
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+
+  if (sentences.length <= 1) throw new Error('Block has only one sentence — nothing to break down');
+
+  const now = new Date().toISOString();
+  const displayNum = row.display_number ?? (blockIndex + 1);
+
+  // Backfill display_number on all blocks that don't have one yet
+  dbRun(
+    `UPDATE script_blocks SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`,
+    [docId],
+  );
+
+  // Shift all subsequent blocks up by (sentences.length - 1) to make room
+  const slotsNeeded = sentences.length - 1;
+  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxIdx = maxRow?.mx ?? blockIndex;
+  for (let i = maxIdx; i > blockIndex; i--) {
+    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+      [i + slotsNeeded, now, docId, i]);
+  }
+
+  // Update original block with the first sentence
+  const oldFiles = collectBlockClipFiles(row);
+  dbRun(
+    `UPDATE script_blocks SET narration = ?, display_number = ?, content_hash = NULL,
+     audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
+     clip_asset_path = NULL, clips_json = NULL, rendered_clip_path = NULL,
+     status = 'pending', error_msg = NULL, updated_at = ?
+     WHERE doc_id = ? AND block_index = ?`,
+    [sentences[0], displayNum, now, docId, blockIndex],
+  );
+  for (const f of oldFiles) deleteClipFile(docId, f);
+
+  // Insert new blocks for remaining sentences
+  for (let i = 1; i < sentences.length; i++) {
+    const newIdx = blockIndex + i;
+    const motion = MOTION_CYCLE[newIdx % MOTION_CYCLE.length];
+    dbRun(
+      `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number,
+       narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt,
+       visual_type, motion, display_number, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)`,
+      [randomUUID(), docId, newIdx, row.segment_index, row.segment_name, row.scene_number,
+       sentences[i], row.pexels_query, row.pace_hint, row.voice_config, row.visual_type, motion,
+       displayNum, now, now],
+    );
+  }
+
+  const wordCounts = sentences.map(s => `${countWords(s)}w`).join(', ');
+  addLog(docId, 'info', 'parse', `Block ${displayNum} broken down into ${sentences.length} blocks (${wordCounts})`);
+
+  return { ok: true, count: sentences.length, sentences };
+}
+
 export function updateBlockAi(
   docId: string,
   blockIndex: number,

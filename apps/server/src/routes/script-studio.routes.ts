@@ -20,6 +20,7 @@ import {
   updateBlockClips,
   updateBlockAudio,
   splitBlock,
+  breakdownBlock,
   type BlockClip,
   buildFlowPrompt,
   syncBlocksFromParsed,
@@ -1247,6 +1248,19 @@ export function createScriptStudioRouter(): Router {
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
     try {
       const result = splitBlock(docId, blockIndex);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Break down a block into multiple blocks (one per sentence)
+  router.post('/docs/:id/blocks/:blockIndex/breakdown', (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string);
+    if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
+    try {
+      const result = breakdownBlock(docId, blockIndex);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });

@@ -2702,6 +2702,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   const [reproducing, setReproducing] = useState(false);
   const [reproduceLog, setReproduceLog] = useState<string[]>([]);
   const [splittingBlock, setSplittingBlock] = useState(false);
+  const [breakingDown, setBreakingDown] = useState(false);
   const [chartOpacity, setChartOpacity] = useState(0.5);
   const [chartColor, setChartColor] = useState('#7c6af5');
   const defaultAnimSec = block.audioDurationMs ? (block.audioDurationMs / 1000) / 2 : 4;
@@ -2740,6 +2741,19 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
       setFetchLog(`Split failed: ${err.response?.data?.error ?? err.message}`);
     }
     setSplittingBlock(false);
+  };
+
+  const handleBreakdown = async () => {
+    if (breakingDown) return;
+    setBreakingDown(true);
+    try {
+      const result = await scriptStudioApi.breakdownBlock(docId, block.blockIndex);
+      setActionLog([{ level: 'success', msg: `Block broken down into ${result.count} blocks` }]);
+      onBlockUpdated();
+    } catch (err: any) {
+      setFetchLog(`Breakdown failed: ${err.response?.data?.error ?? err.message}`);
+    }
+    setBreakingDown(false);
   };
 
   const saveQuery = async () => {
@@ -3044,6 +3058,15 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
           >
             {splittingBlock ? <Loader2 className="w-3 h-3 animate-spin" /> : <Scissors className="w-3 h-3" />}
             Split
+          </button>
+          <button
+            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer bg-c-elevated border-c-border text-c-muted hover:text-orange-400 hover:border-orange-500/30 disabled:opacity-50"
+            onClick={handleBreakdown}
+            disabled={breakingDown || isProducing || (block.narration?.split(/(?<=[.!?])\s+/).length ?? 0) < 2}
+            title={t('scriptStudio.studio.breakdownTitle')}
+          >
+            {breakingDown ? <Loader2 className="w-3 h-3 animate-spin" /> : <List className="w-3 h-3" />}
+            {t('scriptStudio.studio.breakdown')}
           </button>
           {block.chartSpec && (
             <>

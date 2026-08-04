@@ -1726,6 +1726,8 @@
       "removeProduce": "Xóa video",
       "confirmRemoveProduce": "Bạn có chắc muốn xóa video đã sản xuất không?",
       "chartColor": "Màu biểu đồ",
+      "breakdown": "Tách nhỏ",
+      "breakdownTitle": "Tách thành từng block theo câu",
       "chartOpacity": "Độ mờ lớp phủ biểu đồ (0 = trong suốt, 1 = đặc)",
       "chartAnim": "Thời lượng hoạt ảnh biểu đồ (giây)",
       "rendering": "Đang render...",

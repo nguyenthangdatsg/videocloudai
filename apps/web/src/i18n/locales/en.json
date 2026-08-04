@@ -1726,6 +1726,8 @@
       "removeProduce": "Remove Video",
       "confirmRemoveProduce": "Are you sure you want to delete the produced video?",
       "chartColor": "Chart accent color",
+      "breakdown": "Breakdown",
+      "breakdownTitle": "Break down into one block per sentence",
       "chartOpacity": "Chart overlay opacity (0 = transparent, 1 = solid)",
       "chartAnim": "Chart animation duration in seconds",
       "rendering": "Rendering...",
