@@ -40,11 +40,11 @@ export function ChartBars(props: ChartBarsConfig) {
   // Scale dimensions proportionally to actual composition size
   const isPortrait = H > W;
   const scale = Math.min(W, H) / 1080;
-  const barH = Math.round(54 * scale);
-  const barGap = Math.round(20 * scale);
+  const barH = Math.round((isPortrait ? 72 : 54) * scale);
+  const barGap = Math.round((isPortrait ? 28 : 20) * scale);
   const totalH = itemCount * (barH + barGap) - barGap;
-  const padL = Math.round((isPortrait ? 240 : 320) * scale);
-  const padR = Math.round((isPortrait ? 100 : 140) * scale);
+  const padL = Math.round((isPortrait ? 200 : 320) * scale);
+  const padR = Math.round((isPortrait ? 80 : 140) * scale);
   const barMaxW = W - padL - padR;
   // Shift bars down to leave room for title within the cropped overlay area
   const titleReserve = title ? Math.round(100 * scale) : 0;
@@ -64,13 +64,14 @@ export function ChartBars(props: ChartBarsConfig) {
       {title && (
         <div style={{
           position: 'absolute',
-          top: startY - Math.round(60 * scale),
+          top: startY - Math.round((isPortrait ? 80 : 60) * scale),
           left: 0,
           right: 0,
           color: 'rgba(255,255,255,0.85)',
-          fontSize: Math.round(44 * scale),
+          fontSize: Math.round((isPortrait ? 48 : 44) * scale),
           fontWeight: 700,
           textAlign: 'center',
+          padding: `0 ${Math.round(40 * scale)}px`,
         }}>
           {title}
         </div>
@@ -94,7 +95,8 @@ export function ChartBars(props: ChartBarsConfig) {
               : String(bar.value);
 
           const isTop = i === 0 && sortOrder !== 'asc';
-          const fontSize = Math.round(26 * scale);
+          const fontSize = Math.round((isPortrait ? 28 : 26) * scale);
+          const maxNameLen = isPortrait ? 14 : 20;
 
           return (
             <g key={i}>
@@ -116,7 +118,7 @@ export function ChartBars(props: ChartBarsConfig) {
                 fontSize={fontSize}
                 fontWeight={isTop ? 700 : 400}
               >
-                {bar.name.length > 20 ? bar.name.slice(0, 20) + '…' : bar.name}
+                {bar.name.length > maxNameLen ? bar.name.slice(0, maxNameLen) + '…' : bar.name}
               </text>
               {/* Value */}
               {barProgress > 0.3 && (

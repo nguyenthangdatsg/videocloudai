@@ -30,12 +30,13 @@ export function ChartLine(props: ChartLineConfig) {
 
   const isPortrait = H > W;
   const scale = Math.min(W, H) / 1080;
-  const padL = Math.round((isPortrait ? 120 : 140) * scale);
-  const padR = Math.round((isPortrait ? 80 : 100) * scale);
-  const padT = Math.round((isPortrait ? 140 : 160) * scale);
-  const padB = Math.round((isPortrait ? 140 : 160) * scale);
+  const padL = Math.round((isPortrait ? 100 : 140) * scale);
+  const padR = Math.round((isPortrait ? 60 : 100) * scale);
+  const padT = Math.round((isPortrait ? 120 : 160) * scale);
+  const padB = Math.round((isPortrait ? 120 : 160) * scale);
   const chartW = W - padL - padR;
-  const chartH = Math.min(H - padT - padB, isPortrait ? Math.round(W * 1.0) : H - padT - padB);
+  // In portrait, let chart use up to 1.4x width for height so it fills the tall frame
+  const chartH = Math.min(H - padT - padB, isPortrait ? Math.round(W * 1.4) : H - padT - padB);
 
   const values = dataPoints.map((p) => p.value);
   const minV = Math.min(...values);
@@ -84,11 +85,11 @@ export function ChartLine(props: ChartLineConfig) {
       {title && (
         <div style={{
           position: 'absolute',
-          top: chartTop - Math.round(60 * scale),
+          top: chartTop - Math.round((isPortrait ? 80 : 60) * scale),
           left: padL,
           right: padR,
           color: 'rgba(255,255,255,0.85)',
-          fontSize: Math.round(44 * scale),
+          fontSize: Math.round((isPortrait ? 48 : 44) * scale),
           fontWeight: 700,
           textAlign: 'center',
         }}>
@@ -106,7 +107,7 @@ export function ChartLine(props: ChartLineConfig) {
               <line x1={padL} y1={y} x2={padL + chartW} y2={y}
                 stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
               <text x={padL - Math.round(12 * scale)} y={y + 5} textAnchor="end"
-                fill="rgba(255,255,255,0.35)" fontSize={Math.round(22 * scale)}>
+                fill="rgba(255,255,255,0.35)" fontSize={Math.round((isPortrait ? 26 : 22) * scale)}>
                 {val >= 1000 ? `${(val / 1000).toFixed(0)}k` : Math.round(val)}
               </text>
             </g>
@@ -119,7 +120,7 @@ export function ChartLine(props: ChartLineConfig) {
             points={polylineStr}
             fill="none"
             stroke={accentColor}
-            strokeWidth={Math.round(5 * scale)}
+            strokeWidth={Math.round((isPortrait ? 6 : 5) * scale)}
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -141,14 +142,14 @@ export function ChartLine(props: ChartLineConfig) {
           const dotOpacity = interpolate(visibleCount, [i - 0.3, i], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
           return (
             <g key={i} opacity={dotOpacity}>
-              <circle cx={p.x} cy={p.y} r={Math.round(10 * scale)} fill={accentColor} />
-              <text x={p.x} y={p.y - Math.round(20 * scale)} textAnchor="middle"
-                fill="#fff" fontSize={Math.round(22 * scale)} fontWeight={700}>
+              <circle cx={p.x} cy={p.y} r={Math.round((isPortrait ? 12 : 10) * scale)} fill={accentColor} />
+              <text x={p.x} y={p.y - Math.round((isPortrait ? 24 : 20) * scale)} textAnchor="middle"
+                fill="#fff" fontSize={Math.round((isPortrait ? 26 : 22) * scale)} fontWeight={700}>
                 {p.value >= 1000 ? `${(p.value / 1000).toFixed(0)}k` : p.value}
               </text>
               {/* Label below x-axis */}
-              <text x={p.x} y={chartTop + chartH + Math.round(48 * scale)} textAnchor="middle"
-                fill="rgba(255,255,255,0.55)" fontSize={Math.round(24 * scale)}>
+              <text x={p.x} y={chartTop + chartH + Math.round((isPortrait ? 56 : 48) * scale)} textAnchor="middle"
+                fill="rgba(255,255,255,0.55)" fontSize={Math.round((isPortrait ? 28 : 24) * scale)}>
                 {p.label}
               </text>
             </g>
