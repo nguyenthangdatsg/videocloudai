@@ -20,6 +20,7 @@ import {
   getJobStatus,
   type LogLevel,
   type ScriptBlockRecord,
+  type OverlayStyle,
   type VoiceGroup,
   type ResolvedVoiceConfig,
 } from './script-studio.service';
@@ -706,6 +707,7 @@ function buildAssSubtitles(
     audioDurationMs: number | null;
     narration: string;
     audioPath: string | null;
+    openingText?: string | null;
   }>,
   w: number,
   h: number,
@@ -767,6 +769,12 @@ function buildAssSubtitles(
   const karaokeTag = animation === 'word-highlight' ? '\\kf' : '\\k';
 
   for (const block of blocks) {
+    // Opening blocks have no audio — advance offset by fixed duration
+    if (block.openingText) {
+      globalOffsetMs += 3000;
+      continue;
+    }
+
     const dur = block.audioDurationMs ?? 0;
 
     if (block.words && block.words.length > 0) {
@@ -853,6 +861,47 @@ function buildAssSubtitles(
   }
 
   return header + '\n' + events.join('\n') + '\n';
+}
+
+// ── Overlay text drawtext filter builder ──
+
+const OVERLAY_FONT_SIZE_MAP: Record<string, number> = { sm: 25, md: 18, lg: 14, xl: 10 };
+
+function buildOverlayDrawtext(overlays: string[], style: OverlayStyle | null, w: number, h: number): string {
+  if (overlays.length === 0) return '';
+  const st = style ?? {};
+  const fontColor = st.color ?? 'white';
+  const sizeDivisor = OVERLAY_FONT_SIZE_MAP[st.fontSize ?? 'md'] ?? 18;
+  const fontSize = Math.round(h / sizeDivisor);
+  const lineGap = Math.round(fontSize * 1.4);
+  const totalTextH = overlays.length * lineGap;
+  const pos = st.position ?? 'center';
+  const baseY = pos === 'top' ? Math.round(h * 0.08)
+    : pos === 'bottom' ? h - totalTextH - Math.round(h * 0.08)
+    : Math.round((h - totalTextH) / 2);
+
+  let vf = '';
+
+  // Background rectangle (drawn first, behind text)
+  if (st.bgEnabled) {
+    const bgColor = st.bgColor ?? 'black';
+    const bgOp = Math.min(1, Math.max(0, st.bgOpacity ?? 0.6));
+    const padX = Math.round(fontSize * 0.8);
+    const padY = Math.round(fontSize * 0.4);
+    const boxY = baseY - padY;
+    const boxH = totalTextH + padY * 2;
+    // drawbox filter: full-width rectangle behind text
+    vf += `,drawbox=x=0:y=${boxY}:w=${w}:h=${boxH}:color=${bgColor}@${bgOp.toFixed(2)}:t=fill`;
+  }
+
+  // Text lines
+  for (let i = 0; i < overlays.length; i++) {
+    const escaped = overlays[i].replace(/[:\\'"]/g, '\\$&');
+    const yPos = baseY + i * lineGap;
+    vf += `,drawtext=text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:x=(w-text_w)/2:y=${yPos}:borderw=3:bordercolor=black@0.6`;
+  }
+
+  return vf;
 }
 
 // ── Single-block reproduce ──
@@ -957,9 +1006,6 @@ export async function reproduceSingleBlock(
     return { clipPath: darkChartPath, filename: darkResult.filename, durationSec: chartDur };
   }
 
-  // ── Pexels / AI / other block — re-encode clip ──
-  if (!block.clipAssetPath) throw new Error('Block has no clip');
-
   const resolveClip = (filename: string, vtype: string): string | null => {
     const dirs = vtype === 'chart' ? [chartDir, imageDir] : [imageDir, chartDir];
     for (const d of dirs) {
@@ -969,20 +1015,67 @@ export async function reproduceSingleBlock(
     return null;
   };
 
+  // ── Opening block — title card with text overlay ──
+  if (block.openingText) {
+    const openingDurSec = 3;
+    const clipPath = block.clipAssetPath ? resolveClip(block.clipAssetPath, block.visualType) : null;
+    const escapedText = block.openingText.replace(/[:\\'"]/g, '\\$&');
+    const fontSize = Math.round(h / 15);
+    const drawText = `drawtext=text='${escapedText}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black@0.6`;
+    const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+
+    fs.mkdirSync(outDir, { recursive: true });
+    const segOut = path.join(outDir, `reproduced_block_${blockIndex}_${Date.now()}.mp4`);
+
+    if (clipPath) {
+      log(`Encoding opening title card with bg (${openingDurSec}s)...`);
+      await execFileAsync(ffmpeg, [
+        '-stream_loop', '-1', '-i', clipPath,
+        '-vf', `${scaleVf},${drawText},format=yuv420p`,
+        '-t', openingDurSec.toFixed(3), '-r', '24',
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+        '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+        '-an', '-y', segOut,
+      ], { timeout: 120_000 });
+    } else {
+      log(`Encoding opening title card (no bg, ${openingDurSec}s)...`);
+      await execFileAsync(ffmpeg, [
+        '-f', 'lavfi', '-i', `color=c=black:s=${w}x${h}:r=24`,
+        '-vf', drawText, '-t', openingDurSec.toFixed(3),
+        '-pix_fmt', 'yuv420p', '-y', segOut,
+      ], { timeout: 60_000 });
+    }
+
+    updateBlockRendered(docId, blockIndex, segOut);
+    log(`Done: ${path.basename(segOut)}`);
+    return { clipPath: segOut, filename: path.basename(segOut), durationSec: openingDurSec };
+  }
+
+  // ── Pexels / AI / other block — re-encode clip ──
+  if (!block.clipAssetPath) throw new Error('Block has no clip');
+
   const srcPath = resolveClip(block.clipAssetPath, block.visualType);
   if (!srcPath) throw new Error(`Source clip not found: ${block.clipAssetPath}`);
 
   fs.mkdirSync(outDir, { recursive: true });
   const segOut = path.join(outDir, `reproduced_block_${blockIndex}_${Date.now()}.mp4`);
-  const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h},format=yuv420p`;
   const trimStart = block.clipStartSec ?? 0;
+
+  // Build video filter: scale + optional overlay text
+  const scaleFilter = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+  const overlayTexts = block.overlays ?? [];
+  const overlayVf = buildOverlayDrawtext(overlayTexts, block.overlayStyle ?? null, w, h);
+  const vfChain = scaleFilter + overlayVf + ',format=yuv420p';
+  if (overlayTexts.length > 0) {
+    log(`Overlay text: ${overlayTexts.join(' | ')} [${block.overlayStyle?.fontSize ?? 'md'}, ${block.overlayStyle?.position ?? 'center'}${block.overlayStyle?.bgEnabled ? ', bg' : ''}]`);
+  }
 
   log(`Re-encoding clip: ${block.clipAssetPath} (${audioDurSec.toFixed(1)}s)...`);
   await execFileAsync(ffmpeg, [
     '-ss', String(trimStart),
     '-stream_loop', '-1',
     '-i', srcPath,
-    '-vf', scaleVf,
+    '-vf', vfChain,
     '-t', audioDurSec.toFixed(3),
     '-r', '24',
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
@@ -1103,7 +1196,7 @@ export async function produceBlocks(
     const pct = Math.round((i / blocks.length) * 30);
 
     if (!block.narration?.trim()) {
-      emit('info', `${ref(block)}: skipped (no narration)`, pct);
+      emit('info', `${ref(block)}: ${block.openingText ? 'opening block — no audio needed' : 'skipped (no narration)'}`, pct);
       continue;
     }
 
@@ -1645,7 +1738,10 @@ export async function produceBlocks(
     const block = blocksAfterVisuals[i];
     const pct = 60 + Math.round((i / blocksAfterVisuals.length) * 25);
 
-    if (!block.audioPath || !(block.audioDurationMs! > 0)) {
+    const isOpening = !!block.openingText;
+    const openingDurSec = 3;
+
+    if (!isOpening && (!block.audioPath || !(block.audioDurationMs! > 0))) {
       emit('warn', `${ref(block)}: no audio — skipping clip`, pct);
       continue;
     }
@@ -1657,7 +1753,7 @@ export async function produceBlocks(
         block.clipEndSec ?? 0,
         block.motion ?? '',
         block.visualType ?? '',
-        block.narration ?? '',
+        isOpening ? `opening:${block.openingText}` : (block.narration ?? ''),
         orientation,
         block.clipsJson ?? '',
         options.chartOpacity ?? 0.85,
@@ -1666,7 +1762,7 @@ export async function produceBlocks(
       .digest('hex')
       .slice(0, 16);
 
-    const contentHash = block.contentHash ?? 'static';
+    const contentHash = block.contentHash ?? (isOpening ? 'opening' : 'static');
     const persistentPath = path.join(docDir, `block_${i}_${contentHash}_${visualHash}.mp4`);
 
     // Check if already rendered and file exists (skip cache for chart blocks — always re-composite)
@@ -1677,6 +1773,56 @@ export async function produceBlocks(
       }
       blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
       encodedCount++;
+      continue;
+    }
+
+    // Resolve source clip path
+    const resolveClipPath = (filename: string, vtype: string): string | null => {
+      const dirs = vtype === 'chart' ? [chartDir, imageDir] : [imageDir, chartDir];
+      for (const d of dirs) {
+        const p = path.join(d, filename);
+        if (fs.existsSync(p)) return p;
+      }
+      return null;
+    };
+
+    // ── Opening block: title card with text overlay on background media ──
+    // Must come before the blank-screen fallback so clipless opening blocks still get text
+    if (isOpening && block.openingText) {
+      const clipPath = block.clipAssetPath ? resolveClipPath(block.clipAssetPath, block.visualType) : null;
+      const escapedText = block.openingText.replace(/[:\\'"]/g, '\\$&');
+      const fontSize = Math.round(h / 15);
+      const drawText = `drawtext=text='${escapedText}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black@0.6`;
+      const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+
+      try {
+        if (clipPath) {
+          emit('info', `${ref(block)}: encoding opening title card (${openingDurSec}s)...`, pct);
+          await execFileWithCancel(ffmpeg, [
+            '-stream_loop', '-1', '-i', clipPath,
+            '-vf', `${scaleVf},${drawText},format=yuv420p`,
+            '-t', openingDurSec.toFixed(3), '-r', String(fps),
+            '-c:v', 'libx264', '-preset', preset, '-crf', '23',
+            '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+            '-an', '-y', persistentPath,
+          ], { timeout: 120_000 });
+        } else {
+          emit('info', `${ref(block)}: encoding opening title card (no bg, ${openingDurSec}s)...`, pct);
+          await execFileWithCancel(ffmpeg, [
+            '-f', 'lavfi', '-i', `color=c=black:s=${w}x${h}:r=24`,
+            '-vf', drawText, '-t', openingDurSec.toFixed(3),
+            '-pix_fmt', 'yuv420p', '-y', persistentPath,
+          ], { timeout: 60_000 });
+        }
+        updateBlockRendered(docId, i, persistentPath);
+        blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
+        encodedCount++;
+        emit('info', `${ref(block)}: opening title card encoded`, pct);
+      } catch (err) {
+        const msg = (err as Error).message.slice(0, 200);
+        emit('warn', `${ref(block)}: opening encode failed — ${msg}`, pct);
+        updateBlockError(docId, i, `Opening encode failed: ${msg}`);
+      }
       continue;
     }
 
@@ -1701,16 +1847,6 @@ export async function produceBlocks(
       }
       continue;
     }
-
-    // Resolve source clip path
-    const resolveClipPath = (filename: string, vtype: string): string | null => {
-      const dirs = vtype === 'chart' ? [chartDir, imageDir] : [imageDir, chartDir];
-      for (const d of dirs) {
-        const p = path.join(d, filename);
-        if (fs.existsSync(p)) return p;
-      }
-      return null;
-    };
 
     // Plan shots for this block
     const shots = planShots(block);
@@ -1842,10 +1978,17 @@ export async function produceBlocks(
 
       if (chosenPexelsId !== null) usedClipIdsForShots.add(chosenPexelsId);
 
-      // Build vf with motion effect
-      const motionVf = shot.motion === 'static' || block.visualType === 'chart'
+      // Build vf with motion effect + overlay text
+      let motionVf = shot.motion === 'static' || block.visualType === 'chart'
         ? staticVf
         : buildMotionFilter(shot.motion, w, h, fps) + ',format=yuv420p';
+      // Append overlay text drawtext filters
+      const blockOverlays = block.overlays ?? [];
+      if (blockOverlays.length > 0 && shot.hasOverlay) {
+        motionVf = motionVf.replace(/,format=yuv420p$/, '');
+        motionVf += buildOverlayDrawtext(blockOverlays, block.overlayStyle ?? null, w, h);
+        motionVf += ',format=yuv420p';
+      }
 
       try {
         if (freezeHold) {
@@ -1992,6 +2135,7 @@ export async function produceBlocks(
       audioDurationMs: b.audioDurationMs,
       narration: b.narration,
       audioPath: b.audioPath,
+      openingText: b.openingText,
     }));
     const assContent = buildAssSubtitles(subtitleData, w, h, isPortrait, audioDir, options.subtitleStyle);
     const assPath = path.join(concatDir, 'subtitles.ass');
@@ -2054,18 +2198,32 @@ export async function produceBlocks(
     }
   }
 
-  // Build master audio from per-block audio files
+  // Build master audio from per-block audio files (opening blocks get silence)
   emit('info', 'Building master audio track...', 94);
-  const audioBlocks = finalBlocks.filter((b) => b.audioPath && b.audioDurationMs);
-  if (!audioBlocks.length) throw new Error('No audio blocks found');
+  const renderedBlocks = finalBlocks.filter((b) => !!b.renderedClipPath);
+  if (!renderedBlocks.length) throw new Error('No rendered blocks found');
+
+  // Generate silence file for opening blocks
+  const silencePath = path.join(concatDir, 'silence_3s.mp3');
+  const hasOpeningBlocks = renderedBlocks.some(b => !!b.openingText);
+  if (hasOpeningBlocks) {
+    await execFileWithCancel(ffmpeg, [
+      '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono',
+      '-t', '3', '-c:a', 'libmp3lame', '-q:a', '9', '-y', silencePath,
+    ], { timeout: 30_000 });
+  }
 
   const audioList = path.join(concatDir, 'audio_list.txt');
-  const audioFiles = audioBlocks.map((b) => path.join(audioDir, b.audioPath!));
+  const audioFiles = renderedBlocks.map((b) => {
+    if (b.openingText) return silencePath;
+    if (b.audioPath) return path.join(audioDir, b.audioPath);
+    return null;
+  }).filter((f): f is string => !!f);
   fs.writeFileSync(audioList, audioFiles.map((f) => `file '${f.replace(/\\/g, '/')}'`).join('\n'));
   const masterAudio = path.join(concatDir, 'master_audio.mp3');
   await execFileWithCancel(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', audioList, '-c', 'copy', '-y', masterAudio], { timeout: 300_000 });
 
-  const totalAudioMs = audioBlocks.reduce((s, b) => s + (b.audioDurationMs ?? 0), 0);
+  const totalAudioMs = renderedBlocks.reduce((s, b) => s + (b.openingText ? 3000 : (b.audioDurationMs ?? 0)), 0);
   const totalDurationSec = totalAudioMs / 1000;
 
   // Mux final video + audio (+ optional background music)

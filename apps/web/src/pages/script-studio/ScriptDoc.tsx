@@ -6,7 +6,7 @@ import {
   ArrowLeft, ChevronDown, ChevronUp, AlertTriangle, Info, Check,
   Play, Loader2, BarChart2, Video, Mic, Settings, RefreshCw, X,
   Volume2, Film, Square, ChevronRight, ChevronLeft, Pencil, Music2,
-  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2,
+  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2, Merge, Type as TypeIcon,
 } from 'lucide-react';
 import { scriptStudioApi, queueApi, ttsApi, musicApi, type SubtitleStyle } from '../../lib/api';
 import { useAppStore } from '../../store';
@@ -24,6 +24,14 @@ interface ScriptBlock {
   pexelsQuery: string | null;
   chartSpec: any | null;
   overlays: string[];
+  overlayStyle: {
+    color?: string;
+    bgEnabled?: boolean;
+    bgColor?: string;
+    bgOpacity?: number;
+    fontSize?: 'sm' | 'md' | 'lg' | 'xl';
+    position?: 'center' | 'top' | 'bottom';
+  } | null;
   paceHint: 'slow' | 'fast' | null;
   contentHash: string | null;
   audioPath: string | null;
@@ -44,6 +52,7 @@ interface ScriptBlock {
   clipStartSec: number | null;
   clipEndSec: number | null;
   displayNumber: number | null;
+  openingText: string | null;
 }
 
 interface LogEntry { ts: string; level: string; message: string; operation?: string; }
@@ -62,21 +71,23 @@ const MOTION_EFFECTS = ['static', 'slow-zoom', 'ken-burns-in', 'ken-burns-out', 
 
 // ── Step Indicator ──
 
-function StepIndicator({ step, totalBlocks, audioReady, rendered, isProducing, hasResult, onStepClick, settingsOpen, onToggleSettings }: {
-  step: 1 | 2 | 3;
+function StepIndicator({ step, totalBlocks, audioReady, rendered, isProducing, hasResult, onStepClick, settingsOpen, onToggleSettings, missingClips }: {
+  step: 1 | 2 | 3 | 4;
   totalBlocks: number;
   audioReady: number;
   rendered: number;
   isProducing: boolean;
   hasResult: boolean;
-  onStepClick: (s: 1 | 2 | 3) => void;
+  onStepClick: (s: 1 | 2 | 3 | 4) => void;
   settingsOpen: boolean;
   onToggleSettings: () => void;
+  missingClips: number;
 }) {
   const steps = [
-    { num: 1 as const, label: 'Review Blocks', sublabel: `${totalBlocks} blocks`, enabled: true },
-    { num: 2 as const, label: 'Produce', sublabel: isProducing ? `${rendered}/${totalBlocks} rendered` : rendered > 0 ? `${rendered}/${totalBlocks} done` : 'generate video', enabled: true },
-    { num: 3 as const, label: 'Result', sublabel: hasResult ? 'video ready' : 'pending', enabled: hasResult },
+    { num: 1 as const, label: 'Structure', sublabel: `${totalBlocks} blocks`, enabled: true },
+    { num: 2 as const, label: 'Review', sublabel: missingClips > 0 ? `${missingClips} missing clips` : `${totalBlocks} ready`, enabled: true },
+    { num: 3 as const, label: 'Produce', sublabel: isProducing ? `${rendered}/${totalBlocks} rendered` : rendered > 0 ? `${rendered}/${totalBlocks} done` : 'generate video', enabled: true },
+    { num: 4 as const, label: 'Result', sublabel: hasResult ? 'video ready' : 'pending', enabled: hasResult },
   ];
 
   return (
@@ -673,7 +684,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     const start = clampedIdx + 1;
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[(start + i) % blocks.length];
-      if (b.status === 'error' || (!b.clipAssetPath && b.narration)) {
+      if (b.status === 'error' || (!b.openingText && !b.clipAssetPath && b.narration)) {
         setIdx(blocks.indexOf(b));
         return;
       }
@@ -1009,18 +1020,22 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             const hasErr = b.status === 'error';
             const isChart = !!b.chartSpec;
             const isAi = b.visualType === 'ai';
-            const noClip = !b.clipAssetPath && !!b.narration;
-            const notRendered = b.status === 'clip_ready' && !!b.clipAssetPath && !b.renderedClipPath;
-            // Check if video duration < audio duration
+            const isOpening = !!b.openingText;
+            const noClip = !isOpening && !b.clipAssetPath && !!b.narration;
+            const notRendered = !isOpening && b.status === 'clip_ready' && !!b.clipAssetPath && !b.renderedClipPath;
+            // Check if video duration < audio duration (skip for opening blocks — fixed 3s, no audio)
             const audioDurSec = (b.audioDurationMs ?? 0) / 1000;
             let videoDurSec = 0;
-            if (b.clips?.length > 0) {
-              videoDurSec = b.clips.reduce((sum, c) => {
-                const dur = c.endSec != null && c.startSec != null ? c.endSec - c.startSec : (c.sourceDurationSec ?? 0);
-                return sum + dur;
-              }, 0);
-            } else if (b.clipAssetPath) {
-              videoDurSec = b.clipEndSec != null && b.clipStartSec != null ? b.clipEndSec - b.clipStartSec : 0;
+            if (!isOpening) {
+              if (b.clips?.length > 0) {
+                videoDurSec = b.clips.reduce((sum, c) => {
+                  const start = c.startSec ?? 0;
+                  const end = c.endSec ?? c.sourceDurationSec ?? null;
+                  return sum + (end != null ? Math.max(0, end - start) : 0);
+                }, 0);
+              } else if (b.clipAssetPath) {
+                videoDurSec = b.clipEndSec != null && b.clipStartSec != null ? b.clipEndSec - b.clipStartSec : 0;
+              }
             }
             const videoShort = audioDurSec > 0 && videoDurSec > 0 && videoDurSec < audioDurSec - 0.5;
             const isNewSegment = i === 0 || blocks[i - 1].segmentIndex !== b.segmentIndex;
@@ -1041,25 +1056,25 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                       ? 'bg-c-accent text-white'
                       : hasErr
                         ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                        : noClip
-                          ? 'bg-amber-500/20 text-amber-400 border border-dashed border-amber-500/50'
-                          : notRendered
-                            ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-                            : videoShort
-                              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                            : isChart
-                            ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
-                            : isAi
-                              ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
-                              : noClip
-                                ? 'bg-amber-500/15 text-amber-400'
-                                : b.status === 'rendered'
-                                  ? 'bg-green-500/15 text-green-400'
-                                  : 'bg-c-elevated text-c-dim hover:bg-c-hover hover:text-c-text'
+                        : isOpening
+                          ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
+                          : noClip
+                            ? 'bg-amber-500/20 text-amber-400 border border-dashed border-amber-500/50'
+                            : notRendered
+                              ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                              : videoShort
+                                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                : isChart
+                                  ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                                  : isAi
+                                    ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                                    : b.status === 'rendered'
+                                      ? 'bg-green-500/15 text-green-400'
+                                      : 'bg-c-elevated text-c-dim hover:bg-c-hover hover:text-c-text'
                   }`}
-                  title={`#${i + 1} · ${b.segmentName} · Sc ${b.sceneNumber}${isChart ? ' [chart]' : isAi ? ' [AI]' : ''}: ${b.status}${videoShort ? ` · video ${videoDurSec.toFixed(1)}s < audio ${audioDurSec.toFixed(1)}s` : ''}`}
+                  title={`#${i + 1} · ${b.segmentName} · Sc ${b.sceneNumber}${isOpening ? ' [opening]' : isChart ? ' [chart]' : isAi ? ' [AI]' : ''}: ${b.status}${videoShort ? ` · video ${videoDurSec.toFixed(1)}s < audio ${audioDurSec.toFixed(1)}s` : ''}`}
                 >
-                  {isChart ? <BarChart2 className="w-3 h-3" /> : isAi ? <Wand2 className="w-3 h-3" /> : i + 1}
+                  {isOpening ? <Film className="w-3 h-3" /> : isChart ? <BarChart2 className="w-3 h-3" /> : isAi ? <Wand2 className="w-3 h-3" /> : i + 1}
                 </button>
               </div>
             );
@@ -1075,7 +1090,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
         </button>
 
         {/* Jump to issue */}
-        {blocks.some((b) => b.status === 'error' || (!b.clipAssetPath && b.narration)) && (
+        {blocks.some((b) => b.status === 'error' || (!b.openingText && !b.clipAssetPath && b.narration)) && (
           <button
             className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors cursor-pointer shrink-0"
             onClick={jumpToIssue}
@@ -1097,9 +1112,11 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
         <span className="text-[10px] text-c-dim/60 shrink-0">·</span>
         <span className="text-[10px] text-c-dim tabular-nums shrink-0">{clampedIdx + 1}/{blocks.length}</span>
         <div className="flex-1" />
-        {block.clipAssetPath
-          ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-green-500/10 text-green-400 shrink-0"><Check className="w-2 h-2" />clip</span>
-          : block.narration ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-amber-500/10 text-amber-400 shrink-0"><AlertTriangle className="w-2 h-2" />no clip</span> : null
+        {block.openingText
+          ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-sky-500/10 text-sky-400 shrink-0"><Film className="w-2 h-2" />3s</span>
+          : block.clipAssetPath
+            ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-green-500/10 text-green-400 shrink-0"><Check className="w-2 h-2" />clip</span>
+            : block.narration ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-amber-500/10 text-amber-400 shrink-0"><AlertTriangle className="w-2 h-2" />no clip</span> : null
         }
         {block.audioDurationMs ? (
           <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-blue-500/10 text-blue-400 shrink-0">
@@ -1108,7 +1125,8 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
         ) : null}
       </div>
 
-      {/* ── Narration strip (collapsible) ── */}
+      {/* ── Narration strip (collapsible) — hidden when narration equals overlay ── */}
+      {!(block.overlays?.length === 1 && block.overlays[0] === block.narration) && (
       <div className="border-b border-c-border bg-c-surface/60">
         <button
           className="w-full flex items-center gap-2 px-4 py-1.5 text-left hover:bg-c-elevated/30 transition-colors cursor-pointer"
@@ -1231,6 +1249,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
         </div>
         )}
       </div>
+      )}
 
       {/* ── Video/Audio player ── */}
       {/* Collapse/expand bar */}
@@ -1319,6 +1338,37 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 {safeClipIdx + 1}/{blockClips.length}
               </div>
             )}
+            {/* Live overlay text preview (only on raw clip, not rendered video which has text burned in) */}
+            {block.overlays?.length > 0 && !renderedUrl && (() => {
+              const ost = block.overlayStyle ?? {};
+              const textColor = ost.color ?? '#FFFFFF';
+              const sizeMap: Record<string, string> = { sm: '0.7rem', md: '0.9rem', lg: '1.15rem', xl: '1.5rem' };
+              const fs = sizeMap[ost.fontSize ?? 'md'] ?? '0.9rem';
+              const pos = ost.position ?? 'center';
+              const posStyle: React.CSSProperties = pos === 'top'
+                ? { top: '8%', left: '50%', transform: 'translateX(-50%)' }
+                : pos === 'bottom'
+                ? { bottom: '15%', left: '50%', transform: 'translateX(-50%)' }
+                : { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' };
+              const bgStyle: React.CSSProperties | undefined = ost.bgEnabled ? {
+                backgroundColor: `${ost.bgColor ?? '#000000'}${Math.round((ost.bgOpacity ?? 0.6) * 255).toString(16).padStart(2, '0')}`,
+                padding: '4px 12px',
+                borderRadius: '4px',
+              } : undefined;
+              return (
+                <div className="absolute pointer-events-none" style={{ ...posStyle, zIndex: 5 }}>
+                  <div style={bgStyle}>
+                    {block.overlays.map((text, i) => (
+                      <p key={i} className="font-bold text-center leading-snug whitespace-nowrap" style={{
+                        color: textColor,
+                        fontSize: fs,
+                        textShadow: '0 0 6px rgba(0,0,0,0.8), 2px 2px 4px rgba(0,0,0,0.6)',
+                      }}>{text}</p>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </>
         ) : audioUrl ? (
           /* Audio-only: dark player area with waveform icon */
@@ -2669,7 +2719,291 @@ function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, block
   );
 }
 
+// ── Block Structure Row (Step 1 — compact transcript-like) ──
+
+function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel, onBlockUpdated, orientation }: {
+  block: ScriptBlock; idx: number; total: number; docId: string; isProducing: boolean; displayLabel: string; onBlockUpdated: () => void; orientation: 'landscape' | 'portrait';
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [showOverlay, setShowOverlay] = useState(false);
+  const wordCount = block.narration?.split(/\s+/).filter(Boolean).length ?? 0;
+  const durationSec = block.audioDurationMs ? (block.audioDurationMs / 1000) : (wordCount / 2.5);
+  const hasClip = !!block.clipAssetPath;
+  const hasAudio = !!block.audioPath;
+  const isOpening = !!block.openingText;
+  const isEmpty = !block.narration?.trim() && !isOpening;
+  const isLong = durationSec > 5;
+  const hasOverlay = block.overlays && block.overlays.length > 0;
+
+  const handleAction = async (action: string, fn: () => Promise<any>) => {
+    if (busy || isProducing) return;
+    setBusy(action);
+    try { await fn(); onBlockUpdated(); } catch (err: any) {
+      console.error(`BlockStructureRow ${action} failed:`, err?.response?.data?.error ?? err?.message ?? err);
+      alert(err?.response?.data?.error ?? err?.message ?? 'Action failed');
+    }
+    setBusy(null);
+  };
+
+  return (
+    <div>
+    <div className={`px-3 py-2 flex gap-2.5 items-center transition-colors group ${
+      busy ? 'bg-c-accent/5' : isEmpty ? 'bg-red-500/5' : isLong ? 'bg-orange-500/5' : 'hover:bg-c-surface/40'
+    }`}>
+      {/* Block number */}
+      <span className={`text-[10px] font-mono shrink-0 w-7 text-right tabular-nums ${
+        isOpening ? 'text-violet-400' : 'text-c-accent/60'
+      }`}>{displayLabel}</span>
+      {/* Status indicators */}
+      <div className="flex items-center gap-1 shrink-0" title={`${hasAudio ? 'Audio ready' : 'No audio'} · ${hasClip ? 'Clip ready' : 'No clip'}`}>
+        <Mic className={`w-3 h-3 ${hasAudio ? 'text-green-400' : 'text-c-border'}`} />
+        <Film className={`w-3 h-3 ${hasClip ? 'text-blue-400' : 'text-c-border'}`} />
+        {hasOverlay && <span title={block.overlays.join(', ')}><TypeIcon className="w-3 h-3 text-sky-400" /></span>}
+      </div>
+      {/* Narration text — inline editable */}
+      {isOpening ? (
+        <span className="flex-1 text-xs text-violet-400/80 italic truncate px-1">
+          {block.openingText}
+        </span>
+      ) : (
+        <input
+          key={`${block.id}-${block.narration}`}
+          type="text"
+          defaultValue={block.narration}
+          onBlur={(ev) => {
+            const val = ev.target.value.trim();
+            if (val && val !== block.narration) {
+              handleAction('save', () => scriptStudioApi.updateBlock(docId, block.blockIndex, { narration: val }));
+            }
+          }}
+          onKeyDown={(ev) => {
+            const pos = ev.currentTarget.selectionStart ?? 0;
+            const len = ev.currentTarget.value.length;
+            if (ev.key === 'Enter') {
+              ev.preventDefault();
+              const text = ev.currentTarget.value;
+              if (pos > 0 && pos < len) {
+                handleAction('split', () => scriptStudioApi.splitBlockAtText(docId, block.blockIndex, text.slice(0, pos), text.slice(pos)));
+              } else {
+                ev.currentTarget.blur();
+              }
+            }
+            if (ev.key === 'Backspace' && pos === 0 && ev.currentTarget.selectionEnd === 0 && idx > 0) {
+              ev.preventDefault();
+              handleAction('merge', () => scriptStudioApi.mergeBlockWithNext(docId, block.blockIndex - 1));
+            }
+          }}
+          className="flex-1 text-xs text-c-muted bg-transparent border-none outline-none focus:text-c-text px-1 py-1 rounded hover:bg-c-elevated/50 focus:bg-c-elevated focus:ring-1 focus:ring-c-accent/30 transition-all"
+          disabled={isProducing || !!busy}
+          placeholder={isEmpty ? t('scriptStudio.studio.emptyBlock') : ''}
+        />
+      )}
+      {/* Word count & duration */}
+      <span className={`text-[10px] shrink-0 w-[4.5rem] text-right tabular-nums ${
+        isEmpty ? 'text-red-400' : isLong ? 'text-orange-400 font-semibold' : 'text-c-dim'
+      }`}>
+        {wordCount}w{' '}
+        <span className="text-c-dim/50">·</span>{' '}
+        {durationSec.toFixed(1)}s
+      </span>
+      {/* Overlay text toggle — always visible */}
+      <button
+        onClick={() => setShowOverlay(v => !v)}
+        className={`p-1.5 rounded-md transition-colors cursor-pointer shrink-0 ${hasOverlay || showOverlay ? 'text-sky-400 bg-sky-500/10' : 'text-c-dim/30 hover:text-sky-400 hover:bg-sky-900/20'}`}
+        title={t('scriptStudio.studio.addOverlay')}
+      >
+        <TypeIcon className="w-3.5 h-3.5" />
+      </button>
+      {/* Actions — visible on hover */}
+      <div className={`shrink-0 flex items-center gap-0.5 transition-opacity ${busy ? 'opacity-30 pointer-events-none' : 'opacity-0 group-hover:opacity-100'}`}>
+        <button
+          onClick={() => handleAction('insert', () => scriptStudioApi.insertBlockBefore(docId, block.blockIndex))}
+          className="p-1.5 rounded-md text-c-dim hover:text-c-accent hover:bg-c-accent/10 transition-colors cursor-pointer"
+          title={t('scriptStudio.studio.insertBlock')}
+        >
+          <Plus className="w-3.5 h-3.5" />
+        </button>
+        {idx > 0 && (
+          <button
+            onClick={() => handleAction('merge', () => scriptStudioApi.mergeBlockWithNext(docId, block.blockIndex - 1))}
+            className="p-1.5 rounded-md text-c-dim hover:text-amber-400 hover:bg-amber-900/20 transition-colors cursor-pointer"
+            title={t('scriptStudio.studio.mergeWithPrev')}
+          >
+            <Merge className="w-3.5 h-3.5 -rotate-90" />
+          </button>
+        )}
+        {idx < total - 1 && (
+          <button
+            onClick={() => handleAction('merge', () => scriptStudioApi.mergeBlockWithNext(docId, block.blockIndex))}
+            className="p-1.5 rounded-md text-c-dim hover:text-amber-400 hover:bg-amber-900/20 transition-colors cursor-pointer"
+            title={t('scriptStudio.studio.mergeWithNext')}
+          >
+            <Merge className="w-3.5 h-3.5 rotate-90" />
+          </button>
+        )}
+        {wordCount > 10 && (
+          <button
+            onClick={() => handleAction('breakdown', () => scriptStudioApi.breakdownBlock(docId, block.blockIndex))}
+            className="p-1.5 rounded-md text-c-dim hover:text-cyan-400 hover:bg-cyan-900/20 transition-colors cursor-pointer"
+            title={t('scriptStudio.studio.breakdownBlock')}
+          >
+            <Scissors className="w-3.5 h-3.5" />
+          </button>
+        )}
+        <button
+          onClick={() => { if (window.confirm(t('scriptStudio.studio.confirmDeleteBlock'))) handleAction('delete', () => scriptStudioApi.deleteBlock(docId, block.blockIndex)); }}
+          className="p-1.5 rounded-md text-c-dim hover:text-red-400 hover:bg-red-900/20 transition-colors cursor-pointer"
+          title={t('scriptStudio.studio.deleteBlock')}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+        {hasClip && (
+          <button
+            onClick={() => handleAction('reproduce', async () => {
+              await scriptStudioApi.reproduceBlock(docId, block.blockIndex, orientation, 0.85, undefined, () => {}, '#7c6af5');
+            })}
+            className="p-1.5 rounded-md text-c-dim hover:text-green-400 hover:bg-green-900/20 transition-colors cursor-pointer"
+            title={t('scriptStudio.studio.reproduce')}
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-c-accent shrink-0" />}
+    </div>
+    {/* Overlay text row + style controls */}
+    {(showOverlay || hasOverlay) && (
+      <div className="pl-[3.25rem] pr-3 py-1.5 space-y-1.5 bg-sky-500/5">
+        {/* Text input row */}
+        <div className="flex gap-2 items-center">
+          <TypeIcon className="w-3 h-3 text-sky-400 shrink-0" />
+          <input
+            key={`overlay-${block.id}-${block.overlays?.join('|')}`}
+            type="text"
+            defaultValue={block.overlays?.join(' | ') ?? ''}
+            onBlur={(ev) => {
+              const val = ev.target.value.trim();
+              const newOverlays = val ? val.split('|').map(s => s.trim()).filter(Boolean) : [];
+              const oldOverlays = block.overlays ?? [];
+              if (JSON.stringify(newOverlays) !== JSON.stringify(oldOverlays)) {
+                handleAction('overlay', () => scriptStudioApi.updateBlock(docId, block.blockIndex, { overlays: newOverlays }));
+              }
+            }}
+            onKeyDown={(ev) => { if (ev.key === 'Enter') ev.currentTarget.blur(); if (ev.key === 'Escape') { setShowOverlay(false); } }}
+            className="flex-1 text-xs text-sky-300 bg-transparent border-none outline-none focus:text-sky-200 px-1 py-0.5 rounded hover:bg-c-elevated/50 focus:bg-c-elevated focus:ring-1 focus:ring-sky-500/30 transition-all"
+            placeholder={t('scriptStudio.studio.overlayPlaceholder')}
+            disabled={isProducing || !!busy}
+            autoFocus={showOverlay && !hasOverlay}
+          />
+          {hasOverlay && (
+            <button
+              onClick={() => handleAction('overlay', () => scriptStudioApi.updateBlock(docId, block.blockIndex, { overlays: [], overlayStyle: null }))}
+              className="p-1 rounded text-c-dim hover:text-red-400 hover:bg-red-900/20 transition-colors cursor-pointer shrink-0"
+              title={t('scriptStudio.studio.removeOverlay')}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+        {/* Style controls row */}
+        {hasOverlay && (() => {
+          const st = block.overlayStyle ?? {};
+          const saveStyle = (patch: Record<string, unknown>) => {
+            const merged = { ...st, ...patch };
+            handleAction('overlayStyle', () => scriptStudioApi.updateBlock(docId, block.blockIndex, { overlayStyle: merged }));
+          };
+          return (
+            <div className="flex items-center gap-2 flex-wrap pl-5">
+              {/* Text color */}
+              <label className="flex items-center gap-1 text-[10px] text-c-dim">
+                {t('scriptStudio.studio.overlayColor')}
+                <input type="color" value={st.color ?? '#FFFFFF'} onChange={(e) => saveStyle({ color: e.target.value })}
+                  className="w-5 h-5 rounded border border-c-border cursor-pointer bg-transparent p-0" />
+              </label>
+              {/* Font size */}
+              <label className="flex items-center gap-1 text-[10px] text-c-dim">
+                {t('scriptStudio.studio.overlaySize')}
+                <select value={st.fontSize ?? 'md'} onChange={(e) => saveStyle({ fontSize: e.target.value })}
+                  className="text-[10px] bg-c-elevated border border-c-border rounded px-1 py-0.5 text-c-text cursor-pointer">
+                  <option value="sm">S</option>
+                  <option value="md">M</option>
+                  <option value="lg">L</option>
+                  <option value="xl">XL</option>
+                </select>
+              </label>
+              {/* Position */}
+              <label className="flex items-center gap-1 text-[10px] text-c-dim">
+                {t('scriptStudio.studio.overlayPosition')}
+                <select value={st.position ?? 'center'} onChange={(e) => saveStyle({ position: e.target.value })}
+                  className="text-[10px] bg-c-elevated border border-c-border rounded px-1 py-0.5 text-c-text cursor-pointer">
+                  <option value="top">{t('scriptStudio.studio.posTop')}</option>
+                  <option value="center">{t('scriptStudio.studio.posCenter')}</option>
+                  <option value="bottom">{t('scriptStudio.studio.posBottom')}</option>
+                </select>
+              </label>
+              {/* Background toggle */}
+              <label className="flex items-center gap-1 text-[10px] text-c-dim cursor-pointer">
+                <input type="checkbox" checked={st.bgEnabled ?? false} onChange={(e) => saveStyle({ bgEnabled: e.target.checked })}
+                  className="w-3 h-3 rounded cursor-pointer" />
+                {t('scriptStudio.studio.overlayBg')}
+              </label>
+              {/* Background color + opacity (only when bg enabled) */}
+              {st.bgEnabled && (
+                <>
+                  <input type="color" value={st.bgColor ?? '#000000'} onChange={(e) => saveStyle({ bgColor: e.target.value })}
+                    className="w-5 h-5 rounded border border-c-border cursor-pointer bg-transparent p-0" title={t('scriptStudio.studio.overlayBgColor')} />
+                  <label className="flex items-center gap-1 text-[10px] text-c-dim">
+                    {t('scriptStudio.studio.overlayBgOpacity')}
+                    <input type="range" min="0.1" max="1" step="0.1" value={st.bgOpacity ?? 0.6}
+                      onChange={(e) => saveStyle({ bgOpacity: parseFloat(e.target.value) })}
+                      className="w-14 h-3 cursor-pointer" />
+                    <span className="text-[9px] tabular-nums w-6">{((st.bgOpacity ?? 0.6) * 100).toFixed(0)}%</span>
+                  </label>
+                </>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+    )}
+    </div>
+  );
+}
+
 // ── Block Card ──
+
+function InsertBlockButton({ docId, blockIndex, isProducing, onInserted }: {
+  docId: string; blockIndex: number; isProducing: boolean; onInserted: () => void;
+}) {
+  const { t } = useTranslation();
+  const [inserting, setInserting] = useState(false);
+
+  const handleInsert = async () => {
+    if (inserting || isProducing) return;
+    setInserting(true);
+    try {
+      await scriptStudioApi.insertBlockBefore(docId, blockIndex);
+      onInserted();
+    } catch { /* ignore */ }
+    setInserting(false);
+  };
+
+  return (
+    <div className="group flex items-center gap-2 py-1 -mb-1">
+      <div className="flex-1 h-px bg-transparent group-hover:bg-c-accent/20 transition-colors" />
+      <button
+        className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full bg-c-accent/10 text-c-accent hover:bg-c-accent/20 border border-transparent hover:border-c-accent/30 cursor-pointer disabled:opacity-30"
+        onClick={handleInsert}
+        disabled={inserting || isProducing}
+        title={t('scriptStudio.studio.insertBlock')}
+      >
+        {inserting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+      </button>
+      <div className="flex-1 h-px bg-transparent group-hover:bg-c-accent/20 transition-colors" />
+    </div>
+  );
+}
 
 function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, displayLabel }: {
   block: ScriptBlock;
@@ -2905,29 +3239,31 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   // Detect split scene
   const isSplitBlock = block.visualType === 'split' || block.clipAssetPath?.startsWith('split_') || block.clips?.some((c: any) => c.splitSources?.length > 0);
 
-  // Detect video < audio duration warning
+  // Detect video < audio duration warning (skip for opening blocks — fixed 3s, no audio)
   const blockClips = block.clips?.length > 0
     ? block.clips
     : (block.clipAssetPath ? [{ assetPath: block.clipAssetPath, startSec: block.clipStartSec ?? 0, endSec: block.clipEndSec, sourceDurationSec: block.audioDurationMs ? block.audioDurationMs / 1000 : undefined }] : []);
-  const clipsDur = blockClips.reduce((sum: number, c: any) => {
+  const clipsDur = block.openingText ? 3 : blockClips.reduce((sum: number, c: any) => {
     const start = c.startSec ?? 0;
     const end = c.endSec ?? c.sourceDurationSec ?? null;
     return sum + (end != null ? Math.max(0, end - start) : 0);
   }, 0);
   const audioDurNum = block.audioDurationMs ? block.audioDurationMs / 1000 : 0;
-  const isVideoShort = audioDurNum > 0 && clipsDur > 0 && clipsDur < audioDurNum - 0.5;
+  const isVideoShort = !block.openingText && audioDurNum > 0 && clipsDur > 0 && clipsDur < audioDurNum - 0.5;
 
   return (
     <div className={`rounded-xl border transition-all ${
       isError
         ? 'bg-red-500/5 border-red-500/25'
-        : isVideoShort
-          ? 'bg-amber-500/5 border-amber-500/25'
-          : isSplitBlock
-            ? 'bg-teal-500/5 border-teal-500/25'
-            : block.status === 'rendered'
-              ? 'bg-green-500/3 border-green-500/15'
-              : 'bg-c-surface border-c-border hover:border-c-border-hover'
+        : block.openingText
+          ? 'bg-sky-500/5 border-sky-500/25'
+          : isVideoShort
+            ? 'bg-amber-500/5 border-amber-500/25'
+            : isSplitBlock
+              ? 'bg-teal-500/5 border-teal-500/25'
+              : block.status === 'rendered'
+                ? 'bg-green-500/3 border-green-500/15'
+                : 'bg-c-surface border-c-border hover:border-c-border-hover'
     }`}>
       {/* Header row */}
       <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
@@ -2955,6 +3291,13 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
           <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-violet-500/15 text-violet-400 border border-violet-500/20">
             <Wand2 className="w-3 h-3" />
             AI
+          </span>
+        )}
+        {/* Opening badge */}
+        {block.openingText && (
+          <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-sky-500/15 text-sky-400 border border-sky-500/20">
+            <Film className="w-3 h-3" />
+            {t('scriptStudio.studio.opening')}
           </span>
         )}
 
@@ -3015,23 +3358,71 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
         )}
       </div>
 
-      {/* Narration text */}
-      <p className="text-sm text-c-text leading-relaxed px-3.5 pb-2.5 whitespace-pre-line">{block.narration}</p>
+      {/* Opening text banner */}
+      {block.openingText && (
+        <div className="mx-3.5 mb-2 px-3 py-2 rounded-lg bg-sky-500/10 border border-sky-500/20">
+          <div className="flex items-center gap-2">
+            <Film className="w-4 h-4 text-sky-400 shrink-0" />
+            <span className="text-sm font-semibold text-sky-300">{block.openingText}</span>
+            <span className="text-[10px] text-c-dim ml-auto">3s</span>
+          </div>
+        </div>
+      )}
+
+      {/* Overlays (shown live on video player above) */}
+
+      {/* Narration text (skip if identical to overlay — shown on video instead) */}
+      {block.narration && !(block.overlays?.length === 1 && block.overlays[0] === block.narration) && (
+        <p className="text-sm text-c-text leading-relaxed px-3.5 pb-2.5 whitespace-pre-line">{block.narration}</p>
+      )}
 
       {/* Audio/Video player */}
       {block.audioPath && (
-        <BlockCardPlayer
-          audioSrc={`/cache/block_audio/${block.audioPath}`}
-          durationMs={block.audioDurationMs}
-          clips={block.clips?.length > 0
-            ? block.clips
-            : (block.clipAssetPath ? [{ assetPath: block.clipAssetPath, startSec: block.clipStartSec ?? 0, endSec: block.clipEndSec, sourceDurationSec: block.audioDurationMs ? block.audioDurationMs / 1000 : undefined }] : [])}
-          visualType={block.visualType}
-          docId={docId}
-          blockIndex={block.blockIndex}
-          onClipsUpdated={onBlockUpdated}
-          orientation={orientation}
-        />
+        <div className="relative">
+          <BlockCardPlayer
+            audioSrc={`/cache/block_audio/${block.audioPath}`}
+            durationMs={block.audioDurationMs}
+            clips={block.clips?.length > 0
+              ? block.clips
+              : (block.clipAssetPath ? [{ assetPath: block.clipAssetPath, startSec: block.clipStartSec ?? 0, endSec: block.clipEndSec, sourceDurationSec: block.audioDurationMs ? block.audioDurationMs / 1000 : undefined }] : [])}
+            visualType={block.visualType}
+            docId={docId}
+            blockIndex={block.blockIndex}
+            onClipsUpdated={onBlockUpdated}
+            orientation={orientation}
+          />
+          {/* Live overlay text preview */}
+          {block.overlays?.length > 0 && block.clipAssetPath && !block.renderedClipPath && (() => {
+            const ost = block.overlayStyle ?? {};
+            const textColor = ost.color ?? '#FFFFFF';
+            const sizeMap: Record<string, string> = { sm: '0.6rem', md: '0.75rem', lg: '0.95rem', xl: '1.2rem' };
+            const fs = sizeMap[ost.fontSize ?? 'md'] ?? '0.75rem';
+            const pos = ost.position ?? 'center';
+            const posStyle: React.CSSProperties = pos === 'top'
+              ? { top: '8%', left: '50%', transform: 'translateX(-50%)' }
+              : pos === 'bottom'
+              ? { bottom: '20%', left: '50%', transform: 'translateX(-50%)' }
+              : { top: '40%', left: '50%', transform: 'translate(-50%, -50%)' };
+            const bgStyle: React.CSSProperties | undefined = ost.bgEnabled ? {
+              backgroundColor: `${ost.bgColor ?? '#000000'}${Math.round((ost.bgOpacity ?? 0.6) * 255).toString(16).padStart(2, '0')}`,
+              padding: '3px 10px',
+              borderRadius: '4px',
+            } : undefined;
+            return (
+              <div className="absolute pointer-events-none" style={{ ...posStyle, zIndex: 5 }}>
+                <div style={bgStyle}>
+                  {block.overlays.map((text, i) => (
+                    <p key={i} className="font-bold text-center leading-snug whitespace-nowrap" style={{
+                      color: textColor,
+                      fontSize: fs,
+                      textShadow: '0 0 6px rgba(0,0,0,0.8), 2px 2px 4px rgba(0,0,0,0.6)',
+                    }}>{text}</p>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       )}
 
       {/* Reproduce controls */}
@@ -3121,16 +3512,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
         </div>
       )}
 
-      {/* Overlays */}
-      {block.overlays.length > 0 && (
-        <div className="flex flex-wrap gap-1 px-3.5 pb-2.5">
-          {block.overlays.map((ov, i) => (
-            <span key={i} className="text-xs px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              &ldquo;{ov}&rdquo;
-            </span>
-          ))}
-        </div>
-      )}
+      {/* Overlays (shown in header area above) */}
 
       {/* Visual controls row */}
       {!block.chartSpec && (
@@ -4320,7 +4702,7 @@ export default function ScriptDoc() {
   const [logExpanded, setLogExpanded] = useState(false);
   const [logsClearedAt, setLogsClearedAt] = useState('');
   const [streamLogs, setStreamLogs] = useState<LogEntry[]>([]);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'step' | 'list' | 'markdown'>('step');
   const [produceOptions, setProduceOptions] = useState<Record<string, any>>(() => ({
@@ -4329,6 +4711,8 @@ export default function ScriptDoc() {
   const produceOptionsLoaded = useRef(false);
   const [producing, setProducing] = useState(false);
   const [resyncing, setResyncing] = useState(false);
+  const [fetchingAllStock, setFetchingAllStock] = useState(false);
+  const [fetchAllProgress, setFetchAllProgress] = useState<string[]>([]);
   const prevResultUrlRef = useRef<string | null>(null);
 
   // Queries
@@ -4408,7 +4792,7 @@ export default function ScriptDoc() {
   const handleProduce = async () => {
     if (!id || producing || isProducing) return;
     setProducing(true);
-    setStep(2);
+    setStep(3);
     try {
       await scriptStudioApi.produce(id, produceOptions);
       qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
@@ -4435,7 +4819,7 @@ export default function ScriptDoc() {
       await scriptStudioApi.deleteProduce(id);
       qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
       qc.invalidateQueries({ queryKey: ['script-studio-doc', id] });
-      setStep(2);
+      setStep(3);
     } catch (err) {
       console.error(err);
     }
@@ -4457,9 +4841,32 @@ export default function ScriptDoc() {
     setResyncing(false);
   };
 
+  const handleFetchAllStock = async () => {
+    if (!id || fetchingAllStock) return;
+    const missing = blocks.filter(b => b.narration && !b.clipAssetPath && !b.openingText && b.pexelsQuery);
+    if (!missing.length) return;
+    setFetchingAllStock(true);
+    setFetchAllProgress([`Fetching stock for ${missing.length} blocks...`]);
+    for (let i = 0; i < missing.length; i++) {
+      const b = missing[i];
+      const label = `[${i + 1}/${missing.length}] #${b.blockIndex + 1} "${(b.pexelsQuery || '').substring(0, 40)}"`;
+      try {
+        setFetchAllProgress(prev => [...prev, `${label} — fetching...`]);
+        await scriptStudioApi.fetchBlockPexels(id, b.blockIndex, orientation);
+        setFetchAllProgress(prev => [...prev.slice(0, -1), `${label} — done ✓`]);
+      } catch (err: any) {
+        setFetchAllProgress(prev => [...prev.slice(0, -1), `${label} — failed: ${err.response?.data?.error ?? err.message}`]);
+      }
+    }
+    setFetchAllProgress(prev => [...prev, `Done — ${missing.length} blocks processed`]);
+    qc.invalidateQueries({ queryKey: ['script-studio-blocks', id] });
+    setFetchingAllStock(false);
+  };
+
   const totalBlocks = blocks.length;
   const audioReady = blocks.filter((b) => b.status !== 'pending' && b.status !== 'error').length;
   const rendered = blocks.filter((b) => b.status === 'rendered').length;
+  const missingClips = blocks.filter(b => b.narration && !b.clipAssetPath && !b.openingText).length;
 
   const jobResult = activeProduceJob?.result;
   const hasResult = !!jobResult?.resultUrl;
@@ -4470,7 +4877,7 @@ export default function ScriptDoc() {
     if (url) {
       if (url !== prevResultUrlRef.current) {
         prevResultUrlRef.current = url;
-        setStep(3);
+        setStep(4);
       }
     } else {
       prevResultUrlRef.current = null;
@@ -4479,11 +4886,11 @@ export default function ScriptDoc() {
 
   // Advance to step 3 when production starts
   useEffect(() => {
-    if (isProducing) setStep(2);
+    if (isProducing) setStep(3);
   }, [isProducing]);
 
-  const handleStepClick = (s: 1 | 2 | 3) => {
-    if (s === 3 && !hasResult) return;
+  const handleStepClick = (s: 1 | 2 | 3 | 4) => {
+    if (s === 4 && !hasResult) return;
     setStep(s);
   };
 
@@ -4617,15 +5024,16 @@ export default function ScriptDoc() {
         onStepClick={handleStepClick}
         settingsOpen={settingsOpen}
         onToggleSettings={() => setSettingsOpen(v => !v)}
+        missingClips={missingClips}
       />
 
       {/* ── Main content ── */}
-      {step === 3 ? (
+      {step === 4 ? (
         <div className="flex-1 overflow-hidden">
           <ResultView
             jobResult={jobResult}
             orientation={orientation}
-            onRerun={() => setStep(2)}
+            onRerun={() => setStep(3)}
             onRemove={handleRemoveProduce}
             docId={id!}
           />
@@ -4635,10 +5043,80 @@ export default function ScriptDoc() {
           <Film className="w-8 h-8 opacity-30" />
           <p className="text-sm">{t('scriptStudio.studio.noBlocks')}</p>
         </div>
+      ) : step === 1 ? (
+        /* ── Step 1: Structure — compact transcript-like block editor ── */
+        <div className="flex-1 overflow-hidden flex flex-col">
+          <div className="px-4 py-2.5 border-b border-c-border bg-c-surface flex items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold text-c-text">{blocks.length} {t('scriptStudio.studio.blocks')}</span>
+              <div className="h-3 w-px bg-c-border" />
+              <span className="text-[10px] text-c-dim tabular-nums">
+                {blocks.reduce((s, b) => s + (b.narration?.split(/\s+/).filter(Boolean).length ?? 0), 0)} {t('scriptStudio.studio.words')}
+              </span>
+              <span className="text-[10px] text-c-dim tabular-nums">
+                ~{(blocks.reduce((s, b) => s + (b.audioDurationMs ? b.audioDurationMs / 1000 : (b.narration?.split(/\s+/).filter(Boolean).length ?? 0) / 2.5), 0)).toFixed(0)}s
+              </span>
+              {(() => {
+                const longCount = blocks.filter(b => {
+                  const wc = b.narration?.split(/\s+/).filter(Boolean).length ?? 0;
+                  const dur = b.audioDurationMs ? b.audioDurationMs / 1000 : wc / 2.5;
+                  return dur > 5;
+                }).length;
+                return longCount > 0 ? (
+                  <span className="text-[10px] text-orange-400 font-medium">{longCount} {t('scriptStudio.studio.longBlocks')}</span>
+                ) : null;
+              })()}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleResyncBlocks}
+                disabled={resyncing}
+                className="text-[10px] text-c-dim hover:text-c-muted flex items-center gap-1 px-2 py-1 rounded-md hover:bg-c-elevated transition-colors cursor-pointer"
+                title={t('scriptStudio.studio.resyncBlocks')}
+              >
+                <RefreshCw className={`w-3 h-3 ${resyncing ? 'animate-spin' : ''}`} /> {t('scriptStudio.studio.resyncBlocks')}
+              </button>
+              <button onClick={() => setStep(2)} className="btn-primary text-xs flex items-center gap-1.5 h-8 px-4 cursor-pointer">
+                {t('scriptStudio.studio.reviewBlocks')} <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {segmentGroups.map((group) => {
+              const segWords = group.blocks.reduce((s, b) => s + (b.narration?.split(/\s+/).filter(Boolean).length ?? 0), 0);
+              const segDur = group.blocks.reduce((s, b) => s + (b.audioDurationMs ? b.audioDurationMs / 1000 : (b.narration?.split(/\s+/).filter(Boolean).length ?? 0) / 2.5), 0);
+              return (
+                <div key={group.segIndex}>
+                  <div className="flex items-center gap-2 px-4 py-2 bg-c-elevated/60 border-b border-c-border sticky top-0 z-10 backdrop-blur-sm">
+                    <div className="w-1 h-4 rounded-full bg-c-accent/60 shrink-0" />
+                    <span className="text-[10px] font-bold text-c-accent uppercase tracking-wider">{group.name}</span>
+                    <div className="flex-1 h-px bg-c-border/50" />
+                    <span className="text-[10px] text-c-dim tabular-nums">{group.blocks.length} · {segWords}w · {segDur.toFixed(0)}s</span>
+                  </div>
+                  <div className="divide-y divide-c-border/30">
+                    {group.blocks.map((block) => (
+                      <BlockStructureRow
+                        key={block.id}
+                        block={block}
+                        idx={blocks.indexOf(block)}
+                        total={blocks.length}
+                        docId={id!}
+                        isProducing={isProducing}
+                        displayLabel={blockDisplayLabels[block.blockIndex] ?? String(block.blockIndex + 1)}
+                        onBlockUpdated={handleBlockUpdated}
+                        orientation={orientation}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       ) : (
         <div className="flex-1 overflow-hidden flex flex-col">
-          {/* View-mode toggle (step 1 only) */}
-          {step === 1 && !isProducing && (
+          {/* View-mode toggle (step 2 only) */}
+          {step === 2 && !isProducing && (
             <div className="flex items-center justify-between px-4 py-1.5 border-b border-c-border bg-c-surface/50 shrink-0">
               <span className="text-xs text-c-dim">
                 {viewMode === 'step' ? t('scriptStudio.studio.viewStep') : viewMode === 'markdown' ? t('scriptStudio.studio.viewMarkdown') : t('scriptStudio.studio.viewList')}
@@ -4666,14 +5144,14 @@ export default function ScriptDoc() {
           )}
 
           {/* Markdown raw view */}
-          {step === 1 && viewMode === 'markdown' ? (
+          {step === 2 && viewMode === 'markdown' ? (
             <div className="flex-1 overflow-y-auto p-4">
               <pre className="font-mono text-xs text-c-text leading-relaxed whitespace-pre-wrap break-words bg-c-elevated border border-c-border rounded-xl p-4">
                 {doc.rawMarkdown ?? ''}
               </pre>
             </div>
           ) : /* Step-by-step editor */
-          step === 1 && viewMode === 'step' && !isProducing ? (
+          step === 2 && viewMode === 'step' && !isProducing ? (
             <div className="flex-1 overflow-hidden">
               <BlockStepEditor
                 blocks={blocks}
@@ -4690,6 +5168,32 @@ export default function ScriptDoc() {
             /* List view */
             <div className="flex-1 overflow-y-auto">
               <div className="p-4 space-y-5">
+                {/* Fetch all stock bar */}
+                {(() => {
+                  const missingStockCount = blocks.filter(b => b.narration && !b.clipAssetPath && !b.openingText && b.pexelsQuery).length;
+                  return (missingStockCount > 0 || fetchAllProgress.length > 0) ? (
+                    <div className="border border-c-border rounded-lg p-2.5 bg-c-surface/50 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleFetchAllStock}
+                          disabled={fetchingAllStock || isProducing || missingStockCount === 0}
+                          className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50 py-1.5 px-3"
+                        >
+                          {fetchingAllStock ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Video className="w-3.5 h-3.5" />}
+                          {t('scriptStudio.studio.fetchAllStock')}
+                        </button>
+                        <span className="text-xs text-c-dim">
+                          {missingStockCount} {t('scriptStudio.studio.blocksMissingClip')}
+                        </span>
+                      </div>
+                      {fetchAllProgress.length > 0 && (
+                        <div className="font-mono text-[10px] text-c-dim space-y-0.5 max-h-[120px] overflow-auto">
+                          {fetchAllProgress.map((line, i) => <div key={i}>{line}</div>)}
+                        </div>
+                      )}
+                    </div>
+                  ) : null;
+                })()}
                 {segmentGroups.map((group) => (
                   <div key={group.segIndex}>
                     <div className="flex items-center gap-2 mb-2.5">
@@ -4702,15 +5206,17 @@ export default function ScriptDoc() {
                     </div>
                     <div className="space-y-2 ml-1">
                       {group.blocks.map((block) => (
-                        <BlockCard
-                          key={block.id}
-                          block={block}
-                          docId={id!}
-                          orientation={orientation}
-                          isProducing={isProducing}
-                          onBlockUpdated={handleBlockUpdated}
-                          displayLabel={blockDisplayLabels[block.blockIndex] ?? String(block.blockIndex + 1)}
-                        />
+                        <div key={block.id}>
+                          <InsertBlockButton docId={id!} blockIndex={block.blockIndex} isProducing={isProducing} onInserted={handleBlockUpdated} />
+                          <BlockCard
+                            block={block}
+                            docId={id!}
+                            orientation={orientation}
+                            isProducing={isProducing}
+                            onBlockUpdated={handleBlockUpdated}
+                            displayLabel={blockDisplayLabels[block.blockIndex] ?? String(block.blockIndex + 1)}
+                          />
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -4721,8 +5227,8 @@ export default function ScriptDoc() {
         </div>
       )}
 
-      {/* Produce panel (step 2 only) */}
-      {step === 2 && (
+      {/* Produce panel (step 3 only) */}
+      {step === 3 && (
         <>
           <ProducePanel
             isProducing={isProducing}

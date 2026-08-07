@@ -1095,7 +1095,7 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/sync-blocks`);
     return res.data as { ok: boolean; blocks: any[] };
   },
-  updateBlock: async (id: string, blockIndex: number, fields: { pexelsQuery?: string | null; motion?: string; clipAssetPath?: string | null; visualType?: string; aiPrompt?: string | null }) => {
+  updateBlock: async (id: string, blockIndex: number, fields: { narration?: string; openingText?: string | null; overlays?: string[]; overlayStyle?: { color?: string; bgEnabled?: boolean; bgColor?: string; bgOpacity?: number; fontSize?: string; position?: string } | null; pexelsQuery?: string | null; motion?: string; clipAssetPath?: string | null; visualType?: string; aiPrompt?: string | null }) => {
     const res = await api.patch(`/script-studio/docs/${id}/blocks/${blockIndex}`, fields);
     return res.data;
   },
@@ -1141,6 +1141,22 @@ export const scriptStudioApi = {
   breakdownBlock: async (id: string, blockIndex: number) => {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/breakdown`);
     return res.data as { ok: boolean; count: number; sentences: string[] };
+  },
+  insertBlockBefore: async (id: string, blockIndex: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/insert-before`);
+    return res.data as { ok: boolean; newBlockIndex: number };
+  },
+  mergeBlockWithNext: async (id: string, blockIndex: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/merge-next`);
+    return res.data as { ok: boolean; mergedNarration: string };
+  },
+  splitBlockAtText: async (id: string, blockIndex: number, leftText: string, rightText: string) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-at`, { leftText, rightText });
+    return res.data as { ok: boolean; newBlockIndex: number };
+  },
+  deleteBlock: async (id: string, blockIndex: number) => {
+    const res = await api.delete(`/script-studio/docs/${id}/blocks/${blockIndex}`);
+    return res.data as { ok: boolean };
   },
   splitScreen: async (id: string, blockIndex: number, leftClip: string, rightClip: string, opts?: { middleText?: string; middleStyle?: string; accentColor?: string; leftLabel?: string; rightLabel?: string; labelPosition?: string; labelStyle?: string }) => {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-screen`, { leftClip, rightClip, ...opts });

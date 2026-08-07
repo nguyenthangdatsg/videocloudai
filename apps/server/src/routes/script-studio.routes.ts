@@ -20,7 +20,11 @@ import {
   updateBlockClips,
   updateBlockAudio,
   splitBlock,
+  splitBlockAtText,
   breakdownBlock,
+  insertBlockBefore,
+  mergeBlockWithNext,
+  deleteBlock,
   type BlockClip,
   buildFlowPrompt,
   syncBlocksFromParsed,
@@ -292,6 +296,10 @@ export function createScriptStudioRouter(): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     // Only pass fields that were explicitly sent (avoid wiping columns with undefined)
     const fields: Parameters<typeof updateBlockVisual>[2] = {};
+    if ('narration' in body && body.narration != null) fields.narration = body.narration as string;
+    if ('openingText' in body) fields.openingText = (body.openingText ?? null) as string | null;
+    if ('overlays' in body) fields.overlays = (body.overlays ?? []) as string[];
+    if ('overlayStyle' in body) fields.overlayStyle = (body.overlayStyle ?? null) as any;
     if ('pexelsQuery' in body) fields.pexelsQuery = (body.pexelsQuery ?? null) as string | null;
     if ('motion' in body && body.motion != null) fields.motion = body.motion as string;
     if ('clipAssetPath' in body) fields.clipAssetPath = (body.clipAssetPath ?? null) as string | null;
@@ -1248,6 +1256,60 @@ export function createScriptStudioRouter(): Router {
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
     try {
       const result = splitBlock(docId, blockIndex);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Insert a new empty block before the given block
+  router.post('/docs/:id/blocks/:blockIndex/insert-before', (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string);
+    if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
+    try {
+      const result = insertBlockBefore(docId, blockIndex);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Merge a block with the next block
+  router.post('/docs/:id/blocks/:blockIndex/merge-next', (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string);
+    if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
+    try {
+      const result = mergeBlockWithNext(docId, blockIndex);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Split a block at cursor position
+  router.post('/docs/:id/blocks/:blockIndex/split-at', (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string);
+    if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
+    const { leftText, rightText } = (req.body ?? {}) as { leftText?: string; rightText?: string };
+    if (!leftText?.trim() || !rightText?.trim()) { res.status(400).json({ error: 'leftText and rightText required' }); return; }
+    try {
+      const result = splitBlockAtText(docId, blockIndex, leftText, rightText);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Delete a block
+  router.delete('/docs/:id/blocks/:blockIndex', (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const blockIndex = parseInt(req.params.blockIndex as string);
+    if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
+    try {
+      const result = deleteBlock(docId, blockIndex);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });

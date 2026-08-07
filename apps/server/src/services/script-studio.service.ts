@@ -38,6 +38,8 @@ export interface ScriptBlock {
   sceneNumber?: number;
   /** Per-block TTS config raw string, e.g. "pause-before:400ms | rate:-10%" */
   voiceConfig?: string;
+  /** Opening title card text — block plays for a fixed duration with text overlay on background media, no narration */
+  openingText?: string;
 }
 
 export interface ScriptSegment {
@@ -135,6 +137,7 @@ export interface ScriptBlockRow {
   pexels_query: string | null;
   chart_spec_json: string | null;
   overlays_json: string;
+  overlay_style_json: string | null;
   pace_hint: 'slow' | 'fast' | null;
   content_hash: string | null;
   audio_path: string | null;
@@ -155,8 +158,18 @@ export interface ScriptBlockRow {
   clip_start_sec: number | null;
   clip_end_sec: number | null;
   display_number: number | null;
+  opening_text: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface OverlayStyle {
+  color?: string;       // text color hex, default '#FFFFFF'
+  bgEnabled?: boolean;  // show background rectangle
+  bgColor?: string;     // bg color hex, default '#000000'
+  bgOpacity?: number;   // 0-1, default 0.6
+  fontSize?: 'sm' | 'md' | 'lg' | 'xl'; // maps to h/25, h/18, h/14, h/10
+  position?: 'center' | 'top' | 'bottom';
 }
 
 export interface ScriptBlockRecord {
@@ -170,6 +183,7 @@ export interface ScriptBlockRecord {
   pexelsQuery: string | null;
   chartSpec: ChartSpec | null;
   overlays: string[];
+  overlayStyle: OverlayStyle | null;
   paceHint: 'slow' | 'fast' | null;
   contentHash: string | null;
   audioPath: string | null;
@@ -191,6 +205,7 @@ export interface ScriptBlockRecord {
   clipStartSec: number | null;
   clipEndSec: number | null;
   displayNumber: number | null;
+  openingText: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -307,6 +322,7 @@ export function ensureScriptStudioTables(): void {
       pexels_query TEXT,
       chart_spec_json TEXT,
       overlays_json TEXT NOT NULL DEFAULT '[]',
+      overlay_style_json TEXT,
       content_hash TEXT,
       audio_path TEXT,
       audio_duration_ms INTEGER,
@@ -361,6 +377,10 @@ export function ensureScriptStudioTables(): void {
 
   // Migration: display_number (original block number for split display: 3a, 3b, etc.)
   try { dbRun(`ALTER TABLE script_blocks ADD COLUMN display_number INTEGER`); } catch { /* already exists */ }
+
+  // Migration: opening_text (title card text for opening blocks)
+  try { dbRun(`ALTER TABLE script_blocks ADD COLUMN opening_text TEXT`); } catch { /* already exists */ }
+  try { dbRun(`ALTER TABLE script_blocks ADD COLUMN overlay_style_json TEXT`); } catch { /* already exists */ }
 
   // Migrate: sync blocks for any existing docs that have no blocks yet
   try {
@@ -638,9 +658,9 @@ export function parseScript(rawMarkdown: string, onLog?: LogCallback): ParsedScr
         `Segment ${currentSegment.index}: ${currentSegment.blocks.length} blocks, ${queryCount} queries, ${overlayCount} overlays`,
       );
 
-      // Warn about blocks with no query or chart
+      // Warn about blocks with no query or chart (skip opening blocks)
       currentSegment.blocks.forEach((b, bi) => {
-        if (!b.pexelsQuery && !b.chartSpec && b.narration) {
+        if (!b.openingText && !b.pexelsQuery && !b.chartSpec && b.narration) {
           const w: ParseWarning = {
             level: 'warn',
             message: `No PEXELS query or CHART — will inherit previous block's clip`,
@@ -1409,6 +1429,7 @@ function rowToBlock(row: ScriptBlockRow): ScriptBlockRecord {
     pexelsQuery: row.pexels_query,
     chartSpec: row.chart_spec_json ? (JSON.parse(row.chart_spec_json) as ChartSpec) : null,
     overlays: JSON.parse(row.overlays_json || '[]') as string[],
+    overlayStyle: row.overlay_style_json ? (JSON.parse(row.overlay_style_json) as OverlayStyle) : null,
     paceHint: row.pace_hint ?? null,
     contentHash: row.content_hash,
     audioPath: row.audio_path,
@@ -1430,6 +1451,7 @@ function rowToBlock(row: ScriptBlockRow): ScriptBlockRecord {
     clipStartSec: row.clip_start_sec ?? null,
     clipEndSec: row.clip_end_sec ?? null,
     displayNumber: row.display_number ?? null,
+    openingText: row.opening_text ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1446,6 +1468,10 @@ export function getBlock(docId: string, blockIndex: number): ScriptBlockRecord |
 }
 
 export function updateBlockVisual(docId: string, blockIndex: number, fields: {
+  narration?: string;
+  openingText?: string | null;
+  overlays?: string[];
+  overlayStyle?: OverlayStyle | null;
   pexelsQuery?: string | null;
   motion?: string;
   clipAssetPath?: string | null;
@@ -1471,6 +1497,10 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
   const updates: string[] = [];
   const vals: unknown[] = [];
 
+  if ('narration' in fields && fields.narration != null) { updates.push('narration = ?'); vals.push(fields.narration); }
+  if ('openingText' in fields) { updates.push('opening_text = ?'); vals.push(fields.openingText ?? null); }
+  if ('overlays' in fields) { updates.push('overlays_json = ?'); vals.push(JSON.stringify(fields.overlays ?? [])); }
+  if ('overlayStyle' in fields) { updates.push('overlay_style_json = ?'); vals.push(fields.overlayStyle ? JSON.stringify(fields.overlayStyle) : null); }
   if ('pexelsQuery' in fields) { updates.push('pexels_query = ?'); vals.push(fields.pexelsQuery ?? null); }
   if ('motion' in fields && fields.motion != null) { updates.push('motion = ?'); vals.push(fields.motion); }
   if ('visualType' in fields) { updates.push('visual_type = ?'); vals.push(fields.visualType); }
@@ -1679,6 +1709,425 @@ export function splitBlock(docId: string, blockIndex: number): { ok: boolean; ne
 }
 
 /**
+ * Split a block at a specific text position (cursor position from the UI).
+ * leftText and rightText are provided by the frontend.
+ */
+export function splitBlockAtText(docId: string, blockIndex: number, leftText: string, rightText: string): { ok: boolean; newBlockIndex: number } {
+  const row = dbGet<ScriptBlockRow>(
+    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    [docId, blockIndex],
+  );
+  if (!row) throw new Error(`Block ${blockIndex} not found`);
+  if (!leftText.trim() || !rightText.trim()) throw new Error('Both parts must have text');
+
+  const now = new Date().toISOString();
+  const newIdx = blockIndex + 1;
+  const displayNum = row.display_number ?? (blockIndex + 1);
+
+  dbRun(`UPDATE script_blocks SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`, [docId]);
+
+  // Shift subsequent blocks
+  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxIdx = maxRow?.mx ?? blockIndex;
+  for (let i = maxIdx; i >= newIdx; i--) {
+    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+      [i + 1, now, docId, i]);
+  }
+
+  // Update original block with left text, reset audio
+  const oldFiles = collectBlockClipFiles(row);
+  dbRun(
+    `UPDATE script_blocks SET narration = ?, display_number = ?, content_hash = NULL,
+     audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
+     clip_asset_path = NULL, clips_json = NULL, rendered_clip_path = NULL,
+     status = 'pending', error_msg = NULL, updated_at = ?
+     WHERE doc_id = ? AND block_index = ?`,
+    [leftText.trim(), displayNum, now, docId, blockIndex],
+  );
+  for (const f of oldFiles) deleteClipFile(docId, f);
+
+  // Insert new block with right text
+  const motion = MOTION_CYCLE[newIdx % MOTION_CYCLE.length];
+  dbRun(
+    `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number,
+     narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt,
+     visual_type, motion, display_number, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)`,
+    [randomUUID(), docId, newIdx, row.segment_index, row.segment_name, row.scene_number,
+     rightText.trim(), row.pexels_query, row.pace_hint, row.voice_config, row.visual_type, motion,
+     displayNum, now, now],
+  );
+
+  // Update markdown
+  updateMarkdownForSplitAt(docId, row.narration?.trim() || '', leftText.trim(), rightText.trim());
+
+  addLog(docId, 'info', 'parse', `Block ${blockIndex + 1} split at cursor → "${leftText.trim().substring(0, 30)}..." + "${rightText.trim().substring(0, 30)}..."`);
+  return { ok: true, newBlockIndex: newIdx };
+}
+
+/** Update raw_markdown when splitting a scene at cursor position. */
+function updateMarkdownForSplitAt(docId: string, originalNarration: string, leftText: string, rightText: string): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+  if (!docRow || !originalNarration) return;
+
+  const lines = docRow.raw_markdown.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^###\s+SCENE\s+\d+/i.test(lines[i].trim())) continue;
+
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      if (/^###\s+SCENE\s+\d+/i.test(t) || (/^#{1,2}\s+/.test(t) && !/^###/.test(t))) { end = j; break; }
+    }
+
+    const sceneNarr = normalizeNarr(lines.slice(i + 1, end).map(l => l.trim()).filter(l => l && !/^\[/.test(l)).join(' '));
+    if (sceneNarr !== normalizeNarr(originalNarration)) continue;
+
+    const sceneNumMatch = lines[i].match(/^###\s+SCENE\s+(\d+)/i);
+    const sceneNum = sceneNumMatch ? parseInt(sceneNumMatch[1], 10) : 1;
+    const tagLines = lines.slice(i + 1, end).filter(l => /^\s*\[(?:PEXELS|FLOW|GRAPHIC|CHART|STAT|TEXT ON SCREEN)[\s:]/i.test(l.trim()));
+
+    const newSceneLines = [
+      `### SCENE ${sceneNum}`, ...tagLines, leftText, '',
+      `### SCENE ${sceneNum + 1}`, ...tagLines, rightText, '',
+    ];
+
+    // Renumber subsequent scenes
+    let nextNum = sceneNum + 2;
+    for (let j = end; j < lines.length; j++) {
+      const trimmed = lines[j].trim();
+      if (/^#{1,2}\s+/.test(trimmed) && !/^###/.test(trimmed)) break;
+      const m = lines[j].match(/^(###\s+SCENE\s+)\d+(.*)/i);
+      if (m) { lines[j] = `${m[1]}${nextNum}${m[2]}`; nextNum++; }
+    }
+
+    lines.splice(i, end - i, ...newSceneLines);
+    break;
+  }
+
+  const newMarkdown = lines.join('\n');
+  const parsed = parseScript(newMarkdown);
+  const now = new Date().toISOString();
+  dbRun(`UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+    [newMarkdown, JSON.stringify(parsed), now, docId]);
+  updateDocMeta(docId, parsed);
+}
+
+/**
+ * Merge a block with the next block — combines narration, keeps first block's clip.
+ */
+export function mergeBlockWithNext(docId: string, blockIndex: number): { ok: boolean; mergedNarration: string } {
+  const row = dbGet<ScriptBlockRow>(
+    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    [docId, blockIndex],
+  );
+  const nextRow = dbGet<ScriptBlockRow>(
+    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    [docId, blockIndex + 1],
+  );
+  if (!row) throw new Error(`Block ${blockIndex} not found`);
+  if (!nextRow) throw new Error(`No block after ${blockIndex} to merge with`);
+
+  const mergedNarration = [row.narration?.trim(), nextRow.narration?.trim()].filter(Boolean).join(' ');
+  const now = new Date().toISOString();
+
+  // Delete clip files from the next block
+  const nextFiles = collectBlockClipFiles(nextRow);
+  for (const f of nextFiles) deleteClipFile(docId, f);
+
+  // Update first block with merged narration, reset audio (narration changed)
+  dbRun(
+    `UPDATE script_blocks SET narration = ?, content_hash = NULL,
+     audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
+     rendered_clip_path = NULL, status = 'pending', error_msg = NULL, updated_at = ?
+     WHERE doc_id = ? AND block_index = ?`,
+    [mergedNarration, now, docId, blockIndex],
+  );
+
+  // Delete the next block
+  dbRun(`DELETE FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex + 1]);
+
+  // Shift subsequent blocks down by 1
+  const maxRow2 = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxIdx = maxRow2?.mx ?? blockIndex + 1;
+  for (let i = blockIndex + 2; i <= maxIdx + 1; i++) {
+    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+      [i - 1, now, docId, i]);
+  }
+
+  // Update markdown
+  mergeSceneInMarkdown(docId, row.narration?.trim() || '', nextRow.narration?.trim() || '', mergedNarration);
+
+  addLog(docId, 'info', 'parse', `Merged block ${blockIndex + 1} with ${blockIndex + 2} → "${mergedNarration.substring(0, 60)}..."`);
+  return { ok: true, mergedNarration };
+}
+
+/** Normalize markdown narration for comparison with DB narration (which has [STAT:] resolved). */
+function normalizeNarr(raw: string): string {
+  return resolveStatTags(raw).replace(/\s+/g, ' ').trim();
+}
+
+/** Update raw_markdown to merge two consecutive scenes into one. */
+function mergeSceneInMarkdown(docId: string, firstNarration: string, secondNarration: string, mergedNarration: string): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+  if (!docRow) return;
+
+  const lines = docRow.raw_markdown.split('\n');
+
+  // Find the two consecutive scenes by matching narration
+  let firstStart = -1, firstEnd = -1, secondEnd = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^###\s+SCENE\s+\d+/i.test(lines[i].trim())) continue;
+
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      if (/^###\s+SCENE\s+\d+/i.test(t) || (/^#{1,2}\s+/.test(t) && !/^###/.test(t))) { end = j; break; }
+    }
+
+    const narr = normalizeNarr(lines.slice(i + 1, end).map(l => l.trim()).filter(l => l && !/^\[/.test(l)).join(' '));
+
+    if (firstStart === -1 && narr === normalizeNarr(firstNarration)) {
+      firstStart = i;
+      firstEnd = end;
+    } else if (firstStart !== -1 && narr === normalizeNarr(secondNarration)) {
+      secondEnd = end;
+      break;
+    }
+  }
+
+  if (firstStart === -1 || secondEnd === -1) return;
+
+  // Get tags from first scene
+  const firstSceneLines = lines.slice(firstStart + 1, firstEnd);
+  const tagLines = firstSceneLines.filter(l => /^\s*\[(?:PEXELS|FLOW|GRAPHIC|CHART|STAT|TEXT ON SCREEN)[\s:]/i.test(l.trim()));
+  const sceneNumMatch = lines[firstStart].match(/^###\s+SCENE\s+(\d+)/i);
+  const sceneNum = sceneNumMatch ? parseInt(sceneNumMatch[1], 10) : 1;
+
+  // Build merged scene
+  const newLines = [`### SCENE ${sceneNum}`, ...tagLines, mergedNarration, ''];
+
+  // Renumber subsequent scenes
+  let nextNum = sceneNum + 1;
+  for (let i = secondEnd; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (/^#{1,2}\s+/.test(trimmed) && !/^###/.test(trimmed)) break;
+    const m = lines[i].match(/^(###\s+SCENE\s+)\d+(.*)/i);
+    if (m) { lines[i] = `${m[1]}${nextNum}${m[2]}`; nextNum++; }
+  }
+
+  lines.splice(firstStart, secondEnd - firstStart, ...newLines);
+
+  const newMarkdown = lines.join('\n');
+  const parsed = parseScript(newMarkdown);
+  const now = new Date().toISOString();
+  dbRun(`UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+    [newMarkdown, JSON.stringify(parsed), now, docId]);
+  updateDocMeta(docId, parsed);
+}
+
+/**
+ * Delete a block entirely. Shifts subsequent blocks down.
+ */
+export function deleteBlock(docId: string, blockIndex: number): { ok: boolean } {
+  const row = dbGet<ScriptBlockRow>(
+    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    [docId, blockIndex],
+  );
+  if (!row) throw new Error(`Block ${blockIndex} not found`);
+
+  const now = new Date().toISOString();
+
+  // Delete clip files
+  const files = collectBlockClipFiles(row);
+  for (const f of files) deleteClipFile(docId, f);
+
+  // Delete the block
+  dbRun(`DELETE FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
+
+  // Shift subsequent blocks down
+  const maxRow2 = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxIdx = maxRow2?.mx ?? blockIndex;
+  for (let i = blockIndex + 1; i <= maxIdx + 1; i++) {
+    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+      [i - 1, now, docId, i]);
+  }
+
+  // Update markdown — remove the scene
+  deleteSceneInMarkdown(docId, row.narration?.trim() || '');
+
+  addLog(docId, 'info', 'parse', `Deleted block ${blockIndex + 1}: "${(row.narration || '').substring(0, 50)}"`);
+  return { ok: true };
+}
+
+/** Remove a scene from raw_markdown by matching narration. */
+function deleteSceneInMarkdown(docId: string, narration: string): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+  if (!docRow || !narration) return;
+
+  const lines = docRow.raw_markdown.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^###\s+SCENE\s+\d+/i.test(lines[i].trim())) continue;
+
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      if (/^###\s+SCENE\s+\d+/i.test(t) || (/^#{1,2}\s+/.test(t) && !/^###/.test(t))) { end = j; break; }
+    }
+
+    const sceneNarr = normalizeNarr(lines.slice(i + 1, end).map(l => l.trim()).filter(l => l && !/^\[/.test(l)).join(' '));
+    if (sceneNarr === normalizeNarr(narration)) {
+      // Renumber subsequent scenes in same segment
+      const sceneNumMatch = lines[i].match(/^###\s+SCENE\s+(\d+)/i);
+      const removedNum = sceneNumMatch ? parseInt(sceneNumMatch[1], 10) : 0;
+      let nextNum = removedNum;
+      for (let j = end; j < lines.length; j++) {
+        const trimmed = lines[j].trim();
+        if (/^#{1,2}\s+/.test(trimmed) && !/^###/.test(trimmed)) break;
+        const m = lines[j].match(/^(###\s+SCENE\s+)\d+(.*)/i);
+        if (m) { lines[j] = `${m[1]}${nextNum}${m[2]}`; nextNum++; }
+      }
+
+      lines.splice(i, end - i);
+      break;
+    }
+  }
+
+  const newMarkdown = lines.join('\n');
+  const parsed = parseScript(newMarkdown);
+  const now = new Date().toISOString();
+  dbRun(`UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+    [newMarkdown, JSON.stringify(parsed), now, docId]);
+  updateDocMeta(docId, parsed);
+}
+
+/**
+ * Insert a new empty block before the given block index.
+ * Shifts all blocks at and after blockIndex up by 1, inserts a blank block,
+ * and updates raw_markdown with a new ### SCENE entry.
+ */
+export function insertBlockBefore(docId: string, blockIndex: number): { ok: boolean; newBlockIndex: number } {
+  const now = new Date().toISOString();
+
+  // Find the block at the target index to get segment info
+  const targetRow = dbGet<ScriptBlockRow>(
+    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    [docId, blockIndex],
+  );
+  if (!targetRow) throw new Error(`Block ${blockIndex} not found`);
+
+  // Backfill display_number on all blocks that don't have one yet
+  dbRun(
+    `UPDATE script_blocks SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`,
+    [docId],
+  );
+
+  // Shift all blocks at and after blockIndex up by 1
+  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxIdx = maxRow?.mx ?? blockIndex;
+  for (let i = maxIdx; i >= blockIndex; i--) {
+    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+      [i + 1, now, docId, i]);
+  }
+
+  // Insert new empty block
+  const motion = MOTION_CYCLE[blockIndex % MOTION_CYCLE.length];
+  dbRun(
+    `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number,
+     narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt,
+     visual_type, motion, display_number, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, '', NULL, NULL, '[]', NULL, ?, NULL, 'pexels', ?, ?, 'pending', ?, ?)`,
+    [randomUUID(), docId, blockIndex, targetRow.segment_index, targetRow.segment_name,
+     targetRow.scene_number, targetRow.voice_config, motion,
+     targetRow.display_number, now, now],
+  );
+
+  // Update raw_markdown — insert a new ### SCENE before the target scene
+  insertSceneInMarkdown(docId, targetRow);
+
+  addLog(docId, 'info', 'parse', `New block inserted before block ${targetRow.display_number ?? blockIndex + 1}`);
+
+  return { ok: true, newBlockIndex: blockIndex };
+}
+
+/**
+ * Insert a new empty ### SCENE in the markdown before the scene matching the given block.
+ */
+function insertSceneInMarkdown(docId: string, targetBlock: ScriptBlockRow): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+  if (!docRow) return;
+
+  const lines = docRow.raw_markdown.split('\n');
+  const targetNarration = (targetBlock.narration || '').trim();
+
+  // Find the scene that contains this narration
+  let insertLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^###\s+SCENE\s+\d+/i.test(lines[i].trim())) continue;
+
+    // Find end of this scene
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      if (/^###\s+SCENE\s+\d+/i.test(t) || /^#{1,2}\s+/.test(t) && !/^###/.test(t)) {
+        end = j;
+        break;
+      }
+    }
+
+    // Match by narration
+    const sceneNarration = lines.slice(i + 1, end)
+      .map(l => l.trim())
+      .filter(l => l && !/^\[/.test(l))
+      .join(' ');
+
+    if (sceneNarration === targetNarration || (targetNarration && sceneNarration.startsWith(targetNarration))) {
+      insertLine = i;
+      break;
+    }
+  }
+
+  if (insertLine === -1) return;
+
+  // Get the scene number from the matched scene header
+  const sceneNumMatch = lines[insertLine].match(/^###\s+SCENE\s+(\d+)/i);
+  const sceneNum = sceneNumMatch ? parseInt(sceneNumMatch[1], 10) : 1;
+
+  // Insert new scene before this one
+  const newSceneLines = [
+    `### SCENE ${sceneNum}`,
+    '',
+    '',
+  ];
+
+  // Renumber this scene and all subsequent scenes in the segment
+  for (let i = insertLine; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (/^#{1,2}\s+/.test(trimmed) && !/^###/.test(trimmed)) break;
+    const m = lines[i].match(/^(###\s+SCENE\s+)(\d+)(.*)/i);
+    if (m) {
+      const oldNum = parseInt(m[2], 10);
+      lines[i] = `${m[1]}${oldNum + 1}${m[3]}`;
+    }
+  }
+
+  lines.splice(insertLine, 0, ...newSceneLines);
+
+  const newMarkdown = lines.join('\n');
+  const parsed = parseScript(newMarkdown);
+  const now = new Date().toISOString();
+
+  dbRun(
+    `UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+    [newMarkdown, JSON.stringify(parsed), now, docId],
+  );
+  updateDocMeta(docId, parsed);
+}
+
+/**
  * Break down a block into multiple blocks — one per sentence.
  * Similar to splitBlock but produces N blocks instead of 2.
  */
@@ -1744,10 +2193,106 @@ export function breakdownBlock(docId: string, blockIndex: number): { ok: boolean
     );
   }
 
+  // ── Update raw_markdown so re-parses preserve the breakdown ──
+  updateMarkdownForBreakdown(docId, narration, sentences);
+
   const wordCounts = sentences.map(s => `${countWords(s)}w`).join(', ');
   addLog(docId, 'info', 'parse', `Block ${displayNum} broken down into ${sentences.length} blocks (${wordCounts})`);
 
   return { ok: true, count: sentences.length, sentences };
+}
+
+/**
+ * After a block breakdown, update raw_markdown to replace the original scene
+ * with multiple scenes (one per sentence) so that future re-parses preserve them.
+ * Finds the scene by matching the original narration text (robust against index shifts).
+ */
+function updateMarkdownForBreakdown(docId: string, originalNarration: string, sentences: string[]): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+  if (!docRow || !originalNarration.trim()) return;
+
+  const lines = docRow.raw_markdown.split('\n');
+
+  // Find the scene that contains this narration by scanning for matching text.
+  // A scene starts with ### SCENE N and ends at the next ### SCENE / ## SEGMENT / EOF.
+  let sceneStartLine = -1;
+  let sceneEndLine = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^###\s+SCENE\s+\d+/i.test(lines[i].trim())) continue;
+
+    // Find end of this scene
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      if (/^###\s+SCENE\s+\d+/i.test(t) || /^#{1,2}\s+/.test(t) && !/^###/.test(t)) {
+        end = j;
+        break;
+      }
+    }
+
+    // Extract narration lines from this scene (non-tag, non-empty)
+    const sceneNarration = normalizeNarr(lines.slice(i + 1, end)
+      .map(l => l.trim())
+      .filter(l => l && !/^\[/.test(l))
+      .join(' '));
+
+    if (sceneNarration === normalizeNarr(originalNarration)) {
+      sceneStartLine = i;
+      sceneEndLine = end;
+      break;
+    }
+  }
+
+  if (sceneStartLine === -1) return; // couldn't find matching scene
+
+  // Extract the scene number from the header
+  const sceneNumMatch = lines[sceneStartLine].match(/^###\s+SCENE\s+(\d+)/i);
+  const sceneNum = sceneNumMatch ? parseInt(sceneNumMatch[1], 10) : 1;
+
+  // Extract tags from the original scene
+  const sceneLines = lines.slice(sceneStartLine + 1, sceneEndLine);
+  const tagLines = sceneLines.filter(l => /^\s*\[(?:PEXELS|FLOW|GRAPHIC|CHART|STAT|TEXT ON SCREEN)[\s:]/i.test(l.trim()));
+  const pexelsTag = tagLines.find(l => /^\s*\[PEXELS:/i.test(l.trim()));
+
+  // Build replacement: multiple ### SCENE entries
+  const newSceneLines: string[] = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const newSceneNum = sceneNum + i;
+    newSceneLines.push(`### SCENE ${newSceneNum}`);
+    if (i === 0) {
+      for (const tag of tagLines) newSceneLines.push(tag);
+    } else if (pexelsTag) {
+      newSceneLines.push(pexelsTag);
+    }
+    newSceneLines.push(sentences[i]);
+    newSceneLines.push('');
+  }
+
+  // Renumber subsequent scenes in the same segment
+  let nextExpectedNum = sceneNum + sentences.length;
+  for (let i = sceneEndLine; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (/^#{1,2}\s+/.test(trimmed) && !/^###/.test(trimmed)) break;
+    const m = lines[i].match(/^(###\s+SCENE\s+)\d+(.*)/i);
+    if (m) {
+      lines[i] = `${m[1]}${nextExpectedNum}${m[2]}`;
+      nextExpectedNum++;
+    }
+  }
+
+  // Splice in new scenes
+  lines.splice(sceneStartLine, sceneEndLine - sceneStartLine, ...newSceneLines);
+
+  const newMarkdown = lines.join('\n');
+  const parsed = parseScript(newMarkdown);
+  const now = new Date().toISOString();
+
+  dbRun(
+    `UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+    [newMarkdown, JSON.stringify(parsed), now, docId],
+  );
+  updateDocMeta(docId, parsed);
 }
 
 export function updateBlockAi(
@@ -1823,12 +2368,13 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
       const overlaysJson = JSON.stringify(block.overlays || []);
       const chartSpecJson = block.chartSpec ? JSON.stringify(block.chartSpec) : null;
       const paceHint = block.paceHint ?? null;
+      const openingText = block.openingText ?? null;
 
       if (!existing) {
         dbRun(
-          `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number, narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt, visual_type, motion, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-          [randomUUID(), docId, blockIndex, si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, motion, now, now],
+          `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number, narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt, visual_type, motion, opening_text, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+          [randomUUID(), docId, blockIndex, si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, motion, openingText, now, now],
         );
       } else {
         // Compare actual narration text, not just hash — content_hash can be NULL after previous sync
@@ -1850,32 +2396,32 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
           // Reset audio + render, keep clip asset path
           dbRun(
             `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, narration = ?, pexels_query = ?,
-             chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?, content_hash = NULL,
+             chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?, opening_text = ?, content_hash = NULL,
              audio_path = NULL, audio_duration_ms = NULL, words_json = NULL,
              rendered_clip_path = NULL, status = 'pending', error_msg = NULL, updated_at = ?
              WHERE doc_id = ? AND block_index = ?`,
-            [si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, targetVisualType, now, docId, blockIndex],
+            [si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, targetVisualType, openingText, now, docId, blockIndex],
           );
         } else if (visualChanged) {
           // Keep audio, reset clip + render — delete old clip files
           const oldFiles = collectBlockClipFiles(existing);
           dbRun(
             `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, pexels_query = ?,
-             chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?,
+             chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?, opening_text = ?,
              clip_asset_path = NULL, ai_asset_path = NULL, rendered_clip_path = NULL,
              status = CASE WHEN status IN ('clip_ready','rendered') THEN 'audio_ready' ELSE status END,
              error_msg = NULL, updated_at = ?
              WHERE doc_id = ? AND block_index = ?`,
-            [si + 1, seg.name, sceneNum, block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, now, docId, blockIndex],
+            [si + 1, seg.name, sceneNum, block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, openingText, now, docId, blockIndex],
           );
           for (const f of oldFiles) deleteClipFile(docId, f);
         } else {
           // Just update metadata (including pexels_query for future use, but keep clips intact)
           dbRun(
             `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, pexels_query = ?,
-             overlays_json = ?, pace_hint = ?, voice_config = ?, updated_at = ?
+             overlays_json = ?, pace_hint = ?, voice_config = ?, opening_text = ?, updated_at = ?
              WHERE doc_id = ? AND block_index = ?`,
-            [si + 1, seg.name, sceneNum, block.pexelsQuery ?? null, overlaysJson, paceHint, voiceConfig, now, docId, blockIndex],
+            [si + 1, seg.name, sceneNum, block.pexelsQuery ?? null, overlaysJson, paceHint, voiceConfig, openingText, now, docId, blockIndex],
           );
         }
       }
