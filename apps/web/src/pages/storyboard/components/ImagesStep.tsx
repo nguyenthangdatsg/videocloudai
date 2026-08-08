@@ -624,9 +624,28 @@ export function ImagesStep() {
             const prompt = prompts[i];
             return (
             <div key={i} ref={(el) => { imageCardRefs.current[i] = el; }} className={clsx(
-              'rounded-xl border overflow-hidden group/card',
+              'rounded-xl border overflow-hidden group/card relative',
+              img.skip && 'opacity-40',
               img.status === 'done' ? 'border-green-800/30' : img.status === 'generating' ? 'border-cyan-800/30' : img.status === 'error' ? 'border-red-800/30' : 'border-c-border',
             )}>
+              {/* Skip checkbox */}
+              <label
+                className="absolute top-1 left-1 z-10 flex items-center cursor-pointer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  checked={!img.skip}
+                  onChange={() => {
+                    setGeneratedImages((prev) => {
+                      const updated = prev.map((im, j) => j === i ? { ...im, skip: !im.skip } : im);
+                      saveProject({ generatedImages: updated });
+                      return updated;
+                    });
+                  }}
+                  className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
+                />
+              </label>
               {/* Media area */}
               {img.status === 'done' && img.url ? (() => {
                 const isVid = img.mediaType === 'video' || /\.(mp4|webm|mov)$/i.test(img.url || '') || /\.(mp4|webm|mov)$/i.test(img.filename || '');

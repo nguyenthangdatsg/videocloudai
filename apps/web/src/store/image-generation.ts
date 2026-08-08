@@ -11,6 +11,7 @@ export interface GenImage {
   status: 'pending' | 'generating' | 'done' | 'error';
   mediaType?: GenMediaType;
   videoFilename?: string;
+  skip?: boolean;
 }
 
 interface ImageGenTask {
@@ -23,6 +24,12 @@ interface ImageGenTask {
 
 // Track active Flow event listener cleanup functions per project
 const flowCleanups = new Map<string, () => void>();
+// Track active session ID per project (to filter events from stale/other sessions)
+const flowSessionIds = new Map<string, string>();
+
+function generateSessionId(): string {
+  return Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
 
 interface ImageGenStore {
   tasks: Map<string, ImageGenTask>;
@@ -363,6 +370,10 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     const oldCleanup = flowCleanups.get(projectId);
     if (oldCleanup) oldCleanup();
 
+    // Generate a unique session ID so we only process events from THIS generation
+    const sessionId = generateSessionId();
+    flowSessionIds.set(projectId, sessionId);
+
     // If existingImages provided (resume mode), keep done images and only reset failed/pending for the prompts being retried
     let initialImages: GenImage[];
     // Maps extension subset index → full images array index (for resume mode)
@@ -475,19 +486,19 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
 
         // Dispatch only uncached prompts to extension (strip per-prompt mediaType for backward compatibility)
         window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-          detail: { prompts: uncachedPrompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel },
+          detail: { prompts: uncachedPrompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel, sessionId },
         }));
       } else {
         // No cache hits — send all prompts to extension
         window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-          detail: { prompts: prompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel },
+          detail: { prompts: prompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel, sessionId },
         }));
       }
     }).catch(() => {
       // Cache check failed — send all prompts to extension
       window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-        detail: { prompts: prompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel },
-      }));
+        detail: { prompts: prompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel, sessionId },
+        }));
     });
 
     // Resolve extension subset index to full images array index
@@ -497,6 +508,9 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
     // Listen for events from bridge.js (Chrome extension)
     const onProgress = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (!d) return;
+      // Ignore events from other sessions (e.g., other tabs or stale generations)
+      if (d.sessionId && d.sessionId !== flowSessionIds.get(projectId)) return;
       set((s) => {
         const t = s.tasks.get(projectId);
         if (!t) return s;
@@ -516,6 +530,8 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
 
     const onImage = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (!d) return;
+      if (d.sessionId && d.sessionId !== flowSessionIds.get(projectId)) return;
       set((s) => {
         const t = s.tasks.get(projectId);
         if (!t) return s;
@@ -558,6 +574,7 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
       window.removeEventListener('Han2YT_flow_done', onDone);
       window.removeEventListener('Han2YT_flow_error', onError);
       flowCleanups.delete(projectId);
+      flowSessionIds.delete(projectId);
     };
 
     // Helper: finalize any images still stuck as generating/pending → error
@@ -570,6 +587,8 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
 
     const onDone = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (!d) return;
+      if (d.sessionId && d.sessionId !== flowSessionIds.get(projectId)) return;
       cleanup();
       const finalTask = get().tasks.get(projectId);
       if (finalTask) {
@@ -609,6 +628,8 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
 
     const onError = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (!d) return;
+      if (d.sessionId && d.sessionId !== flowSessionIds.get(projectId)) return;
       cleanup();
       const currentTask = get().tasks.get(projectId);
       const currentImages = currentTask?.images ?? [];

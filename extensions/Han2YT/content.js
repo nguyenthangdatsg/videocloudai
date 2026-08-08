@@ -728,26 +728,29 @@ if (!window.__HAN2YT_LISTENER__) {
       return true;
     }
 
-    // Chờ media (tự nhận diện image hoặc video tuỳ theo GET_BOX)
+    // Chờ media — race cả image và video, trả về cái nào xuất hiện trước
     if (msg.type === "WAIT_MEDIA") {
-      const mediaType = window.__Han2YT_flow_mediaType || "image";
-      if (mediaType === "video") {
-        const baseline = window.__Han2YT_flow_baseline_video || new Set();
-        waitForNewVideo(baseline).then((res) => {
-          if (res.stopped) sendResponse({ ok: false, stopped: true });
-          else if (res.policyViolation) sendResponse({ ok: false, policyViolation: true, message: res.message });
-          else if (res.timeout) sendResponse({ ok: false, timeout: true });
-          else sendResponse({ ok: true, src: res.src, mediaType: "video" });
-        });
-      } else {
-        const baseline = window.__Han2YT_flow_baseline || new Set();
-        waitForNewImage(baseline).then((res) => {
-          if (res.stopped) sendResponse({ ok: false, stopped: true });
-          else if (res.policyViolation) sendResponse({ ok: false, policyViolation: true, message: res.message });
-          else if (res.timeout) sendResponse({ ok: false, timeout: true });
-          else sendResponse({ ok: true, src: res.src, mediaType: "image" });
-        });
-      }
+      const preferVideo = (window.__Han2YT_flow_mediaType || "image") === "video";
+      const imgBaseline = window.__Han2YT_flow_baseline || new Set();
+      const vidBaseline = window.__Han2YT_flow_baseline_video || new Set();
+
+      // Race both: whichever media type appears first wins
+      const imagePromise = waitForNewImage(imgBaseline).then((res) => {
+        if (res.img) return { ok: true, src: res.src, mediaType: "image" };
+        return res; // stopped/timeout/policyViolation
+      });
+      const videoPromise = waitForNewVideo(vidBaseline).then((res) => {
+        if (res.video) return { ok: true, src: res.src, mediaType: "video" };
+        return res;
+      });
+
+      Promise.race([imagePromise, videoPromise]).then((res) => {
+        if (res.ok) sendResponse(res);
+        else if (res.stopped) sendResponse({ ok: false, stopped: true });
+        else if (res.policyViolation) sendResponse({ ok: false, policyViolation: true, message: res.message });
+        else if (res.timeout) sendResponse({ ok: false, timeout: true });
+        else sendResponse(res);
+      });
       return true;
     }
 

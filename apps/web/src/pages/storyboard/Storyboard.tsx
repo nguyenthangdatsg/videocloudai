@@ -1478,7 +1478,7 @@ ENDING (CRITICAL — last 2-3 sentences):
     setError(null);
     const pendingPrompts = prompts
       .map((p, i) => ({ timestamp: p.timestamp, prompt: p.prompt, mediaType: (generatedImages[i]?.mediaType ?? p.mediaType ?? 'image') as 'image' | 'video', _i: i }))
-      .filter(p => { const img = generatedImages[p._i]; return !img || img.status !== 'done'; })
+      .filter(p => { const img = generatedImages[p._i]; return (!img || img.status !== 'done') && !img?.skip; })
       .map(({ _i: _unused, ...p }) => p);
     if (!pendingPrompts.length) return;
     const existingBase = generatedImages.length > 0 ? generatedImages : undefined;
@@ -1492,21 +1492,24 @@ ENDING (CRITICAL — last 2-3 sentences):
     setError(null);
     const promptTexts = prompts.map(p => p.prompt).filter(Boolean);
     if (promptTexts.length) imageApi.clearPromptCache(promptTexts);
-    const allPrompts = prompts.map((p, i) => {
-      const img = generatedImages[i];
-      return { timestamp: p.timestamp, prompt: p.prompt, mediaType: (img?.mediaType ?? p.mediaType ?? 'image') as 'image' | 'video' };
-    });
+    const allPrompts = prompts
+      .map((p, i) => {
+        const img = generatedImages[i];
+        return { timestamp: p.timestamp, prompt: p.prompt, mediaType: (img?.mediaType ?? p.mediaType ?? 'image') as 'image' | 'video', skip: !!img?.skip };
+      })
+      .filter(p => !p.skip)
+      .map(({ skip: _, ...p }) => p);
     const dominantType = allPrompts.some(p => p.mediaType === 'video') ? 'video' : 'image';
     imageGenStore.startFlowGeneration(projectId, allPrompts, dominantType, undefined, flowProvider);
   };
 
-  const failedImageCount = generatedImages.filter((i) => i.status === 'error' || i.status === 'pending').length;
+  const failedImageCount = generatedImages.filter((i) => (i.status === 'error' || i.status === 'pending') && !i.skip).length;
   const handleFlowResume = () => {
     if (!prompts.length || !projectId) return;
     setError(null);
     const failedPrompts = prompts
       .map((p, i) => ({ timestamp: p.timestamp, prompt: p.prompt, mediaType: (generatedImages[i]?.mediaType ?? p.mediaType ?? 'image') as 'image' | 'video', _i: i }))
-      .filter(p => { const img = generatedImages[p._i]; return !img || img.status === 'error' || img.status === 'pending'; })
+      .filter(p => { const img = generatedImages[p._i]; return (!img || img.status === 'error' || img.status === 'pending') && !img?.skip; })
       .map(({ _i: _unused, ...p }) => p);
     if (!failedPrompts.length) return;
     const dominantType = failedPrompts.some(p => p.mediaType === 'video') ? 'video' : 'image';
@@ -1625,12 +1628,16 @@ ENDING (CRITICAL — last 2-3 sentences):
       prev.map((img, i) => i === idx ? { ...img, status: 'generating' as const } : img),
     );
 
+    const regenSessionId = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+
     const onProgress = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== regenSessionId) return;
       if (d.index !== 0) return;
     };
     const onImage = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== regenSessionId) return;
       if (d.index !== 0) return;
       if (d.status === 'done') {
         setGeneratedImages((prev) => {
@@ -1652,8 +1659,14 @@ ENDING (CRITICAL — last 2-3 sentences):
       setRegenIndex(null);
       singleRegenCleanupRef.current = null;
     };
-    const onDone = () => { cleanup(); };
-    const onError = () => {
+    const onDone = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== regenSessionId) return;
+      cleanup();
+    };
+    const onError = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== regenSessionId) return;
       setGeneratedImages((prev) =>
         prev.map((img, i) => i === idx ? { ...img, status: 'error' as const } : img),
       );
@@ -1674,6 +1687,7 @@ ENDING (CRITICAL — last 2-3 sentences):
         delayMax: 0,
         mediaType: segMediaType,
         provider: useProvider,
+        sessionId: regenSessionId,
       },
     }));
   };
@@ -1928,9 +1942,11 @@ ENDING (CRITICAL — last 2-3 sentences):
           if (variantIdx >= variants.length) { resolve(); return; }
           const variant = variants[variantIdx];
           const prompt = mascotPrompt.trim() + variant.suffix;
+          const variantSessionId = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
           const onImage = (e: Event) => {
             const d = (e as CustomEvent).detail;
+            if (d.sessionId && d.sessionId !== variantSessionId) return;
             if (d.index !== 0) return;
             cleanup();
             if (d.status === 'done' && d.filename) {
@@ -1940,8 +1956,14 @@ ENDING (CRITICAL — last 2-3 sentences):
             variantIdx++;
             generateNextVariant().then(resolve, reject);
           };
-          const onDone = () => { /* handled by onImage */ };
+          const onDone = (e: Event) => {
+            const d = (e as CustomEvent).detail;
+            if (d.sessionId && d.sessionId !== variantSessionId) return;
+            /* handled by onImage */
+          };
           const onError = (e: Event) => {
+            const d = (e as CustomEvent).detail;
+            if (d.sessionId && d.sessionId !== variantSessionId) return;
             cleanup();
             variantIdx++;
             generateNextVariant().then(resolve, reject);
@@ -1961,6 +1983,7 @@ ENDING (CRITICAL — last 2-3 sentences):
               delayMin: 0, delayMax: 0,
               mediaType: 'image',
               provider: flowProvider,
+              sessionId: variantSessionId,
             },
           }));
         });

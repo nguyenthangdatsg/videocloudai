@@ -49,6 +49,12 @@
     },
     {
       "matches": ["http://localhost:5174/*", "http://localhost:5173/*", "http://localhost/*"],
+      "js": ["relay.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://localhost:5174/*", "http://localhost:5173/*", "http://localhost/*"],
       "js": ["bridge.js"],
       "run_at": "document_idle"
     }

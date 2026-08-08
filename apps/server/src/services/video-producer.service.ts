@@ -884,21 +884,35 @@ function buildOverlayDrawtext(overlays: string[], style: OverlayStyle | null, w:
 
   // Background rectangle (drawn first, behind text)
   if (st.bgEnabled) {
-    const bgColor = st.bgColor ?? 'black';
+    const bgColor = st.bgColor ?? '#000000';
     const bgOp = Math.min(1, Math.max(0, st.bgOpacity ?? 0.6));
+    // Convert color + opacity to 0xRRGGBBAA hex format (avoids @ which breaks FFmpeg filter parsing)
+    const hexColor = bgColor.startsWith('#') ? bgColor.slice(1) : '000000';
+    const alphaHex = Math.round(bgOp * 255).toString(16).padStart(2, '0');
     const padX = Math.round(fontSize * 0.8);
     const padY = Math.round(fontSize * 0.4);
     const boxY = baseY - padY;
     const boxH = totalTextH + padY * 2;
     // drawbox filter: full-width rectangle behind text
-    vf += `,drawbox=x=0:y=${boxY}:w=${w}:h=${boxH}:color=${bgColor}@${bgOp.toFixed(2)}:t=fill`;
+    vf += `,drawbox=x=0:y=${boxY}:w=${w}:h=${boxH}:color=0x${hexColor}${alphaHex}:t=fill`;
   }
 
   // Text lines
   for (let i = 0; i < overlays.length; i++) {
-    const escaped = overlays[i].replace(/[:\\'"]/g, '\\$&');
+    const text = overlays[i];
+    if (!text) continue;
+    // FFmpeg drawtext escaping for text inside '...' quotes:
+    // - Replace ' with Unicode right quote (FFmpeg graph parser doesn't support \' escaping)
+    // - Escape \ : for drawtext option parsing; %% to avoid text expansion
+    const escaped = text
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, '\u2019')
+      .replace(/"/g, '\u201D')
+      .replace(/:/g, '\\:')
+      .replace(/%/g, '%%')
+      .replace(/\n/g, ' ');
     const yPos = baseY + i * lineGap;
-    vf += `,drawtext=text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:x=(w-text_w)/2:y=${yPos}:borderw=3:bordercolor=black@0.6`;
+    vf += `,drawtext=text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:x=(w-text_w)/2:y=${yPos}:borderw=3:bordercolor=0x00000099`;
   }
 
   return vf;
@@ -1019,9 +1033,15 @@ export async function reproduceSingleBlock(
   if (block.openingText) {
     const openingDurSec = 3;
     const clipPath = block.clipAssetPath ? resolveClip(block.clipAssetPath, block.visualType) : null;
-    const escapedText = block.openingText.replace(/[:\\'"]/g, '\\$&');
+    const escapedText = block.openingText
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, '\u2019')
+      .replace(/"/g, '\u201D')
+      .replace(/:/g, '\\:')
+      .replace(/%/g, '%%')
+      .replace(/\n/g, ' ');
     const fontSize = Math.round(h / 15);
-    const drawText = `drawtext=text='${escapedText}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black@0.6`;
+    const drawText = `drawtext=text='${escapedText}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=0x00000099`;
     const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
 
     fs.mkdirSync(outDir, { recursive: true });
@@ -1070,11 +1090,15 @@ export async function reproduceSingleBlock(
     log(`Overlay text: ${overlayTexts.join(' | ')} [${block.overlayStyle?.fontSize ?? 'md'}, ${block.overlayStyle?.position ?? 'center'}${block.overlayStyle?.bgEnabled ? ', bg' : ''}]`);
   }
 
-  log(`Re-encoding clip: ${block.clipAssetPath} (${audioDurSec.toFixed(1)}s)...`);
+  // Detect if source is an image (not a video) — stream_loop only works with video files
+  const isImage = /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(srcPath);
+  const inputArgs: string[] = isImage
+    ? ['-loop', '1', '-i', srcPath]
+    : ['-ss', String(trimStart), '-stream_loop', '-1', '-i', srcPath];
+
+  log(`Re-encoding clip: ${block.clipAssetPath} (${audioDurSec.toFixed(1)}s)${isImage ? ' [image→video]' : ''}...`);
   await execFileAsync(ffmpeg, [
-    '-ss', String(trimStart),
-    '-stream_loop', '-1',
-    '-i', srcPath,
+    ...inputArgs,
     '-vf', vfChain,
     '-t', audioDurSec.toFixed(3),
     '-r', '24',
@@ -1790,9 +1814,15 @@ export async function produceBlocks(
     // Must come before the blank-screen fallback so clipless opening blocks still get text
     if (isOpening && block.openingText) {
       const clipPath = block.clipAssetPath ? resolveClipPath(block.clipAssetPath, block.visualType) : null;
-      const escapedText = block.openingText.replace(/[:\\'"]/g, '\\$&');
+      const escapedText = block.openingText
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, '\u2019')
+      .replace(/"/g, '\u201D')
+      .replace(/:/g, '\\:')
+      .replace(/%/g, '%%')
+      .replace(/\n/g, ' ');
       const fontSize = Math.round(h / 15);
-      const drawText = `drawtext=text='${escapedText}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black@0.6`;
+      const drawText = `drawtext=text='${escapedText}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=0x00000099`;
       const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
 
       try {

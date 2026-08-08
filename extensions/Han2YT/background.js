@@ -188,16 +188,24 @@ async function ensureContentScript(tabId, provider) {
   }
 }
 
-let batchStopped = false;
+// Track the active batch via a unique ID so concurrent batches don't conflict
+let currentBatchId = null;
 let batchProvider = "flow";
 
 chrome.runtime.onConnect.addListener((port) => {
   console.log("[Han2YT] Port connected:", port.name);
   if (port.name !== "flow-bridge") return;
 
+  // If this port's tab disconnects (closed/navigated), cancel its batch
+  port.onDisconnect.addListener(() => {
+    console.log("[Han2YT] Port disconnected — cancelling batch if active.");
+    // Don't reset currentBatchId here — the batch loop will detect the port is dead
+    // when it tries to postMessage and throw, exiting naturally
+  });
+
   port.onMessage.addListener(async (msg) => {
     if (msg.type === "FLOW_BATCH_STOP") {
-      batchStopped = true;
+      currentBatchId = null; // Cancel active batch
       const tab = await findProviderTab(batchProvider);
       if (tab) await sendToFlowTab(tab.id, { type: "STOP" });
       return;
@@ -205,8 +213,10 @@ chrome.runtime.onConnect.addListener((port) => {
 
     if (msg.type !== "FLOW_BATCH_START") return;
 
-    batchStopped = false;
-    const { prompts, delayMin, delayMax, mediaType, provider } = msg;
+    // Cancel any previous batch (possibly from another tab)
+    const batchId = Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+    currentBatchId = batchId;
+    const { prompts, delayMin, delayMax, mediaType, provider, duration, model } = msg;
     const providerKey = (provider === "google-flow" ? "flow" : provider) || "flow";
     batchProvider = providerKey;
     const provCfg = PROVIDER_CONFIG[providerKey] || PROVIDER_CONFIG.flow;
@@ -247,7 +257,8 @@ chrome.runtime.onConnect.addListener((port) => {
 
     // 4) Process each prompt
     for (let i = 0; i < prompts.length; i++) {
-      if (batchStopped) {
+      if (currentBatchId !== batchId) {
+        console.log("[Han2YT] Batch", batchId, "superseded by", currentBatchId, "— stopping.");
         port.postMessage({ type: "FLOW_BATCH_DONE", total: prompts.length, done: doneCount });
         await detach();
         return;
@@ -265,7 +276,7 @@ chrome.runtime.onConnect.addListener((port) => {
       let success = false;
 
       for (let attempt = 0; attempt < MAX_RETRIES && !success; attempt++) {
-        if (batchStopped) break;
+        if (currentBatchId !== batchId) break;
 
         const attemptLabel = attempt > 0 ? ` (retry ${attempt}/${MAX_RETRIES - 1})` : "";
         port.postMessage({
@@ -304,9 +315,9 @@ chrome.runtime.onConnect.addListener((port) => {
             detail: `(${i + 1}/${prompts.length})${attemptLabel} Waiting for ${mediaLabel}...`,
           });
 
-          // c) Wait for new image/video
-          const imgResp = await sendToFlowTab(tab.id, { type: isVideo ? "WAIT_VIDEO" : "WAIT_IMAGE" });
-          if (batchStopped) break;
+          // c) Wait for new media (races both image and video detection)
+          const imgResp = await sendToFlowTab(tab.id, { type: "WAIT_MEDIA" });
+          if (currentBatchId !== batchId) break;
 
           // c2) Handle policy violation — rest and retry
           if (imgResp && imgResp.policyViolation) {
@@ -328,21 +339,26 @@ chrome.runtime.onConnect.addListener((port) => {
             throw new Error(imgResp?.timeout ? "Timed out waiting for image" : "Failed to get image");
           }
 
-          // d) Convert image to data URL
+          // d) Convert image/video to data URL
+          // Use actual detected media type (Flow may return image even when video was requested)
+          const actualMediaType = imgResp.mediaType || (isVideo ? "video" : "image");
+          const actualIsVideo = actualMediaType === "video";
+          const actualLabel = actualIsVideo ? "video" : "image";
+
           port.postMessage({
             type: "FLOW_PROGRESS",
             index: i,
             total: prompts.length,
             status: "downloading",
-            detail: `(${i + 1}/${prompts.length}) Downloading ${mediaLabel}...`,
+            detail: `(${i + 1}/${prompts.length}) Downloading ${actualLabel}...`,
           });
 
           let dataUrl;
           const imgSrc = imgResp.src;
-          console.log(`[Han2YT] ${mediaLabel} src: ${imgSrc ? imgSrc.slice(0, 50) : "(empty)"}...`);
+          console.log(`[Han2YT] ${actualLabel} src: ${imgSrc ? imgSrc.slice(0, 50) : "(empty)"}...`);
 
           if (!imgSrc) {
-            throw new Error(`${mediaLabel} src is empty`);
+            throw new Error(`${actualLabel} src is empty`);
           }
 
           if (/^data:/.test(imgSrc)) {
@@ -351,7 +367,7 @@ chrome.runtime.onConnect.addListener((port) => {
             // Strategy 1: Try direct fetch from background (most reliable, no CORS issues for extension)
             if (/^https?:/.test(imgSrc)) {
               try {
-                console.log(`[Han2YT] Fetching ${mediaLabel} directly from background...`);
+                console.log(`[Han2YT] Fetching ${actualLabel} directly from background...`);
                 const resp = await fetch(imgSrc);
                 if (resp.ok) {
                   const blob = await resp.blob();
@@ -369,7 +385,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
             // Strategy 2: Ask content script to convert
             if (!dataUrl) {
-              const toDataType = isVideo ? "TODATAURL_VIDEO" : "TODATAURL";
+              const toDataType = actualIsVideo ? "TODATAURL_VIDEO" : "TODATAURL";
               let dataResp = await sendToFlowTab(tab.id, { type: toDataType, src: imgSrc });
 
               if (!dataResp || (!dataResp.dataUrl && !dataResp.error)) {
@@ -383,7 +399,7 @@ chrome.runtime.onConnect.addListener((port) => {
               } else {
                 const errMsg = dataResp?.error || "unknown";
                 console.error(`[Han2YT] ${toDataType} also failed:`, errMsg);
-                throw new Error(`Failed to download ${mediaLabel}: ` + errMsg);
+                throw new Error(`Failed to download ${actualLabel}: ` + errMsg);
               }
             }
           }
@@ -395,7 +411,7 @@ chrome.runtime.onConnect.addListener((port) => {
             timestamp,
             prompt,
             dataUrl,
-            mediaType: isVideo ? "video" : "image",
+            mediaType: actualMediaType,
           });
 
           doneCount++;
@@ -435,7 +451,7 @@ chrome.runtime.onConnect.addListener((port) => {
       }
 
       // f) Random delay before next prompt (skip after last)
-      if (i < prompts.length - 1 && !batchStopped) {
+      if (i < prompts.length - 1 && currentBatchId === batchId) {
         const delay = (delayMin + Math.random() * (delayMax - delayMin)) * 1000;
         port.postMessage({
           type: "FLOW_PROGRESS",

@@ -20,6 +20,22 @@ if (window.__HAN2YT_BRIDGE_CLEANUP__) {
   let running = false;
   let pendingUploads = 0;
   let deferredDone = null;
+  let currentSessionId = null;
+
+  // ── Cross-world relay ──
+  // Content scripts run in Chrome's "isolated world". CustomEvent.detail does NOT
+  // reliably cross to the page's "main world" — the page sees detail as null.
+  // Fix: use window.postMessage (structured-cloned, always crosses worlds)
+  // + a relay script injected into the main world that re-dispatches as CustomEvents.
+  //
+  // Direction 1 (bridge → page):
+  //   bridge.js (isolated) --postMessage--> relay (main world) --CustomEvent--> page app
+  //
+  // Direction 2 (page → bridge):
+  //   page app --postMessage--> bridge.js (isolated) listens for __h2y_cmd messages
+
+  // Relay script is now injected by the manifest ("world": "MAIN") — no inline injection needed.
+  const relayReady = true;
 
   /**
    * Sanitize prompt to avoid Google Flow safety policy violations.
@@ -94,7 +110,15 @@ if (window.__HAN2YT_BRIDGE_CLEANUP__) {
   }
 
   function emit(eventName, detail) {
-    window.dispatchEvent(new CustomEvent(eventName, { detail }));
+    const fullDetail = { ...detail, sessionId: currentSessionId };
+    if (relayReady) {
+      // Use postMessage → relay script (main world) → CustomEvent
+      // This guarantees data crosses the isolated/main world boundary
+      window.postMessage({ __h2y: eventName, __h2d: fullDetail }, '*');
+    } else {
+      // Fallback: direct CustomEvent (may not work in all Chrome versions)
+      window.dispatchEvent(new CustomEvent(eventName, { detail: fullDetail }));
+    }
   }
 
   function isExtensionValid() {
@@ -253,7 +277,7 @@ if (window.__HAN2YT_BRIDGE_CLEANUP__) {
       }
     }
 
-    const { prompts, delayMin, delayMax, mediaType, provider } = e.detail || {};
+    const { prompts, delayMin, delayMax, mediaType, provider, sessionId, duration, model } = e.detail || {};
     if (!prompts || !prompts.length) {
       emit('Han2YT_flow_error', { error: 'No prompts provided' });
       return;
@@ -262,6 +286,7 @@ if (window.__HAN2YT_BRIDGE_CLEANUP__) {
     running = true;
     pendingUploads = 0;
     deferredDone = null;
+    currentSessionId = sessionId || null;
     try {
       const p = connectPort();
       // Sanitize prompts to avoid Google Flow safety policy violations
@@ -279,6 +304,8 @@ if (window.__HAN2YT_BRIDGE_CLEANUP__) {
         delayMax: delayMax ?? 15,
         mediaType: mediaType || 'image',
         provider: (provider === 'google-flow' ? 'flow' : provider) || 'flow',
+        duration,
+        model,
       });
     } catch (err) {
       running = false;
@@ -288,6 +315,7 @@ if (window.__HAN2YT_BRIDGE_CLEANUP__) {
 
   function onStop() {
     running = false;
+    currentSessionId = null;
     if (port) {
       try { port.postMessage({ type: 'FLOW_BATCH_STOP' }); } catch (_) {}
     }
@@ -297,15 +325,33 @@ if (window.__HAN2YT_BRIDGE_CLEANUP__) {
     emit('Han2YT_flow_pong', { ok: isExtensionValid() });
   }
 
-  window.addEventListener('Han2YT_flow_start', onStart);
-  window.addEventListener('Han2YT_flow_stop', onStop);
-  window.addEventListener('Han2YT_flow_ping', onPing);
+  // Choose communication mechanism based on whether relay was injected
+  function onRelayMessage(e) {
+    if (!e.data || !e.data.__h2y_cmd) return;
+    const name = e.data.__h2y_cmd;
+    const detail = e.data.__h2d || {};
+    if (name === 'Han2YT_flow_start') onStart({ detail });
+    else if (name === 'Han2YT_flow_stop') onStop();
+    else if (name === 'Han2YT_flow_ping') onPing();
+  }
+
+  if (relayReady) {
+    // Relay available: page → relay (main) → postMessage → bridge (isolated)
+    // Don't use CustomEvent listeners (relay already intercepts them)
+    window.addEventListener('message', onRelayMessage);
+  } else {
+    // Fallback: direct CustomEvent listeners (detail may be null in some Chrome versions)
+    window.addEventListener('Han2YT_flow_start', onStart);
+    window.addEventListener('Han2YT_flow_stop', onStop);
+    window.addEventListener('Han2YT_flow_ping', onPing);
+  }
 
   // Expose cleanup so next injection can remove old listeners
   window.__HAN2YT_BRIDGE_CLEANUP__ = function () {
     window.removeEventListener('Han2YT_flow_start', onStart);
     window.removeEventListener('Han2YT_flow_stop', onStop);
     window.removeEventListener('Han2YT_flow_ping', onPing);
+    window.removeEventListener('message', onRelayMessage);
     if (port) {
       try { port.disconnect(); } catch (_) {}
       port = null;
@@ -313,5 +359,5 @@ if (window.__HAN2YT_BRIDGE_CLEANUP__) {
     running = false;
   };
 
-  console.log('[Han2YT] bridge.js loaded (v2) on VideoCloudAI page.');
+  console.log('[Han2YT] bridge.js loaded (v3-relay) on VideoCloudAI page.');
 })();

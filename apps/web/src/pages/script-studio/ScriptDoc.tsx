@@ -6,7 +6,7 @@ import {
   ArrowLeft, ChevronDown, ChevronUp, AlertTriangle, Info, Check,
   Play, Loader2, BarChart2, Video, Mic, Settings, RefreshCw, X,
   Volume2, Film, Square, ChevronRight, ChevronLeft, Pencil, Music2,
-  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2, Merge, Type as TypeIcon,
+  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2, Merge, Type as TypeIcon, Copy,
 } from 'lucide-react';
 import { scriptStudioApi, queueApi, ttsApi, musicApi, type SubtitleStyle } from '../../lib/api';
 import { useAppStore } from '../../store';
@@ -2726,6 +2726,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [showOverlay, setShowOverlay] = useState(false);
   const wordCount = block.narration?.split(/\s+/).filter(Boolean).length ?? 0;
   const durationSec = block.audioDurationMs ? (block.audioDurationMs / 1000) : (wordCount / 2.5);
@@ -2739,9 +2740,11 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
   const handleAction = async (action: string, fn: () => Promise<any>) => {
     if (busy || isProducing) return;
     setBusy(action);
+    setActionError(null);
     try { await fn(); onBlockUpdated(); } catch (err: any) {
-      console.error(`BlockStructureRow ${action} failed:`, err?.response?.data?.error ?? err?.message ?? err);
-      alert(err?.response?.data?.error ?? err?.message ?? 'Action failed');
+      const msg = err?.response?.data?.error ?? err?.message ?? 'Action failed';
+      console.error(`BlockStructureRow ${action} failed:`, msg);
+      setActionError(msg);
     }
     setBusy(null);
   };
@@ -2872,6 +2875,25 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
       </div>
       {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-c-accent shrink-0" />}
     </div>
+    {/* Action error banner — selectable & copyable */}
+    {actionError && (
+      <div className="mx-3 mb-1 px-2 py-1 rounded bg-red-500/10 border border-red-500/20 flex items-start gap-1.5 group/err select-text">
+        <p className="text-[10px] font-mono text-red-400 flex-1 break-all leading-relaxed">{actionError}</p>
+        <button
+          onClick={() => navigator.clipboard.writeText(actionError)}
+          className="p-0.5 rounded text-red-400/60 hover:text-red-300 opacity-0 group-hover/err:opacity-100 transition-opacity shrink-0"
+          title="Copy error"
+        >
+          <Copy className="w-3 h-3" />
+        </button>
+        <button
+          onClick={() => setActionError(null)}
+          className="p-0.5 rounded text-red-400/60 hover:text-red-300 shrink-0"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    )}
     {/* Overlay text row + style controls */}
     {(showOverlay || hasOverlay) && (
       <div className="pl-[3.25rem] pr-3 py-1.5 space-y-1.5 bg-sky-500/5">
@@ -3495,7 +3517,14 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
           )}
         </div>
         {reproduceLog.length > 0 && (
-          <div className="max-h-20 overflow-y-auto rounded bg-c-elevated/60 border border-c-border px-2 py-1">
+          <div className="relative max-h-28 overflow-y-auto rounded bg-c-elevated/60 border border-c-border px-2 py-1 select-text group/log">
+            <button
+              onClick={() => navigator.clipboard.writeText(reproduceLog.join('\n'))}
+              className="absolute top-1 right-1 p-0.5 rounded bg-c-bg/80 text-c-dim hover:text-c-text opacity-0 group-hover/log:opacity-100 transition-opacity"
+              title="Copy log"
+            >
+              <Copy className="w-3 h-3" />
+            </button>
             {reproduceLog.map((line, i) => (
               <p key={i} className={`text-[10px] font-mono leading-relaxed ${
                 line.startsWith('ERROR') ? 'text-red-400' : line.startsWith('✓') ? 'text-green-400' : 'text-c-dim'
@@ -4352,18 +4381,47 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
   const [copiedDesc, setCopiedDesc] = useState(false);
   const [copiedTags, setCopiedTags] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
+  const [exportProgress, setExportProgress] = useState<{ percent: number; detail: string }>({ percent: 0, detail: '' });
+  const [exportLogs, setExportLogs] = useState<string[]>([]);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [exportResults, setExportResults] = useState<Record<string, { url: string; filename: string; sizeKB: number }>>({});
+  const exportAbortRef = useRef<AbortController | null>(null);
+  const exportLogEndRef = useRef<HTMLDivElement>(null);
 
   const handleExport = async (preset: '2k' | '3k' | '4k') => {
+    const ac = new AbortController();
+    exportAbortRef.current = ac;
     setExporting(preset);
+    setExportProgress({ percent: 0, detail: '' });
+    setExportLogs([]);
+    setExportError(null);
     try {
-      const result = await scriptStudioApi.exportUpscale(docId, preset, orientation);
+      const result = await scriptStudioApi.exportUpscale(docId, preset, orientation, (percent, detail) => {
+        setExportProgress({ percent, detail });
+        setExportLogs(prev => [...prev, detail]);
+      }, ac.signal);
       setExportResults(prev => ({ ...prev, [preset]: { url: result.url, filename: result.filename, sizeKB: result.sizeKB } }));
+      setExportLogs(prev => [...prev, `Done — ${(result.sizeKB / 1024).toFixed(1)} MB`]);
     } catch (err) {
-      console.error('Export failed:', err);
+      if ((err as Error).name === 'AbortError') {
+        setExportLogs(prev => [...prev, 'Export cancelled']);
+      } else {
+        console.error('Export failed:', err);
+        setExportError((err as Error).message);
+        setExportLogs(prev => [...prev, `Error: ${(err as Error).message}`]);
+      }
     }
+    exportAbortRef.current = null;
     setExporting(null);
   };
+
+  const handleStopExport = () => {
+    exportAbortRef.current?.abort();
+  };
+
+  useEffect(() => {
+    exportLogEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [exportLogs]);
 
   const generateYt = async () => {
     setGenYt(true);
@@ -4461,33 +4519,66 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
       </div>
 
       {/* Export upscale */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-c-dim font-medium">Export:</span>
-        {(['2k', '3k', '4k'] as const).map((preset) => {
-          const result = exportResults[preset];
-          const isExporting = exporting === preset;
-          return result ? (
-            <a
-              key={preset}
-              href={result.url}
-              download={result.filename}
-              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 transition-all"
-            >
-              <Check className="w-3 h-3" />
-              {preset.toUpperCase()} ({(result.sizeKB / 1024).toFixed(1)} MB)
-            </a>
-          ) : (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-c-dim font-medium">Export:</span>
+          {(['2k', '3k', '4k'] as const).map((preset) => {
+            const result = exportResults[preset];
+            const isExporting = exporting === preset;
+            return result ? (
+              <a
+                key={preset}
+                href={result.url}
+                download={result.filename}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 transition-all"
+              >
+                <Check className="w-3 h-3" />
+                {preset.toUpperCase()} ({(result.sizeKB / 1024).toFixed(1)} MB)
+              </a>
+            ) : (
+              <button
+                key={preset}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-c-elevated border border-c-border text-c-muted hover:text-c-text hover:border-c-border-hover transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => handleExport(preset)}
+                disabled={isExporting || exporting !== null}
+              >
+                {isExporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Maximize2 className="w-3 h-3" />}
+                {preset.toUpperCase()}
+              </button>
+            );
+          })}
+          {exporting && (
             <button
-              key={preset}
-              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-c-elevated border border-c-border text-c-muted hover:text-c-text hover:border-c-border-hover transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={() => handleExport(preset)}
-              disabled={isExporting || exporting !== null}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-all cursor-pointer"
+              onClick={handleStopExport}
             >
-              {isExporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Maximize2 className="w-3 h-3" />}
-              {preset.toUpperCase()}
+              <Square className="w-3 h-3" />
+              Stop
             </button>
-          );
-        })}
+          )}
+        </div>
+        {exporting && (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-2 bg-c-elevated rounded-full overflow-hidden border border-c-border">
+              <div
+                className="h-full bg-c-accent rounded-full transition-all duration-300"
+                style={{ width: `${exportProgress.percent}%` }}
+              />
+            </div>
+            <span className="text-xs text-c-muted whitespace-nowrap">{exportProgress.percent}%</span>
+          </div>
+        )}
+        {exportLogs.length > 0 && (
+          <div className="max-h-24 overflow-y-auto rounded-lg bg-c-bg/50 border border-c-border px-3 py-2 text-[11px] font-mono text-c-muted space-y-0.5">
+            {exportLogs.map((log, i) => (
+              <div key={i} className={log.startsWith('Error') ? 'text-red-400' : log.startsWith('Done') ? 'text-green-400' : ''}>{log}</div>
+            ))}
+            <div ref={exportLogEndRef} />
+          </div>
+        )}
+        {exportError && (
+          <p className="text-xs text-red-400">{exportError}</p>
+        )}
       </div>
     </>
   );
