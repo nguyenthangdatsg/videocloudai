@@ -789,8 +789,8 @@ export const dramaApi = {
   deleteShot: (id: string) => api.delete(`/drama/shots/${id}`),
 
   // AI Generation
-  generateOutline: (projectId: string, episodeId: string) => api.post<DramaEpisode>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-outline`).then(r => r.data),
-  generateScript: (projectId: string, episodeId: string) => api.post<DramaEpisode>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-script`).then(r => r.data),
+  generateOutline: (projectId: string, episodeId: string, writerTier?: string) => api.post<DramaEpisode>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-outline`, { writerTier }).then(r => r.data),
+  generateScript: (projectId: string, episodeId: string, writerTier?: string) => api.post<DramaEpisode>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-script`, { writerTier }).then(r => r.data),
   extractCharacters: (projectId: string, episodeId: string) => api.post<DramaCharacter[]>(`/drama/projects/${projectId}/episodes/${episodeId}/extract-characters`).then(r => r.data),
   extractLocations: (projectId: string, episodeId: string) => api.post<DramaLocation[]>(`/drama/projects/${projectId}/episodes/${episodeId}/extract-locations`).then(r => r.data),
   generateStoryboard: (projectId: string, episodeId: string) => api.post<DramaScene[]>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-storyboard`).then(r => r.data),
@@ -841,6 +841,27 @@ export const dramaApi = {
     });
     if (!result) throw new Error('No result from video export');
     return result;
+  },
+
+  generateCharacterRefPrompt: (projectId: string, characterId: string) =>
+    api.post<DramaCharacter>(`/drama/projects/${projectId}/characters/${characterId}/generate-reference-prompt`).then(r => r.data),
+  generateLocationRefPrompt: (projectId: string, locationId: string) =>
+    api.post<DramaLocation>(`/drama/projects/${projectId}/locations/${locationId}/generate-reference-prompt`).then(r => r.data),
+  autoGenerate: async (
+    projectId: string,
+    episodeId: string,
+    data: { writerTier?: string },
+    onProgress: (step: string, detail?: string) => void,
+  ): Promise<void> => {
+    const res = await fetch(`/api/drama/projects/${projectId}/episodes/${episodeId}/auto-generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    await readNDJSON(res, (parsed) => {
+      if (parsed.error) throw new Error(parsed.error as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+    });
   },
 
   // Stats

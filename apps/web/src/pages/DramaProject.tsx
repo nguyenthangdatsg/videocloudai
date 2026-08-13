@@ -138,6 +138,10 @@ export function DramaProjectPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('outline');
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAutoGen, setShowAutoGen] = useState(false);
+  const [autoGenTier, setAutoGenTier] = useState<string>('professional');
+  const [autoGenRunning, setAutoGenRunning] = useState(false);
+  const [autoGenLog, setAutoGenLog] = useState<string[]>([]);
 
   const onMutationError = (err: unknown) => {
     const axiosErr = err as { response?: { data?: { error?: string } }; message?: string };
@@ -180,13 +184,13 @@ export function DramaProjectPage() {
   });
 
   const outlineMutation = useMutation({
-    mutationFn: () => dramaApi.generateOutline(id!, selectedEpisodeId!),
+    mutationFn: (tier?: string) => dramaApi.generateOutline(id!, selectedEpisodeId!, tier),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['drama'] }),
     onError: onMutationError,
   });
 
   const scriptMutation = useMutation({
-    mutationFn: () => dramaApi.generateScript(id!, selectedEpisodeId!),
+    mutationFn: (tier?: string) => dramaApi.generateScript(id!, selectedEpisodeId!, tier),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['drama'] }),
     onError: onMutationError,
   });
@@ -260,6 +264,30 @@ export function DramaProjectPage() {
     onError: onMutationError,
   });
 
+  const autoGenLogRef = useRef<HTMLDivElement>(null);
+  const handleAutoGenerate = useCallback(async () => {
+    if (!id || !selectedEpisodeId) return;
+    setAutoGenRunning(true);
+    setAutoGenLog([]);
+    try {
+      await dramaApi.autoGenerate(id, selectedEpisodeId, { writerTier: autoGenTier }, (step, detail) => {
+        const msg = detail ? `${step}: ${detail}` : step;
+        setAutoGenLog(prev => [...prev, msg]);
+      });
+      setAutoGenLog(prev => [...prev, t('drama.autoGenerateComplete')]);
+      queryClient.invalidateQueries({ queryKey: ['drama'] });
+    } catch (err: any) {
+      setAutoGenLog(prev => [...prev, `Error: ${err.message}`]);
+      onMutationError(err);
+    } finally {
+      setAutoGenRunning(false);
+    }
+  }, [id, selectedEpisodeId, autoGenTier, t, queryClient]);
+
+  useEffect(() => {
+    if (autoGenLogRef.current) autoGenLogRef.current.scrollTop = autoGenLogRef.current.scrollHeight;
+  }, [autoGenLog]);
+
   if (projectLoading) {
     return <div className="flex-1 flex items-center justify-center bg-c-bg text-c-muted">{t('common.loading')}</div>;
   }
@@ -303,6 +331,64 @@ export function DramaProjectPage() {
           >
             <Settings className="w-4 h-4" />
           </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowAutoGen(!showAutoGen)}
+              disabled={autoGenRunning || !selectedEpisodeId}
+              className="btn-ghost flex items-center gap-1.5 text-xs rounded-full disabled:opacity-40"
+            >
+              {autoGenRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {autoGenRunning ? t('drama.autoGenerating') : t('drama.autoGenerate')}
+            </button>
+            {showAutoGen && (
+              <div className="absolute right-0 top-full mt-2 z-50 w-80 bg-c-surface border border-c-border rounded-2xl shadow-2xl p-4 space-y-3">
+                <div>
+                  <div className="text-xs font-medium text-c-text mb-1.5">{t('drama.writerTier')}</div>
+                  <div className="space-y-1.5">
+                    {([
+                      { value: 'top', icon: Star, label: t('drama.writerTop'), desc: t('drama.writerTopDesc') },
+                      { value: 'professional', icon: FileText, label: t('drama.writerProfessional'), desc: t('drama.writerProfessionalDesc') },
+                      { value: 'assistant', icon: Sparkles, label: t('drama.writerAssistant'), desc: t('drama.writerAssistantDesc') },
+                    ] as const).map(tier => (
+                      <button
+                        key={tier.value}
+                        onClick={() => setAutoGenTier(tier.value)}
+                        className={clsx(
+                          'w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition-colors',
+                          autoGenTier === tier.value ? 'bg-accent-muted border border-accent-primary/30' : 'hover:bg-c-elevated border border-transparent'
+                        )}
+                      >
+                        <tier.icon className={clsx('w-4 h-4 shrink-0', autoGenTier === tier.value ? 'text-accent-primary' : 'text-c-dim')} />
+                        <div className="min-w-0">
+                          <div className={clsx('text-xs font-medium', autoGenTier === tier.value ? 'text-accent-primary' : 'text-c-text')}>{tier.label}</div>
+                          <div className="text-[10px] text-c-dim truncate">{tier.desc}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[10px] text-c-dim">{t('drama.autoGenerateDesc')}</p>
+                {autoGenLog.length > 0 && (
+                  <div ref={autoGenLogRef} className="max-h-32 overflow-y-auto rounded-lg bg-c-bg p-2 space-y-0.5">
+                    {autoGenLog.map((msg, i) => (
+                      <div key={i} className="text-[10px] text-c-muted font-mono">{msg}</div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setShowAutoGen(false)} className="btn-ghost text-xs rounded-full">{t('common.cancel')}</button>
+                  <button
+                    onClick={handleAutoGenerate}
+                    disabled={autoGenRunning}
+                    className="btn-primary flex items-center gap-1.5 text-xs rounded-full disabled:opacity-40"
+                  >
+                    {autoGenRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {autoGenRunning ? t('drama.autoGenerating') : t('drama.autoGenerate')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           <button
             onClick={() => reviewMutation.mutate()}
             disabled={reviewMutation.isPending || !selectedEpisode?.script}
@@ -463,13 +549,14 @@ export function DramaProjectPage() {
           {/* Tab content */}
           <div className="flex-1 overflow-y-auto p-4">
             {activeTab === 'outline' && selectedEpisode && (
-              <OutlineTab episode={selectedEpisode} onGenerate={() => outlineMutation.mutate()} isGenerating={outlineMutation.isPending} />
+              <OutlineTab episode={selectedEpisode} onGenerate={(tier) => outlineMutation.mutate(tier)} isGenerating={outlineMutation.isPending} />
             )}
             {activeTab === 'script' && selectedEpisode && (
-              <ScriptTab episode={selectedEpisode} onGenerate={() => scriptMutation.mutate()} isGenerating={scriptMutation.isPending} />
+              <ScriptTab episode={selectedEpisode} onGenerate={(tier) => scriptMutation.mutate(tier)} isGenerating={scriptMutation.isPending} />
             )}
             {activeTab === 'characters' && (
               <CharactersTab
+                projectId={id!}
                 characters={characters ?? []} onExtract={() => charactersMutation.mutate()} isExtracting={charactersMutation.isPending}
                 onAdd={(name) => addCharacterMutation.mutate({ name })} onDelete={(charId) => deleteCharacterMutation.mutate(charId)}
                 onUpdate={(charId, data) => updateCharacterMutation.mutate({ charId, data })} hasScript={!!selectedEpisode?.script}
@@ -477,6 +564,7 @@ export function DramaProjectPage() {
             )}
             {activeTab === 'locations' && (
               <LocationsTab
+                projectId={id!}
                 locations={locations ?? []} onExtract={() => locationsMutation.mutate()} isExtracting={locationsMutation.isPending}
                 onAdd={(name) => addLocationMutation.mutate({ name })} onDelete={(locId) => deleteLocationMutation.mutate(locId)}
                 onUpdate={(locId, data) => updateLocationMutation.mutate({ locId, data })} hasScript={!!selectedEpisode?.script}
@@ -611,8 +699,42 @@ function ProjectSettingsModal({ project, onClose, onSave, isSaving }: {
 
 // ── Outline Tab ──
 
-function OutlineTab({ episode, onGenerate, isGenerating }: { episode: DramaEpisode; onGenerate: () => void; isGenerating: boolean }) {
+function WriterTierSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { t } = useTranslation();
+  const tiers = [
+    { value: 'top', icon: Star, label: t('drama.writerTop'), desc: t('drama.writerTopDesc') },
+    { value: 'professional', icon: FileText, label: t('drama.writerProfessional'), desc: t('drama.writerProfessionalDesc') },
+    { value: 'assistant', icon: Sparkles, label: t('drama.writerAssistant'), desc: t('drama.writerAssistantDesc') },
+  ] as const;
+
+  return (
+    <div>
+      <div className="text-xs font-medium text-c-text mb-1.5">{t('drama.writerTier')}</div>
+      <div className="flex gap-2">
+        {tiers.map(tier => (
+          <button
+            key={tier.value}
+            onClick={() => onChange(tier.value)}
+            className={clsx(
+              'flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-colors flex-1',
+              value === tier.value ? 'bg-accent-muted border border-accent-primary/30' : 'hover:bg-c-elevated border border-c-border'
+            )}
+          >
+            <tier.icon className={clsx('w-4 h-4 shrink-0', value === tier.value ? 'text-accent-primary' : 'text-c-dim')} />
+            <div className="min-w-0">
+              <div className={clsx('text-xs font-medium', value === tier.value ? 'text-accent-primary' : 'text-c-text')}>{tier.label}</div>
+              <div className="text-[10px] text-c-dim truncate">{tier.desc}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OutlineTab({ episode, onGenerate, isGenerating }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean }) {
+  const { t } = useTranslation();
+  const [writerTier, setWriterTier] = useState('professional');
   const beats = episode.beats ?? [];
 
   return (
@@ -624,7 +746,9 @@ function OutlineTab({ episode, onGenerate, isGenerating }: { episode: DramaEpiso
         </div>
       )}
 
-      <button onClick={onGenerate} disabled={isGenerating} className="btn-primary flex items-center gap-2 rounded-full">
+      <WriterTierSelector value={writerTier} onChange={setWriterTier} />
+
+      <button onClick={() => onGenerate(writerTier)} disabled={isGenerating} className="btn-primary flex items-center gap-2 rounded-full">
         {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
         {isGenerating ? t('drama.generatingOutline') : t('drama.generateOutline')}
       </button>
@@ -659,12 +783,15 @@ function OutlineTab({ episode, onGenerate, isGenerating }: { episode: DramaEpiso
 
 // ── Script Tab ──
 
-function ScriptTab({ episode, onGenerate, isGenerating }: { episode: DramaEpisode; onGenerate: () => void; isGenerating: boolean }) {
+function ScriptTab({ episode, onGenerate, isGenerating }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean }) {
   const { t } = useTranslation();
+  const [writerTier, setWriterTier] = useState('professional');
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <button onClick={onGenerate} disabled={isGenerating || !episode.beats?.length} className="btn-primary flex items-center gap-2 rounded-full">
+      <WriterTierSelector value={writerTier} onChange={setWriterTier} />
+
+      <button onClick={() => onGenerate(writerTier)} disabled={isGenerating || !episode.beats?.length} className="btn-primary flex items-center gap-2 rounded-full">
         {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
         {isGenerating ? t('drama.generatingScript') : t('drama.generateScript')}
       </button>
@@ -688,14 +815,26 @@ function ScriptTab({ episode, onGenerate, isGenerating }: { episode: DramaEpisod
 
 // ── Characters Tab ──
 
-function CharactersTab({ characters, onExtract, isExtracting, onAdd, onDelete, onUpdate, hasScript }: {
-  characters: DramaCharacter[]; onExtract: () => void; isExtracting: boolean;
+function CharactersTab({ projectId, characters, onExtract, isExtracting, onAdd, onDelete, onUpdate, hasScript }: {
+  projectId: string; characters: DramaCharacter[]; onExtract: () => void; isExtracting: boolean;
   onAdd: (name: string) => void; onDelete: (id: string) => void;
   onUpdate: (id: string, data: Partial<DramaCharacter>) => void; hasScript: boolean;
 }) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [newName, setNewName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [generatingRefId, setGeneratingRefId] = useState<string | null>(null);
+  const [expandedRefId, setExpandedRefId] = useState<string | null>(null);
+
+  const handleGenerateRef = async (charId: string) => {
+    setGeneratingRefId(charId);
+    try {
+      await dramaApi.generateCharacterRefPrompt(projectId, charId);
+      queryClient.invalidateQueries({ queryKey: ['drama', 'characters'] });
+    } catch { /* handled by parent */ }
+    setGeneratingRefId(null);
+  };
 
   const ROLE_COLORS: Record<string, string> = {
     protagonist: 'bg-accent-muted text-accent-primary',
@@ -737,6 +876,14 @@ function CharactersTab({ characters, onExtract, isExtracting, onAdd, onDelete, o
                   {char.gender && <span className="text-xs text-c-dim">{char.gender}</span>}
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                  <button
+                    onClick={() => handleGenerateRef(char.id)}
+                    disabled={generatingRefId === char.id}
+                    className="p-1 rounded-lg text-c-dim hover:text-accent-primary disabled:opacity-40"
+                    title={t('drama.generateReference')}
+                  >
+                    {generatingRefId === char.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                  </button>
                   <button onClick={() => setEditingId(editingId === char.id ? null : char.id)} className="p-1 rounded-lg text-c-dim hover:text-accent-primary">
                     <Eye className="w-3.5 h-3.5" />
                   </button>
@@ -748,6 +895,22 @@ function CharactersTab({ characters, onExtract, isExtracting, onAdd, onDelete, o
               {char.physicalDescription && <p className="text-xs text-c-muted mb-1"><span className="text-c-dim">{t('drama.physicalDescription')}:</span> {char.physicalDescription}</p>}
               {char.personality && <p className="text-xs text-c-muted mb-1"><span className="text-c-dim">{t('drama.personality')}:</span> {char.personality}</p>}
               {char.wardrobeDefault && <p className="text-xs text-c-muted"><span className="text-c-dim">{t('drama.wardrobe')}:</span> {char.wardrobeDefault}</p>}
+              {(char as any).referencePrompt && (
+                <div className="mt-2">
+                  <button
+                    onClick={() => setExpandedRefId(expandedRefId === char.id ? null : char.id)}
+                    className="text-[10px] font-medium text-accent-primary hover:underline"
+                  >
+                    {t('drama.referencePrompt')}
+                  </button>
+                  <p className={clsx(
+                    'text-[10px] text-c-dim font-mono mt-0.5 leading-relaxed',
+                    expandedRefId === char.id ? '' : 'line-clamp-2'
+                  )}>
+                    {(char as any).referencePrompt}
+                  </p>
+                </div>
+              )}
               {editingId === char.id && (
                 <CharacterEditPanel character={char} onSave={(data) => { onUpdate(char.id, data); setEditingId(null); }} onClose={() => setEditingId(null)} />
               )}
@@ -826,14 +989,26 @@ function CharacterEditPanel({ character, onSave, onClose }: { character: DramaCh
 
 // ── Locations Tab ──
 
-function LocationsTab({ locations, onExtract, isExtracting, onAdd, onDelete, onUpdate, hasScript }: {
-  locations: DramaLocation[]; onExtract: () => void; isExtracting: boolean;
+function LocationsTab({ projectId, locations, onExtract, isExtracting, onAdd, onDelete, onUpdate, hasScript }: {
+  projectId: string; locations: DramaLocation[]; onExtract: () => void; isExtracting: boolean;
   onAdd: (name: string) => void; onDelete: (id: string) => void;
   onUpdate: (id: string, data: Partial<DramaLocation>) => void; hasScript: boolean;
 }) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [newName, setNewName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [generatingRefId, setGeneratingRefId] = useState<string | null>(null);
+  const [expandedRefId, setExpandedRefId] = useState<string | null>(null);
+
+  const handleGenerateRef = async (locId: string) => {
+    setGeneratingRefId(locId);
+    try {
+      await dramaApi.generateLocationRefPrompt(projectId, locId);
+      queryClient.invalidateQueries({ queryKey: ['drama', 'locations'] });
+    } catch { /* handled by parent */ }
+    setGeneratingRefId(null);
+  };
 
   return (
     <div className="space-y-4 max-w-3xl">
@@ -865,6 +1040,14 @@ function LocationsTab({ locations, onExtract, isExtracting, onAdd, onDelete, onU
                   {loc.timeOfDay && <span className="text-xs text-c-dim">{loc.timeOfDay}</span>}
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                  <button
+                    onClick={() => handleGenerateRef(loc.id)}
+                    disabled={generatingRefId === loc.id}
+                    className="p-1 rounded-lg text-c-dim hover:text-accent-primary disabled:opacity-40"
+                    title={t('drama.generateReference')}
+                  >
+                    {generatingRefId === loc.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                  </button>
                   <button onClick={() => setEditingId(editingId === loc.id ? null : loc.id)} className="p-1 rounded-lg text-c-dim hover:text-accent-primary">
                     <Eye className="w-3.5 h-3.5" />
                   </button>
@@ -879,6 +1062,22 @@ function LocationsTab({ locations, onExtract, isExtracting, onAdd, onDelete, onU
                 {loc.mood && <span>{t('drama.mood')}: {loc.mood}</span>}
                 {loc.props?.length > 0 && <span>Props: {loc.props.join(', ')}</span>}
               </div>
+              {(loc as any).referencePrompt && (
+                <div className="mt-2">
+                  <button
+                    onClick={() => setExpandedRefId(expandedRefId === loc.id ? null : loc.id)}
+                    className="text-[10px] font-medium text-accent-primary hover:underline"
+                  >
+                    {t('drama.referencePrompt')}
+                  </button>
+                  <p className={clsx(
+                    'text-[10px] text-c-dim font-mono mt-0.5 leading-relaxed',
+                    expandedRefId === loc.id ? '' : 'line-clamp-2'
+                  )}>
+                    {(loc as any).referencePrompt}
+                  </p>
+                </div>
+              )}
               {editingId === loc.id && (
                 <LocationEditPanel location={loc} onSave={(data) => { onUpdate(loc.id, data); setEditingId(null); }} onClose={() => setEditingId(null)} />
               )}

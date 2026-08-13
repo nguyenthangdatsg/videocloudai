@@ -306,7 +306,8 @@ export function createDramaRouter(
 
   router.post('/projects/:projectId/episodes/:episodeId/generate-outline', async (req, res) => {
     try {
-      const episode = await dramaService.generateOutline(req.params.projectId, req.params.episodeId);
+      const { writerTier } = req.body as { writerTier?: 'top' | 'professional' | 'assistant' };
+      const episode = await dramaService.generateOutline(req.params.projectId, req.params.episodeId, writerTier);
       res.json(episode);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -315,7 +316,8 @@ export function createDramaRouter(
 
   router.post('/projects/:projectId/episodes/:episodeId/generate-script', async (req, res) => {
     try {
-      const episode = await dramaService.generateScript(req.params.projectId, req.params.episodeId);
+      const { writerTier } = req.body as { writerTier?: 'top' | 'professional' | 'assistant' };
+      const episode = await dramaService.generateScript(req.params.projectId, req.params.episodeId, writerTier);
       res.json(episode);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -337,6 +339,50 @@ export function createDramaRouter(
       res.json(locations);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/projects/:projectId/characters/:characterId/generate-reference-prompt', async (req, res) => {
+    try {
+      const character = await dramaService.generateCharacterPrompt(req.params.projectId, req.params.characterId);
+      res.json(character);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/projects/:projectId/locations/:locationId/generate-reference-prompt', async (req, res) => {
+    try {
+      const location = await dramaService.generateLocationPrompt(req.params.projectId, req.params.locationId);
+      res.json(location);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/projects/:projectId/episodes/:episodeId/auto-generate', async (req, res) => {
+    const { projectId, episodeId } = req.params;
+    const { writerTier } = req.body as { writerTier?: 'top' | 'professional' | 'assistant' };
+
+    try {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Transfer-Encoding', 'chunked');
+
+      await dramaService.autoGenerate(
+        projectId,
+        episodeId,
+        writerTier || 'professional',
+        (step: string, detail?: string) => {
+          res.write(JSON.stringify({ progress: true, step, detail }) + '\n');
+        }
+      );
+
+      res.write(JSON.stringify({ success: true, step: 'done', detail: 'Auto-generation pipeline complete.' }) + '\n');
+      res.end();
+    } catch (err) {
+      res.write(JSON.stringify({ error: (err as Error).message }) + '\n');
+      res.end();
     }
   });
 

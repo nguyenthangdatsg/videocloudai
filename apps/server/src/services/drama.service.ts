@@ -435,7 +435,7 @@ export class DramaService {
 
   // ── AI Generation ──
 
-  async generateOutline(projectId: string, episodeId: string): Promise<DramaEpisode> {
+  async generateOutline(projectId: string, episodeId: string, writerTier: 'top' | 'professional' | 'assistant' = 'professional'): Promise<DramaEpisode> {
     const project = this.getProject(projectId);
     if (!project) throw new Error('Project not found');
     const episode = this.getEpisode(episodeId);
@@ -445,8 +445,15 @@ export class DramaService {
     const row = dbGet<{ story_input: string; input_mode: string }>('SELECT story_input, input_mode FROM drama_projects WHERE id = ?', [projectId]);
     const storyInput = row?.story_input || project.title;
 
+    // Writer tier settings for outline
+    const tierConfig = {
+      top:          { temperature: 0.9,  maxTokens: 4000, prefix: 'Write like an award-winning screenwriter with rich, layered storytelling.\n\n' },
+      professional: { temperature: 0.85, maxTokens: 2000, prefix: '' },
+      assistant:    { temperature: 0.6,  maxTokens: 1500, prefix: 'Keep it concise and efficient.\n\n' },
+    }[writerTier];
+
     const response = await llmComplete({
-      systemPrompt: `You are a professional screenwriter specializing in short-form vertical drama for TikTok/YouTube Shorts.
+      systemPrompt: `${tierConfig.prefix}You are a professional screenwriter specializing in short-form vertical drama for TikTok/YouTube Shorts.
 You create compelling beat sheets for ${project.durationTarget}-second episodes.
 
 Genre: ${project.genre}
@@ -463,8 +470,8 @@ Output ONLY valid JSON array of beats. Each beat has:
 
 Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it dramatic and binge-worthy.${langInstruction(project.language)}`,
       userMessage: `Create a beat sheet for this story:\n\n${storyInput}`,
-      temperature: 0.85,
-      maxTokens: 2000,
+      temperature: tierConfig.temperature,
+      maxTokens: tierConfig.maxTokens,
     });
 
     // Parse beats from response
@@ -494,7 +501,7 @@ Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it d
     })!;
   }
 
-  async generateScript(projectId: string, episodeId: string): Promise<DramaEpisode> {
+  async generateScript(projectId: string, episodeId: string, writerTier: 'top' | 'professional' | 'assistant' = 'professional'): Promise<DramaEpisode> {
     const project = this.getProject(projectId);
     if (!project) throw new Error('Project not found');
     const episode = this.getEpisode(episodeId);
@@ -505,8 +512,15 @@ Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it d
       ? characters.map(c => `${c.name} (${c.role}): ${c.physicalDescription}. Personality: ${c.personality}`).join('\n')
       : 'Characters will be auto-detected from the script.';
 
+    // Writer tier settings for script
+    const tierConfig = {
+      top:          { temperature: 0.9,  maxTokens: 6000, prefix: 'Write like an award-winning screenwriter with rich, layered storytelling.\n\n' },
+      professional: { temperature: 0.85, maxTokens: 4000, prefix: '' },
+      assistant:    { temperature: 0.6,  maxTokens: 3000, prefix: 'Keep it concise and efficient.\n\n' },
+    }[writerTier];
+
     const response = await llmComplete({
-      systemPrompt: `You are a professional drama screenwriter for short-form vertical content.
+      systemPrompt: `${tierConfig.prefix}You are a professional drama screenwriter for short-form vertical content.
 Genre: ${project.genre} | Tone: ${project.tone} | Duration: ~${project.durationTarget}s
 
 Known characters:
@@ -524,8 +538,8 @@ Write a complete scene-by-scene script in standard screenplay format:
 ${langInstruction(project.language)}
 Output ONLY the script text, formatted for readability.`,
       userMessage: `Beat sheet:\n${JSON.stringify(episode.beats, null, 2)}\n\nSynopsis: ${episode.synopsis}`,
-      temperature: 0.85,
-      maxTokens: 4000,
+      temperature: tierConfig.temperature,
+      maxTokens: tierConfig.maxTokens,
     });
 
     return this.updateEpisode(episodeId, {
@@ -974,6 +988,147 @@ Scene mood: ${scene?.mood || 'neutral'}`,
       prompt: promptData.prompt,
       negativePrompt: promptData.negativePrompt,
     })!;
+  }
+
+  async generateCharacterPrompt(projectId: string, characterId: string): Promise<DramaCharacter> {
+    const project = this.getProject(projectId);
+    if (!project) throw new Error('Project not found');
+    const character = this.getCharacter(characterId);
+    if (!character) throw new Error('Character not found');
+
+    const response = await llmComplete({
+      systemPrompt: `You are an expert AI image generation prompt engineer.
+Generate a character portrait prompt suitable for AI image generation in the "${project.artStyle}" art style.
+
+The prompt should describe a single character portrait that captures their physical appearance, wardrobe, personality vibe, and age/gender.
+Include quality tags and negative prompt guidance.
+
+Output ONLY valid JSON:
+{
+  "prompt": "detailed positive prompt for character portrait"
+}
+
+Rules:
+- Start with the art style: ${project.artStyle}
+- Include specific physical features, hair, eyes, skin tone, build
+- Include their default wardrobe/outfit
+- Convey personality through pose, expression, body language
+- Add quality tags: cinematic lighting, detailed, high quality, 8k, portrait
+- Ensure the prompt works well for ${project.aspectRatio} aspect ratio`,
+      userMessage: `Generate an AI image prompt for this character:
+Name: ${character.name}
+Role: ${character.role}
+Age: ${character.age}
+Gender: ${character.gender}
+Physical Description: ${character.physicalDescription}
+Personality: ${character.personality}
+Wardrobe: ${character.wardrobeDefault}
+Backstory: ${character.backstory || 'N/A'}`,
+      temperature: 0.7,
+      maxTokens: 1000,
+    });
+
+    let promptData: { prompt: string };
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      promptData = jsonMatch ? JSON.parse(jsonMatch[0]) : { prompt: `${project.artStyle} portrait of ${character.name}, ${character.physicalDescription}` };
+    } catch {
+      promptData = { prompt: `${project.artStyle} portrait of ${character.name}, ${character.physicalDescription}` };
+    }
+
+    return this.updateCharacter(characterId, {
+      referencePrompt: promptData.prompt,
+    })!;
+  }
+
+  async generateLocationPrompt(projectId: string, locationId: string): Promise<DramaLocation> {
+    const project = this.getProject(projectId);
+    if (!project) throw new Error('Project not found');
+    const location = this.getLocation(locationId);
+    if (!location) throw new Error('Location not found');
+
+    const response = await llmComplete({
+      systemPrompt: `You are an expert AI image generation prompt engineer.
+Generate a location/environment prompt suitable for AI image generation in the "${project.artStyle}" art style.
+
+The prompt should describe the environment, atmosphere, lighting, and mood of the location.
+Include quality tags and negative prompt guidance.
+
+Output ONLY valid JSON:
+{
+  "prompt": "detailed positive prompt for location/environment"
+}
+
+Rules:
+- Start with the art style: ${project.artStyle}
+- Include architectural details, materials, colors
+- Describe lighting conditions and atmosphere
+- Include time of day, weather, and mood elements
+- Mention notable props or set pieces
+- Add quality tags: cinematic lighting, detailed, high quality, 8k, environment art
+- Ensure the prompt works well for ${project.aspectRatio} aspect ratio`,
+      userMessage: `Generate an AI image prompt for this location:
+Name: ${location.name}
+Type: ${location.type}
+Description: ${location.description}
+Lighting: ${location.lighting || 'Not specified'}
+Time of Day: ${location.timeOfDay || 'Not specified'}
+Weather: ${location.weather || 'Not specified'}
+Mood: ${location.mood || 'Not specified'}
+Props: ${location.props?.length ? location.props.join(', ') : 'None specified'}`,
+      temperature: 0.7,
+      maxTokens: 1000,
+    });
+
+    let promptData: { prompt: string };
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      promptData = jsonMatch ? JSON.parse(jsonMatch[0]) : { prompt: `${project.artStyle} environment of ${location.name}, ${location.description}` };
+    } catch {
+      promptData = { prompt: `${project.artStyle} environment of ${location.name}, ${location.description}` };
+    }
+
+    return this.updateLocation(locationId, {
+      referencePrompt: promptData.prompt,
+    })!;
+  }
+
+  async autoGenerate(
+    projectId: string,
+    episodeId: string,
+    writerTier: 'top' | 'professional' | 'assistant' = 'professional',
+    onProgress?: (step: string, detail?: string) => void
+  ): Promise<void> {
+    // Step 1: Generate outline
+    onProgress?.('outline', 'Generating episode outline...');
+    await this.generateOutline(projectId, episodeId, writerTier);
+
+    // Step 2: Generate script
+    onProgress?.('script', 'Writing full script...');
+    await this.generateScript(projectId, episodeId, writerTier);
+
+    // Step 3: Extract characters
+    onProgress?.('characters', 'Extracting characters from script...');
+    await this.extractCharacters(projectId, episodeId);
+
+    // Step 4: Extract locations
+    onProgress?.('locations', 'Extracting locations from script...');
+    await this.extractLocations(projectId, episodeId);
+
+    // Step 5: Generate storyboard
+    onProgress?.('storyboard', 'Generating storyboard scenes and shots...');
+    await this.generateStoryboard(projectId, episodeId);
+
+    // Step 6: Generate all shot prompts
+    onProgress?.('shot-prompts', 'Generating image prompts for all shots...');
+    const scenes = this.listScenes(episodeId);
+    const allShots = scenes.flatMap(s => s.shots).filter(sh => !sh.prompt);
+    for (let i = 0; i < allShots.length; i++) {
+      onProgress?.('shot-prompts', `Generating prompt for shot ${i + 1}/${allShots.length}...`);
+      await this.generateShotPrompt(projectId, allShots[i].id);
+    }
+
+    onProgress?.('done', 'Auto-generation pipeline complete.');
   }
 
   async reviewEpisode(projectId: string, episodeId: string): Promise<{ score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string; fix?: string }> }> {
