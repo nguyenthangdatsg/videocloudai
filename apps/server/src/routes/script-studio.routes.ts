@@ -127,9 +127,9 @@ async function compositeChartOnBg(
 
 function getDocOrientation(docId: string): 'landscape' | 'portrait' {
   const doc = getDoc(docId);
-  if (!doc?.produce_options) return 'landscape';
+  if (!doc?.produceOptions) return 'landscape';
   try {
-    const opts = JSON.parse(doc.produce_options);
+    const opts = JSON.parse(doc.produceOptions);
     return opts.orientation === 'portrait' ? 'portrait' : 'landscape';
   } catch { return 'landscape'; }
 }
@@ -972,7 +972,7 @@ export function createScriptStudioRouter(): Router {
     if (isNaN(blockIndex) || !req.file) { res.status(400).json({ error: 'Invalid blockIndex or no file' }); return; }
 
     const zoomEffect = (req.body?.zoomEffect as string) || 'zoom-in';
-    const orientation = (req.body?.orientation as string) || getDocOrientation(docId);
+    const orientation: 'landscape' | 'portrait' = (req.body?.orientation as string) === 'portrait' ? 'portrait' : getDocOrientation(docId);
     const isPortrait = orientation === 'portrait';
 
     try {
