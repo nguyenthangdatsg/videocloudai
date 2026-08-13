@@ -42,6 +42,7 @@ export interface ChartVsConfig {
   rightLabel: string;
   rightValue: string;
   title?: string;
+  sourceLabel?: string;
   accentColor?: string;
   bgColor?: string;
 }
@@ -76,11 +77,15 @@ export interface SplitScreenConfig {
   rightSrc: string;
   rightType: 'image' | 'video';
   middleText?: string;
-  middleStyle?: 'vs' | 'line' | 'glow' | 'badge' | 'none';
+  middleStyle?: 'vs' | 'line' | 'glow' | 'badge' | 'fire' | 'neon' | 'slash' | 'clean' | 'none';
   accentColor?: string;
   bgColor?: string;
   leftLabel?: string;
   rightLabel?: string;
+  leftLabelPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
+  rightLabelPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
+  labelStyle?: 'badge' | 'outline' | 'shadow' | 'banner';
+  labelFontSize?: number;
   gap?: number;
 }
 

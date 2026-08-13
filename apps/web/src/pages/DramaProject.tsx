@@ -1198,9 +1198,11 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
     });
 
     const prompts = shotsToGen.map(s => ({ timestamp: s.shotId, prompt: s.prompt }));
+    const dramaSessionId = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
     const onProgress = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== dramaSessionId) return;
       if (d.detail) setGenProgress(prev => [...prev, d.detail]);
       if (d.status === 'generating' && typeof d.index === 'number') {
         const realIdx = indexMap[d.index];
@@ -1214,6 +1216,7 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
 
     const onImage = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== dramaSessionId) return;
       if (typeof d.index !== 'number') return;
       const shot = shotsToGen[d.index];
       if (!shot) return;
@@ -1243,6 +1246,7 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
 
     const onDone = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== dramaSessionId) return;
       setGenProgress(prev => [...prev, `Done: ${d.done}/${d.total} images generated`]);
       // Mark remaining pending/generating as error
       setShotStatuses(prev => {
@@ -1255,6 +1259,7 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
 
     const onError = (e: Event) => {
       const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== dramaSessionId) return;
       setGenProgress(prev => [...prev, `Error: ${d.error}`]);
       setShotStatuses(prev => {
         const next = new Map(prev);
@@ -1271,7 +1276,7 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
     cleanupRef.current = cleanup;
 
     window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-      detail: { prompts, delayMin: 5, delayMax: 15, mediaType: 'image', provider: flowProvider },
+      detail: { prompts, delayMin: 5, delayMax: 15, mediaType: 'image', provider: flowProvider, sessionId: dramaSessionId },
     }));
   };
 

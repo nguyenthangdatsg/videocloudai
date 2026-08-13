@@ -1071,9 +1071,21 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/youtube-metadata`);
     return res.data as { description: string; tags: string[] };
   },
-  exportUpscale: async (id: string, preset: '2k' | '3k' | '4k', orientation: string) => {
-    const res = await api.post(`/script-studio/docs/${id}/export-upscale`, { preset, orientation }, { timeout: 600000 });
-    return res.data as { ok: boolean; filename: string; url: string; sizeKB: number };
+  exportUpscale: async (id: string, preset: '2k' | '3k' | '4k', orientation: string, onProgress?: (percent: number, detail: string) => void, signal?: AbortSignal) => {
+    const res = await fetch(`/api/script-studio/docs/${id}/export-upscale`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset, orientation }),
+      signal,
+    });
+    let result: { ok: boolean; filename: string; url: string; sizeKB: number } | null = null;
+    await readNDJSON(res, (parsed) => {
+      if (parsed.error) throw new Error(parsed.error as string);
+      if (parsed.progress && onProgress) onProgress(parsed.percent as number, parsed.detail as string);
+      else if (parsed.ok) result = parsed as any;
+    });
+    if (!result) throw new Error('No result from export');
+    return result as { ok: boolean; filename: string; url: string; sizeKB: number };
   },
   getNarration: async (id: string) => {
     const res = await api.get(`/script-studio/docs/${id}/narration`);
@@ -1095,7 +1107,7 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/sync-blocks`);
     return res.data as { ok: boolean; blocks: any[] };
   },
-  updateBlock: async (id: string, blockIndex: number, fields: { narration?: string; openingText?: string | null; overlays?: string[]; overlayStyle?: { color?: string; bgEnabled?: boolean; bgColor?: string; bgOpacity?: number; fontSize?: string; position?: string } | null; pexelsQuery?: string | null; motion?: string; clipAssetPath?: string | null; visualType?: string; aiPrompt?: string | null }) => {
+  updateBlock: async (id: string, blockIndex: number, fields: { narration?: string; openingText?: string | null; overlays?: string[]; overlayStyle?: { color?: string; bgEnabled?: boolean; bgColor?: string; bgOpacity?: number; fontSize?: string; position?: string } | null; pexelsQuery?: string | null; motion?: string; clipAssetPath?: string | null; visualType?: string; aiPrompt?: string | null; chartSpec?: Record<string, unknown> }) => {
     const res = await api.patch(`/script-studio/docs/${id}/blocks/${blockIndex}`, fields);
     return res.data;
   },
@@ -1119,8 +1131,8 @@ export const scriptStudioApi = {
       candidates: Array<{ pexelsId?: number; pixabayId?: number; mixkitId?: number; imageId?: number; source?: string; thumbnail: string; previewUrl?: string | null; downloadUrl?: string; duration?: number; width: number; height: number; pexelsUrl?: string; pageURL?: string; pageUrl?: string; title?: string }>;
     };
   },
-  applyStockImage: async (id: string, blockIndex: number, downloadUrl: string, source: string, width: number, height: number, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in') => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-stock-image`, { downloadUrl, source, width, height, zoomEffect });
+  applyStockImage: async (id: string, blockIndex: number, downloadUrl: string, source: string, width: number, height: number, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in', orientation: string = 'landscape') => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-stock-image`, { downloadUrl, source, width, height, zoomEffect, orientation });
     return res.data as { ok: boolean; filename: string; duration: number };
   },
   downloadStock: async (id: string, service: string, candidate: { id?: number; downloadUrl?: string; duration?: number; width?: number; height?: number }) => {
@@ -1158,14 +1170,15 @@ export const scriptStudioApi = {
     const res = await api.delete(`/script-studio/docs/${id}/blocks/${blockIndex}`);
     return res.data as { ok: boolean };
   },
-  splitScreen: async (id: string, blockIndex: number, leftClip: string, rightClip: string, opts?: { middleText?: string; middleStyle?: string; accentColor?: string; leftLabel?: string; rightLabel?: string; labelPosition?: string; labelStyle?: string }) => {
+  splitScreen: async (id: string, blockIndex: number, leftClip: string, rightClip: string, opts?: { middleText?: string; middleStyle?: string; accentColor?: string; leftLabel?: string; rightLabel?: string; labelPosition?: string; rightLabelPosition?: string; labelStyle?: string; labelFontSize?: number; orientation?: string }) => {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-screen`, { leftClip, rightClip, ...opts });
     return res.data as { ok: boolean; filename: string; duration: number };
   },
-  pasteImage: async (id: string, blockIndex: number, file: File, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in') => {
+  pasteImage: async (id: string, blockIndex: number, file: File, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in', orientation: string = 'landscape') => {
     const form = new FormData();
     form.append('image', file);
     form.append('zoomEffect', zoomEffect);
+    form.append('orientation', orientation);
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/paste-image`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });

@@ -303,7 +303,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   const [showPexelsPicker, setShowPexelsPicker] = useState(false);
   const [remotionRendering, setRemotionRendering] = useState(false);
   const [pickerService, setPickerService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'images'>('pexels');
-  const [pickerOrientation, setPickerOrientation] = useState<'landscape' | 'portrait'>('landscape');
+  const [pickerOrientation, setPickerOrientation] = useState<'landscape' | 'portrait'>(orientation);
   const [pickerQuery, setPickerQuery] = useState('');
   const [pickerCandidates, setPickerCandidates] = useState<Array<{
     id: number; thumbnail: string; previewUrl?: string | null;
@@ -327,10 +327,13 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   const [splitLeftLabel, setSplitLeftLabel] = useState('');
   const [splitRightLabel, setSplitRightLabel] = useState('');
   const [splitLabelPosition, setSplitLabelPosition] = useState<'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right'>('top-center');
+  const [splitRightLabelPosition, setSplitRightLabelPosition] = useState<'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right'>('top-center');
   const [splitLabelStyle, setSplitLabelStyle] = useState<'badge' | 'outline' | 'shadow' | 'banner'>('badge');
+  const [splitLabelFontSize, setSplitLabelFontSize] = useState(28);
   // Split stock search per side
   const [splitSearchSide, setSplitSearchSide] = useState<'left' | 'right' | null>(null);
   const [splitSearchService, setSplitSearchService] = useState<'pexels' | 'pixabay' | 'mixkit'>('pexels');
+  const [splitSearchOrientation, setSplitSearchOrientation] = useState<'landscape' | 'portrait'>(orientation === 'portrait' ? 'landscape' : 'portrait');
   const [splitSearchQuery, setSplitSearchQuery] = useState('');
   const [splitSearchResults, setSplitSearchResults] = useState<Array<{ id: number; thumbnail: string; previewUrl?: string | null; downloadUrl?: string; duration: number; width: number; height: number; pageUrl?: string; title?: string }>>([]);
   const [splitSearchLoading, setSplitSearchLoading] = useState(false);
@@ -402,6 +405,10 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     if (index !== -1) return cleanPath.substring(index);
     const rIndex = cleanPath.indexOf('renders/');
     if (rIndex !== -1) return '/' + cleanPath.substring(rIndex);
+    const cIndex = cleanPath.indexOf('/cache/');
+    if (cIndex !== -1) return cleanPath.substring(cIndex);
+    const cIndex2 = cleanPath.indexOf('cache/');
+    if (cIndex2 !== -1) return '/' + cleanPath.substring(cIndex2);
     return null;
   };
 
@@ -432,10 +439,11 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     const b = blocks[clampedIdx];
     setTrimStart(b?.clipStartSec != null ? String(b.clipStartSec) : '');
     setTrimEnd(b?.clipEndSec != null ? String(b.clipEndSec) : '');
-    // Auto-open Pexels picker for every block
+    // Auto-open Pexels picker for every block, close split panel
     setPickerService('pexels');
     setPickerOrientation(orientation);
     setShowPexelsPicker(true);
+    setShowSplitPanel(false);
     // Seek video to clipStartSec without auto-playing
     setTimeout(() => {
       if (videoRef.current) {
@@ -456,18 +464,19 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clampedIdx]);
 
-  // Auto-generate TTS when navigating to a block without audio
+  // Auto-generate TTS when navigating to a block without audio, or when voice/rate/engine changes
   useEffect(() => {
     const currentBlock = blocks[clampedIdx];
     if (!currentBlock || !currentBlock.narration?.trim()) return;
-    if (currentBlock.audioDurationMs && currentBlock.audioDurationMs > 0) return;
     let cancelled = false;
     setGeneratingTts(true);
     scriptStudioApi.ttsBlock(docId, currentBlock.blockIndex, { engine: ttsEngine, voice, rate }).then((data: any) => {
       if (cancelled) return;
-      const eng = data.engine ? ` [${data.engine}]` : '';
-      setActionLog([{ level: 'success', msg: `TTS ready (${(data.audioDurationMs / 1000).toFixed(1)}s)${eng}` }]);
-      onBlockUpdated();
+      if (!data.cached) {
+        const eng = data.engine ? ` [${data.engine}]` : '';
+        setActionLog([{ level: 'success', msg: `TTS ready (${(data.audioDurationMs / 1000).toFixed(1)}s)${eng}` }]);
+        onBlockUpdated();
+      }
     }).catch((err) => {
       if (cancelled) return;
       setActionLog([{ level: 'error', msg: `TTS failed: ${err.message ?? 'unknown'}` }]);
@@ -476,7 +485,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedIdx, docId]);
+  }, [clampedIdx, docId, voice, rate, ttsEngine]);
 
   // Stop audio when it ends
   useEffect(() => {
@@ -760,7 +769,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     try {
       let data: any;
       if (pickerService === 'images') {
-        data = await scriptStudioApi.applyStockImage(docId, block.blockIndex, candidate.downloadUrl!, candidate.source || 'pexels', candidate.width, candidate.height, imageZoomEffect);
+        data = await scriptStudioApi.applyStockImage(docId, block.blockIndex, candidate.downloadUrl!, candidate.source || 'pexels', candidate.width, candidate.height, imageZoomEffect, orientation);
       } else if (pickerService === 'pexels') {
         data = await scriptStudioApi.applyPexelsById(docId, block.blockIndex, candidate.id);
       } else if (pickerService === 'mixkit') {
@@ -793,7 +802,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setPastingImage(true);
     setActionLog([{ level: 'info', msg: 'Converting image to clip...' }]);
     try {
-      const data = await scriptStudioApi.pasteImage(docId, block.blockIndex, file, imageZoomEffect);
+      const data = await scriptStudioApi.pasteImage(docId, block.blockIndex, file, imageZoomEffect, orientation);
       const newClip = { assetPath: data.filename, startSec: 0, endSec: null as number | null };
       const merged = blockClips.length > 0 ? [...blockClips, newClip] : [newClip];
       await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
@@ -806,22 +815,24 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setPastingImage(false);
   };
 
-  // Handle split screen render
+  // Handle split screen render via Remotion
   const handleSplitScreen = async () => {
     if (splitRendering || !splitLeftClip || !splitRightClip) return;
     setSplitRendering(true);
     setActionLog([{ level: 'info', msg: 'Rendering split screen...' }]);
     try {
-      const splitOpts = {
-        middleText: splitMiddleText || undefined,
+      const data = await scriptStudioApi.splitScreen(docId, block.blockIndex, splitLeftClip, splitRightClip, {
+        middleText: splitMiddleText,
         middleStyle: splitMiddleStyle,
         accentColor: splitAccentColor,
         leftLabel: splitLeftLabel || undefined,
         rightLabel: splitRightLabel || undefined,
         labelPosition: splitLabelPosition,
+        rightLabelPosition: splitRightLabelPosition,
         labelStyle: splitLabelStyle,
-      };
-      const data = await scriptStudioApi.splitScreen(docId, block.blockIndex, splitLeftClip, splitRightClip, splitOpts);
+        labelFontSize: splitLabelFontSize,
+        orientation,
+      });
       const newClip = {
         assetPath: data.filename, startSec: 0, endSec: null as number | null,
         splitSources: [splitLeftClip, splitRightClip],
@@ -832,7 +843,9 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
           leftLabel: splitLeftLabel,
           rightLabel: splitRightLabel,
           labelPosition: splitLabelPosition,
+          rightLabelPosition: splitRightLabelPosition,
           labelStyle: splitLabelStyle,
+          labelFontSize: splitLabelFontSize,
         },
       };
       // Split clip must be the FIRST clip so clip_asset_path points to it for production
@@ -840,8 +853,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
       await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
       setActiveClipIdx(merged.length - 1);
       onBlockUpdated();
-      setActionLog([{ level: 'success', msg: `Split screen added (${data.duration}s)` }]);
-      setShowSplitPanel(false);
+      setActionLog([{ level: 'success', msg: `Split screen rendered (${data.duration}s)` }]);
     } catch (err: any) {
       setActionLog([{ level: 'error', msg: err.response?.data?.error ?? err.message }]);
     }
@@ -863,11 +875,14 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
       setSplitLeftLabel(cfg.leftLabel ?? '');
       setSplitRightLabel(cfg.rightLabel ?? '');
       setSplitLabelPosition(cfg.labelPosition ?? 'top-center');
+      setSplitRightLabelPosition(cfg.rightLabelPosition ?? cfg.labelPosition ?? 'top-center');
       setSplitLabelStyle(cfg.labelStyle ?? 'badge');
+      setSplitLabelFontSize(cfg.labelFontSize ?? 28);
     }
     setSplitSearchSide(null);
     setSplitSearchResults([]);
     setSplitSearchService('pexels');
+    setSplitSearchOrientation(orientation === 'portrait' ? 'landscape' : 'portrait');
     const q = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 5).join(' ');
     setSplitSearchQuery(q);
     setShowSplitPanel(true);
@@ -883,7 +898,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setSplitSearchLoading(true);
     setSplitSearchResults([]);
     try {
-      const data = await scriptStudioApi.getAlternatives(docId, query.trim(), orientation, 12, svc);
+      const data = await scriptStudioApi.getAlternatives(docId, query.trim(), splitSearchOrientation, 12, svc);
       setSplitSearchResults((data.candidates ?? []).map((c: any) => ({
         id: c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? 0,
         thumbnail: c.thumbnail,
@@ -908,7 +923,8 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
       const data = await scriptStudioApi.downloadStock(docId, splitSearchService, candidate);
       if (side === 'left') setSplitLeftClip(data.filename);
       else setSplitRightClip(data.filename);
-      setActionLog([{ level: 'success', msg: `${side} clip ready (${data.duration}s)` }]);
+      const sideLabel = isPortrait ? (side === 'left' ? 'top' : 'bottom') : side;
+      setActionLog([{ level: 'success', msg: `${sideLabel} clip ready (${data.duration}s)` }]);
     } catch (err: any) {
       setActionLog([{ level: 'error', msg: err.response?.data?.error ?? err.message }]);
     }
@@ -1319,7 +1335,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 }
                 if (effectiveClipStart > 0) vid.currentTime = effectiveClipStart;
               }}
-              className={isPortrait ? 'h-full object-contain' : 'w-full h-full object-cover'}
+              className={isPortrait ? 'h-full w-auto mx-auto object-cover aspect-[9/16]' : 'w-full h-full object-cover'}
             />
             {/* Play / pause center overlay */}
             <button
@@ -1732,9 +1748,9 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             </button>
           </div>
 
-          {/* ── Preview area: left + VS + right ── */}
+          {/* ── Preview area: top/bottom (portrait) or left/right (landscape) ── */}
           <div className="px-4 pb-3">
-            <div className="flex items-stretch gap-0 rounded-xl overflow-hidden border border-c-border/60 bg-black/40">
+            <div className={`flex items-stretch gap-0 rounded-xl overflow-hidden border border-c-border/60 bg-black/40 ${isPortrait ? 'flex-col max-w-xs mx-auto' : ''}`}>
               {/* Left panel */}
               <div
                 className={`flex-1 relative group cursor-pointer transition-all ${splitSearchSide === 'left' ? 'ring-2 ring-teal-400/60 ring-inset' : ''}`}
@@ -1750,7 +1766,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                       onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
                     />
                     <button
-                      onClick={(e) => { e.stopPropagation(); setLightbox({ type: 'video', src: `/renders/storyboard/doc_${docId}/${splitLeftClip}`, title: 'Left clip' }); }}
+                      onClick={(e) => { e.stopPropagation(); setLightbox({ type: 'video', src: `/renders/storyboard/doc_${docId}/${splitLeftClip}`, title: isPortrait ? 'Top clip' : 'Left clip' }); }}
                       className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/50 text-white/60 hover:text-white hover:bg-black/70 opacity-0 group-hover:opacity-100 transition-all cursor-pointer backdrop-blur-sm"
                     >
                       <Maximize2 className="w-3 h-3" />
@@ -1765,41 +1781,44 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 ) : (
                   <div className="aspect-video flex flex-col items-center justify-center gap-1.5 bg-c-elevated/30">
                     <Film className="w-5 h-5 text-c-dim/40" />
-                    <span className="text-[10px] text-c-dim/60">Click to pick left</span>
+                    <span className="text-[10px] text-c-dim/60">{isPortrait ? 'Click to pick top' : 'Click to pick left'}</span>
                   </div>
                 )}
                 {/* Side label */}
                 <div className={`absolute px-2 py-1 ${splitLabelPosition.startsWith('top') ? 'top-0' : 'bottom-0'} inset-x-0 ${splitLabelStyle === 'banner' ? (splitLabelPosition.startsWith('top') ? 'bg-gradient-to-b from-black/80 to-transparent' : 'bg-gradient-to-t from-black/80 to-transparent') : ''} ${splitLabelPosition.endsWith('right') ? 'text-right' : splitLabelPosition.endsWith('center') ? 'text-center' : 'text-left'}`}>
-                  <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                  <span className={`font-bold uppercase tracking-wider ${
                     splitLabelStyle === 'badge' ? 'bg-black/70 text-white px-1.5 py-0.5 rounded' :
                     splitLabelStyle === 'outline' ? 'text-white' :
                     splitLabelStyle === 'shadow' ? 'text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]' :
                     'text-white'
-                  }`} style={splitLabelStyle === 'outline' ? { WebkitTextStroke: '1px rgba(0,0,0,0.8)' } : undefined}>
-                    {splitLeftLabel || 'Left'}
+                  }`} style={{ fontSize: `${Math.max(8, Math.round(splitLabelFontSize * 0.4))}px`, ...(splitLabelStyle === 'outline' ? { WebkitTextStroke: '1px rgba(0,0,0,0.8)' } : {}) }}>
+                    {splitLeftLabel || (isPortrait ? 'Top' : 'Left')}
                   </span>
                 </div>
               </div>
 
               {/* Middle divider */}
               {splitMiddleStyle === 'none' ? (
-                <div className="w-1.5 shrink-0" style={{ background: splitAccentColor }} />
+                <div className={`shrink-0 ${isPortrait ? 'h-1.5 w-full' : 'w-1.5'}`} style={{ background: splitAccentColor }} />
               ) : splitMiddleStyle === 'line' ? (
-                <div className="w-1 shrink-0 relative">
+                <div className={`shrink-0 relative ${isPortrait ? 'h-1 w-full' : 'w-1'}`}>
                   <div className="absolute inset-0" style={{ background: splitAccentColor }} />
                 </div>
               ) : splitMiddleStyle === 'slash' ? (
-                <div className="w-6 shrink-0 relative overflow-hidden" style={{ background: '#000' }}>
-                  <div className="absolute inset-0" style={{ background: `linear-gradient(155deg, transparent 40%, ${splitAccentColor} 40%, ${splitAccentColor} 60%, transparent 60%)` }} />
+                <div className={`shrink-0 relative overflow-hidden ${isPortrait ? 'h-6 w-full' : 'w-6'}`} style={{ background: '#000' }}>
+                  <div className="absolute inset-0" style={{ background: `linear-gradient(${isPortrait ? '245' : '155'}deg, transparent 40%, ${splitAccentColor} 40%, ${splitAccentColor} 60%, transparent 60%)` }} />
                 </div>
               ) : splitMiddleStyle === 'clean' ? (
-                <div className="w-[3px] shrink-0 relative bg-white/30">
-                  <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-center">
-                    <span className="text-[8px] font-medium text-white/60 bg-black/60 px-1 py-0.5 rounded-sm whitespace-nowrap">{splitMiddleText || 'VS'}</span>
+                <div className={`shrink-0 relative bg-white/30 ${isPortrait ? 'h-[3px] w-full' : 'w-[3px]'}`}>
+                  <div className={`absolute flex items-center justify-center ${isPortrait ? 'inset-y-0 left-1/2 -translate-x-1/2' : 'inset-x-0 top-1/2 -translate-y-1/2'}`}>
+                    {splitMiddleText && <span className="text-[8px] font-medium text-white/60 bg-black/60 px-1 py-0.5 rounded-sm whitespace-nowrap">{splitMiddleText}</span>}
                   </div>
                 </div>
               ) : (
-                <div className={`shrink-0 flex flex-col items-center justify-center gap-1 relative ${splitMiddleStyle === 'glow' || splitMiddleStyle === 'neon' ? 'w-12' : splitMiddleStyle === 'fire' ? 'w-14' : 'w-10'}`}
+                <div className={`shrink-0 flex items-center justify-center gap-1 relative ${isPortrait
+                  ? `w-full ${splitMiddleStyle === 'glow' || splitMiddleStyle === 'neon' ? 'h-12' : splitMiddleStyle === 'fire' ? 'h-14' : 'h-10'}`
+                  : `flex-col ${splitMiddleStyle === 'glow' || splitMiddleStyle === 'neon' ? 'w-12' : splitMiddleStyle === 'fire' ? 'w-14' : 'w-10'}`
+                }`}
                   style={{ background: splitMiddleStyle === 'glow' || splitMiddleStyle === 'neon' || splitMiddleStyle === 'fire' ? 'transparent' : splitAccentColor + '20' }}>
                   {splitMiddleStyle === 'glow' && (
                     <div className="absolute inset-0 blur-md" style={{ background: `radial-gradient(ellipse at center, ${splitAccentColor}90, transparent 70%)` }} />
@@ -1807,36 +1826,41 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                   {splitMiddleStyle === 'neon' && (
                     <>
                       <div className="absolute inset-0 blur-lg" style={{ background: `radial-gradient(ellipse at center, ${splitAccentColor}cc, transparent 60%)` }} />
-                      <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[2px]" style={{ background: splitAccentColor, boxShadow: `0 0 8px ${splitAccentColor}, 0 0 16px ${splitAccentColor}80` }} />
+                      {isPortrait
+                        ? <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[2px]" style={{ background: splitAccentColor, boxShadow: `0 0 8px ${splitAccentColor}, 0 0 16px ${splitAccentColor}80` }} />
+                        : <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[2px]" style={{ background: splitAccentColor, boxShadow: `0 0 8px ${splitAccentColor}, 0 0 16px ${splitAccentColor}80` }} />
+                      }
                     </>
                   )}
                   {splitMiddleStyle === 'fire' && (
                     <>
                       <div className="absolute inset-0 blur-lg" style={{ background: 'radial-gradient(ellipse at center, #ff4500cc, #ff8c0060, transparent 70%)' }} />
-                      <div className="absolute inset-0 blur-sm opacity-60" style={{ background: 'radial-gradient(ellipse at center bottom, #ffd70090, transparent 60%)' }} />
+                      <div className="absolute inset-0 blur-sm opacity-60" style={{ background: `radial-gradient(ellipse at center ${isPortrait ? 'left' : 'bottom'}, #ffd70090, transparent 60%)` }} />
                     </>
                   )}
                   {splitMiddleStyle === 'vs' && (
-                    <div className="absolute inset-0 opacity-20" style={{ background: `linear-gradient(180deg, transparent, ${splitAccentColor}40, transparent)` }} />
+                    <div className="absolute inset-0 opacity-20" style={{ background: `linear-gradient(${isPortrait ? '90' : '180'}deg, transparent, ${splitAccentColor}40, transparent)` }} />
                   )}
-                  <span className={`text-[11px] font-bold relative z-10 ${
-                    splitMiddleStyle === 'badge' ? 'px-1.5 py-0.5 rounded text-white' :
-                    splitMiddleStyle === 'glow' ? 'text-white drop-shadow-lg' :
-                    splitMiddleStyle === 'neon' ? 'text-white font-extrabold' :
-                    splitMiddleStyle === 'fire' ? 'text-yellow-200 font-extrabold' :
-                    'text-white/80 drop-shadow-sm'
-                  }`} style={
-                    splitMiddleStyle === 'badge' ? { background: splitAccentColor + 'dd' } :
-                    splitMiddleStyle === 'neon' ? { textShadow: `0 0 6px ${splitAccentColor}, 0 0 12px ${splitAccentColor}` } :
-                    splitMiddleStyle === 'fire' ? { textShadow: '0 0 8px #ff4500, 0 0 16px #ff8c00, 0 0 24px #ff450080' } :
-                    undefined
-                  }>
-                    {splitMiddleText || 'VS'}
-                  </span>
+                  {splitMiddleText && (
+                    <span className={`text-[11px] font-bold relative z-10 ${
+                      splitMiddleStyle === 'badge' ? 'px-1.5 py-0.5 rounded text-white' :
+                      splitMiddleStyle === 'glow' ? 'text-white drop-shadow-lg' :
+                      splitMiddleStyle === 'neon' ? 'text-white font-extrabold' :
+                      splitMiddleStyle === 'fire' ? 'text-yellow-200 font-extrabold' :
+                      'text-white/80 drop-shadow-sm'
+                    }`} style={
+                      splitMiddleStyle === 'badge' ? { background: splitAccentColor + 'dd' } :
+                      splitMiddleStyle === 'neon' ? { textShadow: `0 0 6px ${splitAccentColor}, 0 0 12px ${splitAccentColor}` } :
+                      splitMiddleStyle === 'fire' ? { textShadow: '0 0 8px #ff4500, 0 0 16px #ff8c00, 0 0 24px #ff450080' } :
+                      undefined
+                    }>
+                      {splitMiddleText}
+                    </span>
+                  )}
                 </div>
               )}
 
-              {/* Right panel */}
+              {/* Right/Bottom panel */}
               <div
                 className={`flex-1 relative group cursor-pointer transition-all ${splitSearchSide === 'right' ? 'ring-2 ring-teal-400/60 ring-inset' : ''}`}
                 onClick={() => setSplitSearchSide('right')}
@@ -1851,7 +1875,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                       onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
                     />
                     <button
-                      onClick={(e) => { e.stopPropagation(); setLightbox({ type: 'video', src: `/renders/storyboard/doc_${docId}/${splitRightClip}`, title: 'Right clip' }); }}
+                      onClick={(e) => { e.stopPropagation(); setLightbox({ type: 'video', src: `/renders/storyboard/doc_${docId}/${splitRightClip}`, title: isPortrait ? 'Bottom clip' : 'Right clip' }); }}
                       className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/50 text-white/60 hover:text-white hover:bg-black/70 opacity-0 group-hover:opacity-100 transition-all cursor-pointer backdrop-blur-sm"
                     >
                       <Maximize2 className="w-3 h-3" />
@@ -1866,17 +1890,17 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 ) : (
                   <div className="aspect-video flex flex-col items-center justify-center gap-1.5 bg-c-elevated/30">
                     <Film className="w-5 h-5 text-c-dim/40" />
-                    <span className="text-[10px] text-c-dim/60">Click to pick right</span>
+                    <span className="text-[10px] text-c-dim/60">{isPortrait ? 'Click to pick bottom' : 'Click to pick right'}</span>
                   </div>
                 )}
-                <div className={`absolute px-2 py-1 ${splitLabelPosition.startsWith('top') ? 'top-0' : 'bottom-0'} inset-x-0 ${splitLabelStyle === 'banner' ? (splitLabelPosition.startsWith('top') ? 'bg-gradient-to-b from-black/80 to-transparent' : 'bg-gradient-to-t from-black/80 to-transparent') : ''} ${splitLabelPosition.endsWith('right') ? 'text-right' : splitLabelPosition.endsWith('center') ? 'text-center' : 'text-left'}`}>
-                  <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                <div className={`absolute px-2 py-1 ${(isPortrait ? splitRightLabelPosition : splitLabelPosition).startsWith('top') ? 'top-0' : 'bottom-0'} inset-x-0 ${splitLabelStyle === 'banner' ? ((isPortrait ? splitRightLabelPosition : splitLabelPosition).startsWith('top') ? 'bg-gradient-to-b from-black/80 to-transparent' : 'bg-gradient-to-t from-black/80 to-transparent') : ''} ${(isPortrait ? splitRightLabelPosition : splitLabelPosition).endsWith('right') ? 'text-right' : (isPortrait ? splitRightLabelPosition : splitLabelPosition).endsWith('center') ? 'text-center' : 'text-left'}`}>
+                  <span className={`font-bold uppercase tracking-wider ${
                     splitLabelStyle === 'badge' ? 'bg-black/70 text-white px-1.5 py-0.5 rounded' :
                     splitLabelStyle === 'outline' ? 'text-white' :
                     splitLabelStyle === 'shadow' ? 'text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]' :
                     'text-white'
-                  }`} style={splitLabelStyle === 'outline' ? { WebkitTextStroke: '1px rgba(0,0,0,0.8)' } : undefined}>
-                    {splitRightLabel || 'Right'}
+                  }`} style={{ fontSize: `${Math.max(8, Math.round(splitLabelFontSize * 0.4))}px`, ...(splitLabelStyle === 'outline' ? { WebkitTextStroke: '1px rgba(0,0,0,0.8)' } : {}) }}>
+                    {splitRightLabel || (isPortrait ? 'Bottom' : 'Right')}
                   </span>
                 </div>
               </div>
@@ -1888,7 +1912,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             {/* Row 1: Labels + middle text */}
             <div className="flex items-end gap-1.5">
               <div className="flex-1 min-w-[60px]">
-                <label className="text-[10px] text-c-muted block mb-1">Left label</label>
+                <label className="text-[10px] text-c-muted block mb-1">{isPortrait ? 'Top label' : 'Left label'}</label>
                 <input type="text" value={splitLeftLabel} onChange={(e) => setSplitLeftLabel(e.target.value)}
                   placeholder="e.g. iPhone"
                   className="w-full text-[11px] bg-c-bg border border-c-border rounded-lg px-2.5 py-1.5 text-c-text placeholder-c-dim/50 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all" />
@@ -1900,7 +1924,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                   className="w-full text-[11px] text-center bg-c-bg border border-c-border rounded-lg px-2 py-1.5 text-c-text placeholder-c-dim/50 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all" />
               </div>
               <div className="flex-1 min-w-[60px]">
-                <label className="text-[10px] text-c-muted block mb-1">Right label</label>
+                <label className="text-[10px] text-c-muted block mb-1">{isPortrait ? 'Bottom label' : 'Right label'}</label>
                 <input type="text" value={splitRightLabel} onChange={(e) => setSplitRightLabel(e.target.value)}
                   placeholder="e.g. Samsung"
                   className="w-full text-[11px] bg-c-bg border border-c-border rounded-lg px-2.5 py-1.5 text-c-text placeholder-c-dim/50 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all" />
@@ -1941,7 +1965,13 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 </div>
               </div>
               <div>
-                <label className="text-[10px] text-c-muted block mb-1">Label pos</label>
+                <label className="text-[10px] text-c-muted block mb-1">Font</label>
+                <input type="number" value={splitLabelFontSize} onChange={(e) => setSplitLabelFontSize(Math.max(12, Math.min(72, parseInt(e.target.value) || 28)))}
+                  min={12} max={72} step={2}
+                  className="w-14 text-[11px] text-center bg-c-bg border border-c-border rounded-lg px-1.5 py-1.5 text-c-text focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all" />
+              </div>
+              <div>
+                <label className="text-[10px] text-c-muted block mb-1">{isPortrait ? 'Top pos' : 'Label pos'}</label>
                 <div className="grid grid-cols-3 gap-px rounded-lg border border-c-border overflow-hidden w-[66px] h-[30px]">
                   {(['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'] as const).map((pos) => (
                     <button key={pos} onClick={() => setSplitLabelPosition(pos)}
@@ -1955,6 +1985,23 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                   ))}
                 </div>
               </div>
+              {isPortrait && (
+                <div>
+                  <label className="text-[10px] text-c-muted block mb-1">Bottom pos</label>
+                  <div className="grid grid-cols-3 gap-px rounded-lg border border-c-border overflow-hidden w-[66px] h-[30px]">
+                    {(['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'] as const).map((pos) => (
+                      <button key={pos} onClick={() => setSplitRightLabelPosition(pos)}
+                        className={`flex items-center justify-center transition-all cursor-pointer ${
+                          splitRightLabelPosition === pos ? 'bg-teal-500/30' : 'bg-c-bg hover:bg-c-elevated'
+                        }`}
+                        title={pos}
+                      >
+                        <div className={`w-1.5 h-1.5 rounded-full ${splitRightLabelPosition === pos ? 'bg-teal-400' : 'bg-c-dim/40'}`} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1972,6 +2019,23 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
               </button>
             ))}
             <div className="w-px h-5 bg-c-border mx-0.5" />
+            {/* Orientation toggle */}
+            <div className="flex rounded-md border border-c-border overflow-hidden shrink-0">
+              <button
+                onClick={() => { setSplitSearchOrientation('landscape'); splitStockSearch(splitSearchQuery); }}
+                className={`px-1.5 py-1 text-[11px] transition-colors cursor-pointer flex items-center gap-0.5 ${splitSearchOrientation === 'landscape' ? 'bg-teal-500 text-white' : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
+                title="16:9"
+              >
+                <span className="inline-block w-3 h-2 border border-current rounded-[1px]" />
+              </button>
+              <button
+                onClick={() => { setSplitSearchOrientation('portrait'); splitStockSearch(splitSearchQuery); }}
+                className={`px-1.5 py-1 text-[11px] transition-colors cursor-pointer border-l border-c-border flex items-center gap-0.5 ${splitSearchOrientation === 'portrait' ? 'bg-teal-500 text-white' : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
+                title="9:16"
+              >
+                <span className="inline-block w-1.5 h-3 border border-current rounded-[1px]" />
+              </button>
+            </div>
             <input
               type="text"
               value={splitSearchQuery}
@@ -1991,26 +2055,26 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
 
           {/* Results grid */}
           {splitSearchLoading && (
-            <div className="grid gap-2 px-4 pb-3 grid-cols-4 sm:grid-cols-5">
+            <div className={`grid gap-2 px-4 pb-3 ${splitSearchOrientation === 'landscape' ? 'grid-cols-4 sm:grid-cols-5' : 'grid-cols-5 sm:grid-cols-7'}`}>
               {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="rounded-lg overflow-hidden bg-c-elevated/50 aspect-video animate-pulse" />
+                <div key={i} className={`rounded-lg overflow-hidden bg-c-elevated/50 animate-pulse ${splitSearchOrientation === 'landscape' ? 'aspect-video' : 'aspect-[9/16]'}`} />
               ))}
             </div>
           )}
           {!splitSearchLoading && splitSearchResults.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-8 text-c-dim">
               <Film className="w-8 h-8 opacity-15" />
-              <p className="text-[11px] opacity-40">Search for stock videos, then click to assign left or right</p>
+              <p className="text-[11px] opacity-40">Search for stock videos, then click to assign {isPortrait ? 'top or bottom' : 'left or right'}</p>
             </div>
           )}
           {!splitSearchLoading && splitSearchResults.length > 0 && (
-            <div className="grid gap-2 px-4 pb-3 grid-cols-4 sm:grid-cols-5">
+            <div className={`grid gap-2 px-4 pb-3 ${splitSearchOrientation === 'landscape' ? 'grid-cols-4 sm:grid-cols-5' : 'grid-cols-5 sm:grid-cols-7'}`}>
               {splitSearchResults.map((c) => (
                 <div key={c.id} className="relative rounded-xl overflow-hidden group bg-black ring-1 ring-white/[0.06] hover:ring-teal-400/40 transition-all">
                   {c.previewUrl || c.downloadUrl ? (
-                    <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} />
+                    <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} className={splitSearchOrientation === 'landscape' ? 'aspect-video' : 'aspect-[9/16]'} />
                   ) : (
-                    <img src={c.thumbnail} alt="" className="w-full aspect-video object-cover" />
+                    <img src={c.thumbnail} alt="" className={`w-full object-cover ${splitSearchOrientation === 'landscape' ? 'aspect-video' : 'aspect-[9/16]'}`} />
                   )}
                   {/* Expand button */}
                   <button
@@ -2023,21 +2087,29 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                   >
                     <Maximize2 className="w-3 h-3" />
                   </button>
-                  {/* Hover overlay with Left / Right split buttons */}
-                  <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-opacity flex items-stretch pointer-events-none">
+                  {/* Hover overlay with Top/Bottom (portrait) or Left/Right (landscape) split buttons */}
+                  <div className={`absolute inset-0 bg-black/40 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-opacity flex items-stretch pointer-events-none ${isPortrait ? 'flex-col' : ''}`}>
                     <button
                       onClick={() => splitSelectStock(c, 'left')}
                       disabled={!!splitDownloading}
-                      className="flex-1 flex items-center justify-center text-[11px] font-semibold text-white/80 hover:bg-teal-500/30 hover:text-white transition-all cursor-pointer pointer-events-auto border-r border-white/10"
+                      className={`flex-1 flex items-center justify-center text-[11px] font-semibold text-white/80 hover:bg-teal-500/30 hover:text-white transition-all cursor-pointer pointer-events-auto ${isPortrait ? 'border-b border-white/10' : 'border-r border-white/10'}`}
                     >
-                      {splitDownloading === c.id && splitSearchSide === 'left' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><ChevronLeft className="w-3.5 h-3.5" /> Left</>}
+                      {splitDownloading === c.id && splitSearchSide === 'left'
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : isPortrait
+                          ? <><ChevronUp className="w-3.5 h-3.5" /> Top</>
+                          : <><ChevronLeft className="w-3.5 h-3.5" /> Left</>}
                     </button>
                     <button
                       onClick={() => splitSelectStock(c, 'right')}
                       disabled={!!splitDownloading}
                       className="flex-1 flex items-center justify-center text-[11px] font-semibold text-white/80 hover:bg-teal-500/30 hover:text-white transition-all cursor-pointer pointer-events-auto"
                     >
-                      {splitDownloading === c.id && splitSearchSide === 'right' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <>Right <ChevronRight className="w-3.5 h-3.5" /></>}
+                      {splitDownloading === c.id && splitSearchSide === 'right'
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : isPortrait
+                          ? <>Bottom <ChevronDown className="w-3.5 h-3.5" /></>
+                          : <>Right <ChevronRight className="w-3.5 h-3.5" /></>}
                     </button>
                   </div>
                   {/* Duration badge */}
@@ -2129,9 +2201,9 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 </button>
               </div>
               {loadingPicker && (
-                <div className={`grid gap-1.5 px-3 pb-2 ${isPortrait ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
+                <div className={`grid gap-1.5 px-3 pb-2 ${pickerOrientation === 'portrait' ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
                   {Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="rounded-md overflow-hidden border border-c-border bg-c-elevated aspect-video animate-pulse" />
+                    <div key={i} className={`rounded-md overflow-hidden border border-c-border bg-c-elevated animate-pulse ${pickerOrientation === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}`} />
                   ))}
                 </div>
               )}
@@ -2148,18 +2220,18 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 </div>
               )}
               {!loadingPicker && pickerCandidates.length > 0 && (
-                <div className={`grid gap-1.5 px-3 pb-2 ${isPortrait ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
+                <div className={`grid gap-1.5 px-3 pb-2 ${pickerOrientation === 'portrait' ? 'grid-cols-3' : 'grid-cols-4 sm:grid-cols-5'}`}>
                   {pickerCandidates.map((c, ci) => {
                     const isApplied = block.clipAssetPath?.includes(String(c.id));
                     const isImageMode = pickerService === 'images';
                     return (
                       <div key={`${c.id}-${ci}`} className={`relative rounded-lg overflow-hidden border group bg-black transition-all ${isApplied ? 'border-c-accent ring-1 ring-c-accent/40' : 'border-c-border hover:border-c-border-hover'}`}>
                         {isImageMode ? (
-                          <img src={c.thumbnail} alt={c.title || ''} className="w-full aspect-video object-cover" loading="lazy" />
+                          <img src={c.thumbnail} alt={c.title || ''} className={`w-full object-cover ${pickerOrientation === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}`} loading="lazy" />
                         ) : c.previewUrl || c.downloadUrl ? (
-                          <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} />
+                          <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} className={pickerOrientation === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'} />
                         ) : (
-                          <img src={c.thumbnail} alt="" className="w-full aspect-video object-cover" />
+                          <img src={c.thumbnail} alt="" className={`w-full object-cover ${pickerOrientation === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}`} />
                         )}
                         {/* Source badge for image mode */}
                         {isImageMode && c.source && (
@@ -2178,29 +2250,39 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                         >
                           <Maximize2 className="w-3 h-3" />
                         </button>
-                        {/* Apply overlay on hover */}
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 pointer-events-none">
-                          <button
-                            onClick={() => applyPexelsVideo(c)}
-                            disabled={!!applyingPexelsId}
-                            className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-c-accent text-white font-medium hover:bg-c-accent/80 disabled:opacity-50 transition-colors cursor-pointer shadow-lg pointer-events-auto"
-                          >
-                            {applyingPexelsId === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                            Use
-                          </button>
-                          {c.pageUrl && (
-                            <a
-                              href={c.pageUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors pointer-events-auto"
-                              onClick={(e) => e.stopPropagation()}
+                        {/* Apply overlay — persistent when downloading, hover otherwise */}
+                        {applyingPexelsId === c.id ? (
+                          <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-2 pointer-events-none z-10">
+                            <Loader2 className="w-6 h-6 animate-spin text-c-accent" />
+                            <span className="text-xs text-white font-medium">Downloading...</span>
+                            <div className="w-3/4 h-1 bg-white/20 rounded-full overflow-hidden">
+                              <div className="h-full bg-c-accent rounded-full animate-[progress-indeterminate_1.5s_ease-in-out_infinite]" style={{ width: '40%' }} />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5 pointer-events-none">
+                            <button
+                              onClick={() => applyPexelsVideo(c)}
+                              disabled={!!applyingPexelsId}
+                              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-c-accent text-white font-medium hover:bg-c-accent/80 disabled:opacity-50 transition-colors cursor-pointer shadow-lg pointer-events-auto"
                             >
-                              <ExternalLink className="w-2.5 h-2.5" />
-                              Source
-                            </a>
-                          )}
-                        </div>
+                              <Check className="w-3 h-3" />
+                              Use
+                            </button>
+                            {c.pageUrl && (
+                              <a
+                                href={c.pageUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors pointer-events-auto"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ExternalLink className="w-2.5 h-2.5" />
+                                Source
+                              </a>
+                            )}
+                          </div>
+                        )}
                         {/* Bottom bar */}
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 flex items-center justify-between gap-1">
                           <span className="text-white/80 text-[10px] truncate flex-1">{c.title || ''}</span>
@@ -2355,7 +2437,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
 
 // ── Picker Video (stock preview with scrub bar) ──
 
-function PickerVideo({ previewUrl, downloadUrl, duration }: { previewUrl: string; downloadUrl?: string; duration: number }) {
+function PickerVideo({ previewUrl, downloadUrl, duration, className }: { previewUrl: string; downloadUrl?: string; duration: number; className?: string }) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const [progress, setProgress] = useState(0);
@@ -2389,7 +2471,7 @@ function PickerVideo({ previewUrl, downloadUrl, duration }: { previewUrl: string
 
   return (
     <div
-      className="relative w-full aspect-video"
+      className={`relative w-full ${className || 'aspect-video'}`}
       onMouseEnter={() => { setHovering(true); vidRef.current?.play().then(() => setPlaying(true)).catch(() => {}); }}
       onMouseLeave={() => { setHovering(false); const v = vidRef.current; if (v) { v.pause(); v.currentTime = 0; } setPlaying(false); setProgress(0); }}
     >
@@ -2763,6 +2845,33 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
         <Mic className={`w-3 h-3 ${hasAudio ? 'text-green-400' : 'text-c-border'}`} />
         <Film className={`w-3 h-3 ${hasClip ? 'text-blue-400' : 'text-c-border'}`} />
         {hasOverlay && <span title={block.overlays.join(', ')}><TypeIcon className="w-3 h-3 text-sky-400" /></span>}
+        {block.chartSpec && (() => {
+          const defaultAnim = block.audioDurationMs ? (block.audioDurationMs / 1000) / 2 : 4;
+          const animSec = block.chartSpec.chartAnimSec ?? defaultAnim;
+          return (
+            <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-purple-500/15 text-purple-400 text-[9px] font-semibold leading-none" title={`Chart: ${block.chartSpec.type} · anim ${animSec.toFixed(1)}s`}>
+              <BarChart2 className="w-2.5 h-2.5" />
+              {block.chartSpec.type}
+              <input
+                type="number"
+                min={0.5} max={60} step={0.5}
+                defaultValue={parseFloat(animSec.toFixed(1))}
+                onClick={(e) => e.stopPropagation()}
+                onBlur={(e) => {
+                  const val = Math.max(0.5, parseFloat(e.target.value) || defaultAnim);
+                  if (val !== animSec) {
+                    scriptStudioApi.updateBlock(docId, block.blockIndex, {
+                      chartSpec: { ...block.chartSpec, chartAnimSec: val },
+                    } as any).then(() => onBlockUpdated()).catch(() => {});
+                  }
+                }}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                className="w-8 ml-0.5 px-0.5 py-0 bg-transparent border-b border-purple-400/30 text-purple-400/60 text-[9px] font-mono text-center outline-none focus:border-purple-400 focus:text-purple-400 transition-colors"
+              />
+              <span className="text-purple-400/40">s</span>
+            </span>
+          );
+        })()}
       </div>
       {/* Narration text — inline editable */}
       {isOpening ? (
@@ -2776,7 +2885,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
           defaultValue={block.narration}
           onBlur={(ev) => {
             const val = ev.target.value.trim();
-            if (val && val !== block.narration) {
+            if (val !== (block.narration ?? '')) {
               handleAction('save', () => scriptStudioApi.updateBlock(docId, block.blockIndex, { narration: val }));
             }
           }}
@@ -3045,6 +3154,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   const [altService, setAltService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'remotion'>('pexels');
   const [remotionRendering, setRemotionRendering] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [applyingAltId, setApplyingAltId] = useState<number | string | null>(null);
   const [fetchingStock, setFetchingStock] = useState<'pexels' | 'pixabay' | null>(null);
   const [fetchLog, setFetchLog] = useState<string | null>(null);
   const [editingAiPrompt, setEditingAiPrompt] = useState(false);
@@ -3062,7 +3172,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   const [chartOpacity, setChartOpacity] = useState(0.5);
   const [chartColor, setChartColor] = useState('#7c6af5');
   const defaultAnimSec = block.audioDurationMs ? (block.audioDurationMs / 1000) / 2 : 4;
-  const [animationSec, setAnimationSec] = useState(parseFloat(defaultAnimSec.toFixed(1)));
+  const [animationSec, setAnimationSec] = useState(parseFloat((block.chartSpec?.chartAnimSec ?? defaultAnimSec).toFixed(1)));
 
   const handleReproduce = async () => {
     if (reproducing) return;
@@ -3131,12 +3241,10 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
       const data = source === 'pexels'
         ? await scriptStudioApi.fetchBlockPexels(docId, block.blockIndex, orientation)
         : await scriptStudioApi.fetchBlockPixabay(docId, block.blockIndex, orientation);
-      // Append new clip to existing clips
-      if (existingClips.length > 0) {
-        const newClip = { assetPath: data.filename, startSec: 0, endSec: null };
-        const merged = [...existingClips, newClip];
-        await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
-      }
+      // Append new clip to existing clips (or create first clip)
+      const newClip = { assetPath: data.filename, startSec: 0, endSec: null };
+      const merged = [...existingClips, newClip];
+      await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
       setFetchLog(`${source === 'pexels' ? 'Pexels' : 'Pixabay'} clip added (${data.duration}s)`);
       onBlockUpdated();
     } catch (err: any) {
@@ -3185,6 +3293,8 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   };
 
   const selectAlt = async (alt: { pexelsId?: number; pixabayId?: number; mixkitId?: number; downloadUrl?: string; duration: number; width: number; height: number }) => {
+    const altKey = alt.pexelsId ?? alt.pixabayId ?? alt.mixkitId ?? alt.downloadUrl ?? null;
+    setApplyingAltId(altKey);
     try {
       let newFilename: string | null = null;
       if (alt.pexelsId) {
@@ -3204,6 +3314,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
       }
       onBlockUpdated();
     } catch { /* ignore */ }
+    setApplyingAltId(null);
   };
 
   const saveAiPrompt = async () => {
@@ -3509,6 +3620,13 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
                   min={0.5} max={60} step={0.5}
                   value={animationSec}
                   onChange={(e) => setAnimationSec(Math.max(0.5, parseFloat(e.target.value) || 1))}
+                  onBlur={() => {
+                    if (block.chartSpec && animationSec !== (block.chartSpec.chartAnimSec ?? defaultAnimSec)) {
+                      scriptStudioApi.updateBlock(docId, block.blockIndex, {
+                        chartSpec: { ...block.chartSpec, chartAnimSec: animationSec },
+                      } as any).then(() => onBlockUpdated()).catch(() => {});
+                    }
+                  }}
                   className="w-14 px-1 py-0.5 rounded border border-c-border bg-c-elevated text-c-text text-[10px] font-mono text-center"
                 />
                 <span>s</span>
@@ -3807,19 +3925,34 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
               )}
               {alts.length > 0 && (
                 <div className="grid grid-cols-3 gap-2">
-                  {[...alts].sort((a, b) => a.duration - b.duration).map((alt) => (
+                  {[...alts].sort((a, b) => a.duration - b.duration).map((alt) => {
+                    const altKey = alt.pexelsId ?? alt.pixabayId ?? alt.mixkitId ?? alt.downloadUrl;
+                    const isApplying = applyingAltId === altKey;
+                    return (
                     <button
-                      key={alt.pexelsId ?? alt.pixabayId ?? alt.mixkitId ?? alt.downloadUrl}
-                      className="relative aspect-video rounded-lg overflow-hidden border border-c-border hover:border-c-accent transition-all cursor-pointer group"
+                      key={altKey}
+                      className={`relative rounded-lg overflow-hidden border border-c-border hover:border-c-accent transition-all cursor-pointer group ${orientation === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}`}
                       onClick={() => selectAlt(alt)}
+                      disabled={!!applyingAltId}
                     >
                       <img src={alt.thumbnail} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-between px-1.5 py-1">
-                        <span className="text-white text-[10px] font-mono">{alt.duration}s</span>
-                        <Plus className="w-3 h-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </div>
+                      {isApplying ? (
+                        <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-1.5 z-10">
+                          <Loader2 className="w-5 h-5 animate-spin text-c-accent" />
+                          <span className="text-[10px] text-white font-medium">Downloading...</span>
+                          <div className="w-3/4 h-1 bg-white/20 rounded-full overflow-hidden">
+                            <div className="h-full bg-c-accent rounded-full animate-[progress-indeterminate_1.5s_ease-in-out_infinite]" style={{ width: '40%' }} />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-between px-1.5 py-1">
+                          <span className="text-white text-[10px] font-mono">{alt.duration}s</span>
+                          <Plus className="w-3 h-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                      )}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </>

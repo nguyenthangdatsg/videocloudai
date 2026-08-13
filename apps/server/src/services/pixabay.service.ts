@@ -57,6 +57,23 @@ function hashUrl(url: string): string {
   return crypto.createHash('sha256').update(url).digest('hex').slice(0, 16);
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Fetch with retry on 429 (rate limit). Pixabay allows ~100 req/min. */
+async function fetchWithRetry(url: string, maxRetries = 3): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (res.status === 429 && attempt < maxRetries) {
+      const wait = Math.min(2000 * Math.pow(2, attempt), 10000);
+      console.warn(`[pixabay] 429 rate limited — retrying in ${wait}ms (attempt ${attempt + 1}/${maxRetries})`);
+      await sleep(wait);
+      continue;
+    }
+    return res;
+  }
+  throw new Error('Pixabay API: max retries exceeded');
+}
+
 /** Pick best video file from a Pixabay hit. Prefers large, then medium. */
 function pickBestFile(hit: PixabayVideoHit): { url: string; width: number; height: number } | null {
   const files = [hit.videos.large, hit.videos.medium, hit.videos.small, hit.videos.tiny];
@@ -93,9 +110,7 @@ export async function searchPixabayVideos(
     safesearch: 'true',
   });
 
-  const res = await fetch(`https://pixabay.com/api/videos/?${params}`, {
-    signal: AbortSignal.timeout(8000),
-  });
+  const res = await fetchWithRetry(`https://pixabay.com/api/videos/?${params}`);
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Pixabay API error ${res.status}: ${body}`);
@@ -218,9 +233,7 @@ export async function searchPixabayImages(
     safesearch: 'true',
   });
 
-  const res = await fetch(`https://pixabay.com/api/?${params}`, {
-    signal: AbortSignal.timeout(8000),
-  });
+  const res = await fetchWithRetry(`https://pixabay.com/api/?${params}`);
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Pixabay Images API error ${res.status}: ${body}`);

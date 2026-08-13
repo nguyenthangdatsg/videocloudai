@@ -125,6 +125,15 @@ async function compositeChartOnBg(
   }
 }
 
+function getDocOrientation(docId: string): 'landscape' | 'portrait' {
+  const doc = getDoc(docId);
+  if (!doc?.produce_options) return 'landscape';
+  try {
+    const opts = JSON.parse(doc.produce_options);
+    return opts.orientation === 'portrait' ? 'portrait' : 'landscape';
+  } catch { return 'landscape'; }
+}
+
 export function createScriptStudioRouter(): Router {
   ensureScriptStudioTables();
   const router = Router();
@@ -296,7 +305,7 @@ export function createScriptStudioRouter(): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     // Only pass fields that were explicitly sent (avoid wiping columns with undefined)
     const fields: Parameters<typeof updateBlockVisual>[2] = {};
-    if ('narration' in body && body.narration != null) fields.narration = body.narration as string;
+    if ('narration' in body) fields.narration = (body.narration as string) ?? '';
     if ('openingText' in body) fields.openingText = (body.openingText ?? null) as string | null;
     if ('overlays' in body) fields.overlays = (body.overlays ?? []) as string[];
     if ('overlayStyle' in body) fields.overlayStyle = (body.overlayStyle ?? null) as any;
@@ -305,6 +314,7 @@ export function createScriptStudioRouter(): Router {
     if ('clipAssetPath' in body) fields.clipAssetPath = (body.clipAssetPath ?? null) as string | null;
     if ('visualType' in body && body.visualType != null) fields.visualType = body.visualType as string;
     if ('aiPrompt' in body) fields.aiPrompt = (body.aiPrompt ?? null) as string | null;
+    if ('chartSpec' in body) fields.chartSpec = body.chartSpec as any;
 
     updateBlockVisual(docId, blockIndex, fields);
     res.json({ ok: true });
@@ -319,18 +329,19 @@ export function createScriptStudioRouter(): Router {
     const block = getBlock(docId, blockIndex);
     if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
 
-    const { orientation = 'landscape' } = (req.body ?? {}) as { orientation?: string };
-    const orient = orientation === 'portrait' ? 'portrait' as const : 'landscape' as const;
+    const orient = ((req.body?.orientation as string) === 'portrait' ? 'portrait' : null) ?? getDocOrientation(docId);
     const query = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 5).join(' ');
+
+    const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+    const imageDir = path.join(rendersDir, `doc_${docId}`);
+    fs.mkdirSync(imageDir, { recursive: true });
 
     try {
       const { searchAndDownloadPixabayVideo } = await import('../services/pixabay.service');
-      const result = await searchAndDownloadPixabayVideo(query, { orientation: orient });
+      const result = await searchAndDownloadPixabayVideo(query, { orientation: orient, destDir: imageDir });
       if (!result) { res.status(422).json({ error: 'No Pixabay results for this query' }); return; }
 
       if (block.chartSpec) {
-        const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
-        const imageDir = path.join(rendersDir, `doc_${docId}`);
         const bgPath = path.join(imageDir, result.filename);
         const composited = await compositeChartOnBg(block, bgPath, docId, orient);
         if (composited) {
@@ -354,8 +365,7 @@ export function createScriptStudioRouter(): Router {
     const block = getBlock(docId, blockIndex);
     if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
 
-    const { orientation = 'landscape' } = (req.body ?? {}) as { orientation?: string };
-    const orient = orientation === 'portrait' ? 'portrait' as const : 'landscape' as const;
+    const orient = ((req.body?.orientation as string) === 'portrait' ? 'portrait' : null) ?? getDocOrientation(docId);
     const query = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 5).join(' ');
 
     const { searchPexelsVideos } = await import('../services/pexels.service');
@@ -425,8 +435,7 @@ export function createScriptStudioRouter(): Router {
       const block = getBlock(docId, blockIndex);
       if (block?.chartSpec) {
         const bgPath = path.join(docDir, result.filename);
-        const orient = 'landscape' as const; // TODO: pass from request
-        const composited = await compositeChartOnBg(block, bgPath, docId, orient);
+        const composited = await compositeChartOnBg(block, bgPath, docId, getDocOrientation(docId));
         if (composited) {
           res.json({ ok: true, filename: composited, pexelsId, duration: result.duration });
           return;
@@ -448,7 +457,8 @@ export function createScriptStudioRouter(): Router {
     const block = getBlock(docId, blockIndex);
     if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
 
-    const { aiPrompt: requestPrompt, orientation = 'landscape' } = req.body as { aiPrompt?: string; orientation?: string };
+    const { aiPrompt: requestPrompt } = req.body as { aiPrompt?: string; orientation?: string };
+    const orientation = (req.body?.orientation as string) || getDocOrientation(docId);
     const isPortrait = orientation === 'portrait';
 
     setupNDJSON(res);
@@ -493,8 +503,9 @@ export function createScriptStudioRouter(): Router {
 
   // Stock video alternatives for picker — supports ?service=pexels|pixabay|mixkit|images
   router.get('/docs/:id/blocks/alternatives', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
     const query = (req.query.query as string) ?? '';
-    const orientation = ((req.query.orientation as string) ?? 'landscape') as 'landscape' | 'portrait';
+    const orientation = ((req.query.orientation as string) || getDocOrientation(docId)) as 'landscape' | 'portrait';
     const perPage = Math.min(parseInt((req.query.perPage as string) ?? '12') || 12, 30);
     const service = (req.query.service as string) ?? 'pexels';
     if (!query) { res.status(400).json({ error: 'query is required' }); return; }
@@ -591,7 +602,7 @@ export function createScriptStudioRouter(): Router {
       const block = getBlock(docId, blockIndex);
       if (block?.chartSpec) {
         const bgPath = path.join(docDir, result.filename);
-        const composited = await compositeChartOnBg(block, bgPath, docId, 'landscape');
+        const composited = await compositeChartOnBg(block, bgPath, docId, getDocOrientation(docId));
         if (composited) {
           res.json({ ok: true, filename: composited, duration: result.duration });
           return;
@@ -610,9 +621,11 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
 
-    const { downloadUrl, source, width, height, zoomEffect } = req.body as {
+    const { downloadUrl, source, width, height, zoomEffect, orientation } = req.body as {
       downloadUrl?: string; source?: string; width?: number; height?: number; zoomEffect?: 'zoom-in' | 'zoom-out';
+      orientation?: 'landscape' | 'portrait';
     };
+    const isPortrait = orientation === 'portrait';
     if (!downloadUrl) { res.status(400).json({ error: 'downloadUrl is required' }); return; }
 
     try {
@@ -657,7 +670,7 @@ export function createScriptStudioRouter(): Router {
           '-nostdin',
           '-loop', '1',
           '-i', imgPath,
-          '-vf', `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,zoompan=z=${zoomExpr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1920x1080:fps=${fps}`,
+          '-vf', `scale=${isPortrait ? 1080 : 1920}:${isPortrait ? 1920 : 1080}:force_original_aspect_ratio=decrease,pad=${isPortrait ? 1080 : 1920}:${isPortrait ? 1920 : 1080}:(ow-iw)/2:(oh-ih)/2,zoompan=z=${zoomExpr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${isPortrait ? '1080x1920' : '1920x1080'}:fps=${fps}`,
           '-c:v', 'libx264',
           '-preset', process.env.FFMPEG_PRESET || 'superfast',
           '-pix_fmt', 'yuv420p',
@@ -668,7 +681,7 @@ export function createScriptStudioRouter(): Router {
 
       // Apply to block
       if (block?.chartSpec) {
-        const composited = await compositeChartOnBg(block, videoPath, docId, 'landscape');
+        const composited = await compositeChartOnBg(block, videoPath, docId, orientation ?? getDocOrientation(docId));
         if (composited) {
           res.json({ ok: true, filename: composited, duration: durationSec });
           return;
@@ -727,12 +740,15 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
 
-    const { leftClip, rightClip, middleText, middleStyle, accentColor, leftLabel, rightLabel, labelPosition, labelStyle } = req.body as {
+    const { leftClip, rightClip, middleText, middleStyle, accentColor, leftLabel, rightLabel, labelPosition, rightLabelPosition, labelStyle, labelFontSize, orientation } = req.body as {
       leftClip: string; rightClip: string;
       middleText?: string; middleStyle?: string;
       accentColor?: string; leftLabel?: string; rightLabel?: string;
       labelPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
+      rightLabelPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
       labelStyle?: 'badge' | 'outline' | 'shadow' | 'banner';
+      labelFontSize?: number;
+      orientation?: 'landscape' | 'portrait';
     };
     if (!leftClip || !rightClip) { res.status(400).json({ error: 'leftClip and rightClip are required' }); return; }
     try {
@@ -756,41 +772,60 @@ export function createScriptStudioRouter(): Router {
       const block = getBlock(docId, blockIndex);
       const durationSec = block?.audioDurationMs ? Math.ceil(block.audioDurationMs / 1000) : 5;
 
-      const outW = 1920;
-      const outH = 1080;
+      const isPortrait = orientation === 'portrait';
+      const outW = isPortrait ? 1080 : 1920;
+      const outH = isPortrait ? 1920 : 1080;
       const mStyle = middleStyle || 'vs';
       const accentHex = (accentColor || '#7c6af5').replace('#', '');
       const accent = `0x${accentHex}`;
 
-      // Gap width and divider color per style
+      // Scale factor: preview uses ~300px-wide container, output is 1080+ px
+      const scale = Math.min(outW, outH) / 1080;
+
+      // Gap width and divider color per style (scaled to output resolution)
       let gap: number;
       let dividerColor: string;
       switch (mStyle) {
-        case 'fire':   gap = 14; dividerColor = '0xFF4500'; break;
-        case 'neon':   gap = 10; dividerColor = accent; break;
-        case 'slash':  gap = 28; dividerColor = '0x000000'; break;
-        case 'clean':  gap = 3;  dividerColor = '0xCCCCCC'; break;
-        case 'none':   gap = 2;  dividerColor = accent; break;
-        case 'line':   gap = 3;  dividerColor = accent; break;
-        case 'glow':   gap = 20; dividerColor = accent; break;
-        case 'badge':  gap = 6;  dividerColor = accent; break;
-        default:       gap = 6;  dividerColor = accent; break; // vs
+        case 'fire':   gap = Math.round(40 * scale); dividerColor = '0xFF4500'; break;
+        case 'neon':   gap = Math.round(34 * scale); dividerColor = accent; break;
+        case 'slash':  gap = Math.round(44 * scale); dividerColor = '0x000000'; break;
+        case 'clean':  gap = Math.round(6 * scale);  dividerColor = '0xCCCCCC'; break;
+        case 'none':   gap = Math.round(4 * scale);  dividerColor = accent; break;
+        case 'line':   gap = Math.round(6 * scale);  dividerColor = accent; break;
+        case 'glow':   gap = Math.round(40 * scale); dividerColor = accent; break;
+        case 'badge':  gap = Math.round(20 * scale); dividerColor = accent; break;
+        default:       gap = Math.round(20 * scale); dividerColor = accent; break; // vs
       }
-      const panelW = Math.floor((outW - gap) / 2);
+      // Portrait: top/bottom split; Landscape: left/right split
+      const panelW = isPortrait ? outW : Math.floor((outW - gap) / 2);
+      const panelH = isPortrait ? Math.floor((outH - gap) / 2) : outH;
 
       const filterParts: string[] = [];
-      filterParts.push(`[0:v]scale=${panelW}:${outH}:force_original_aspect_ratio=increase,crop=${panelW}:${outH},setsar=1[left]`);
-      filterParts.push(`[1:v]scale=${panelW}:${outH}:force_original_aspect_ratio=increase,crop=${panelW}:${outH},setsar=1[right]`);
+      filterParts.push(`[0:v]scale=${panelW}:${panelH}:force_original_aspect_ratio=increase,crop=${panelW}:${panelH},setsar=1[left]`);
+      filterParts.push(`[1:v]scale=${panelW}:${panelH}:force_original_aspect_ratio=increase,crop=${panelW}:${panelH},setsar=1[right]`);
       filterParts.push(`color=c=${dividerColor}:s=${outW}x${outH}:d=${durationSec},format=yuv420p[bg]`);
-      filterParts.push(`[bg][left]overlay=0:0:shortest=1[tmp1]`);
-      filterParts.push(`[tmp1][right]overlay=${panelW + gap}:0:shortest=1[tmp2]`);
+      if (isPortrait) {
+        // Top/bottom layout
+        filterParts.push(`[bg][left]overlay=0:0:shortest=1[tmp1]`);
+        filterParts.push(`[tmp1][right]overlay=0:${panelH + gap}:shortest=1[tmp2]`);
+      } else {
+        // Left/right layout
+        filterParts.push(`[bg][left]overlay=0:0:shortest=1[tmp1]`);
+        filterParts.push(`[tmp1][right]overlay=${panelW + gap}:0:shortest=1[tmp2]`);
+      }
       if (mStyle === 'glow') {
-        // Smooth glow: generate RGBA glow strip, blur it, overlay onto composed video
-        const cx = panelW + Math.floor(gap / 2);
-        const glowW = 160;
-        // Create glow source: transparent RGBA canvas with accent strip at center, gaussian-blurred
-        filterParts.push(`color=c=black@0:s=${glowW}x${outH}:d=${durationSec},format=rgba,drawbox=x=${glowW / 2 - 3}:y=0:w=6:h=ih:color=${accent}@0.9:t=fill,gblur=sigma=14[glow]`);
-        filterParts.push(`[tmp2][glow]overlay=x=${cx - glowW / 2}:y=0:shortest=1[base]`);
+        const glowSize = Math.round(160 * scale);
+        const lineThick = Math.round(6 * scale);
+        const sigma = Math.round(14 * scale);
+        if (isPortrait) {
+          const cy = panelH + Math.floor(gap / 2);
+          filterParts.push(`color=c=black@0:s=${outW}x${glowSize}:d=${durationSec},format=rgba,drawbox=x=0:y=${Math.floor(glowSize / 2 - lineThick / 2)}:w=iw:h=${lineThick}:color=${accent}@0.9:t=fill,gblur=sigma=${sigma}[glow]`);
+          filterParts.push(`[tmp2][glow]overlay=x=0:y=${cy - Math.floor(glowSize / 2)}:shortest=1[base]`);
+        } else {
+          const cx = panelW + Math.floor(gap / 2);
+          filterParts.push(`color=c=black@0:s=${glowSize}x${outH}:d=${durationSec},format=rgba,drawbox=x=${Math.floor(glowSize / 2 - lineThick / 2)}:y=0:w=${lineThick}:h=ih:color=${accent}@0.9:t=fill,gblur=sigma=${sigma}[glow]`);
+          filterParts.push(`[tmp2][glow]overlay=x=${cx - Math.floor(glowSize / 2)}:y=0:shortest=1[base]`);
+        }
       } else {
         filterParts.push(`[tmp2]null[base]`);
       }
@@ -798,84 +833,100 @@ export function createScriptStudioRouter(): Router {
       // Draw text overlays
       const drawTextParts: string[] = [];
 
-      // Label position coordinates
+      // Font: use Arial Bold (available on Windows), scale font size to output resolution
+      const fontFile = 'C\\\\:/Windows/Fonts/arialbd.ttf';
+      const lFontSize = Math.round(Math.max(20, Math.min(120, (labelFontSize ?? 28))) * scale);
+      const lStyle = labelStyle || 'badge';
+
+      // Label position coordinates — each panel can have its own position
       const lPos = labelPosition || 'top-center';
-      const labelY = lPos.startsWith('top') ? '30' : 'h-50';
-      const hAlign = lPos.split('-')[1]; // left, center, right
-      const leftLabelX = hAlign === 'center' ? `(${panelW}-tw)/2` : hAlign === 'right' ? `${panelW}-tw-20` : '20';
-      const rightLabelX = hAlign === 'center' ? `${panelW + gap}+(${panelW}-tw)/2` : hAlign === 'right' ? 'w-tw-20' : `${panelW + gap}+20`;
+      const rPos = (isPortrait ? rightLabelPosition : undefined) || lPos;
+      const lHAlign = lPos.split('-')[1]; // left, center, right
+      const rHAlign = rPos.split('-')[1];
+      const pad = Math.round(30 * scale);
+      let leftLabelX: string, leftLabelY: string, rightLabelX: string, rightLabelY: string;
+      if (isPortrait) {
+        // Portrait: labels inside top panel and bottom panel
+        leftLabelY = lPos.startsWith('top') ? `${pad}` : `${panelH - lFontSize - pad}`;
+        rightLabelY = rPos.startsWith('top') ? `${panelH + gap + pad}` : `${outH - lFontSize - pad}`;
+        leftLabelX = lHAlign === 'center' ? '(w-tw)/2' : lHAlign === 'right' ? `w-tw-${pad}` : `${pad}`;
+        rightLabelX = rHAlign === 'center' ? '(w-tw)/2' : rHAlign === 'right' ? `w-tw-${pad}` : `${pad}`;
+      } else {
+        // Landscape: labels inside left panel and right panel (shared position)
+        leftLabelY = lPos.startsWith('top') ? `${pad}` : `h-th-${pad}`;
+        rightLabelY = leftLabelY;
+        leftLabelX = lHAlign === 'center' ? `(${panelW}-tw)/2` : lHAlign === 'right' ? `${panelW}-tw-${pad}` : `${pad}`;
+        rightLabelX = lHAlign === 'center' ? `${panelW + gap}+(${panelW}-tw)/2` : lHAlign === 'right' ? `w-tw-${pad}` : `${panelW + gap}+${pad}`;
+      }
 
       // Banner: draw semi-transparent bar behind labels
-      const lStyle = labelStyle || 'badge';
+      const bannerH = Math.round(60 * scale);
       if (lStyle === 'banner' && (leftLabel || rightLabel)) {
-        const barY = lPos.startsWith('top') ? '0' : `h-60`;
-        drawTextParts.push(`drawbox=x=0:y=${barY}:w=iw:h=60:color=black@0.6:t=fill`);
+        const barY = lPos.startsWith('top') ? '0' : `h-${bannerH}`;
+        drawTextParts.push(`drawbox=x=0:y=${barY}:w=iw:h=${bannerH}:color=black@0.6:t=fill`);
       }
-      const labelDrawOpts = (text: string, x: string) => {
-        const escaped = text.replace(/'/g, "\\'");
-        const base = `drawtext=text='${escaped}':fontsize=28:fontcolor=white:x=${x}:y=${labelY}`;
+      const labelDrawOpts = (text: string, x: string, y: string) => {
+        const escaped = text.replace(/'/g, "\\'").replace(/:/g, '\\:');
+        const base = `drawtext=text='${escaped}':fontfile='${fontFile}':fontsize=${lFontSize}:fontcolor=white:x=${x}:y=${y}`;
+        const bw = Math.round(8 * scale);
         switch (lStyle) {
           case 'badge':
-            return `${base}:box=1:boxcolor=black@0.7:boxborderw=8:borderw=0`;
+            return `${base}:box=1:boxcolor=black@0.7:boxborderw=${bw}:borderw=0`;
           case 'outline':
-            return `${base}:borderw=3:bordercolor=black@0.9`;
+            return `${base}:borderw=${Math.round(3 * scale)}:bordercolor=black@0.9`;
           case 'shadow':
-            return `${base}:borderw=0:shadowcolor=black@0.8:shadowx=2:shadowy=2`;
+            return `${base}:borderw=0:shadowcolor=black@0.8:shadowx=${Math.round(3 * scale)}:shadowy=${Math.round(3 * scale)}`;
           case 'banner':
-            return `${base}:borderw=1:bordercolor=black@0.4`;
+            return `${base}:borderw=${Math.round(1 * scale)}:bordercolor=black@0.4`;
           default:
-            return `${base}:borderw=2:bordercolor=black@0.6`;
+            return `${base}:borderw=${Math.round(2 * scale)}:bordercolor=black@0.6`;
         }
       };
 
-      // Left label
+      // Left/Top label
       if (leftLabel) {
-        drawTextParts.push(labelDrawOpts(leftLabel, leftLabelX));
+        drawTextParts.push(labelDrawOpts(leftLabel, leftLabelX, leftLabelY));
       }
-      // Right label
+      // Right/Bottom label
       if (rightLabel) {
-        drawTextParts.push(labelDrawOpts(rightLabel, rightLabelX));
+        drawTextParts.push(labelDrawOpts(rightLabel, rightLabelX, rightLabelY));
       }
       // Middle text — some styles show text, others don't
       const showsMiddleText = !['line', 'none'].includes(mStyle);
-      const mText = middleText || (showsMiddleText ? 'VS' : '');
+      const mText = middleText !== undefined && middleText !== null ? middleText : (showsMiddleText ? 'VS' : '');
       if (mText) {
-        const escaped = mText.replace(/'/g, "\\'");
-        const mFontSize = mText.length <= 3 ? 48 : mText.length <= 8 ? 36 : 28;
+        const escaped = mText.replace(/'/g, "\\'").replace(/:/g, '\\:');
+        const baseMSize = mText.length <= 3 ? 48 : mText.length <= 8 ? 36 : 28;
+        const mFontSize = Math.round(baseMSize * scale);
         const cx = '(w-tw)/2';
         const cy = '(h-th)/2';
-        const dt = (opts: string) => `drawtext=text='${escaped}':fontsize=${opts}:x=${cx}:y=${cy}`;
+        const mBw = Math.round(3 * scale);
+        const mBoxPad = Math.round(14 * scale);
+        const dt = (opts: string) => `drawtext=text='${escaped}':fontfile='${fontFile}':fontsize=${opts}:x=${cx}:y=${cy}`;
 
         switch (mStyle) {
           case 'vs':
-            // White text on accent box with accent border
-            drawTextParts.push(dt(`${mFontSize}:fontcolor=white:borderw=3:bordercolor=${accent}:box=1:boxcolor=${accent}@0.85:boxborderw=12`));
+            drawTextParts.push(dt(`${mFontSize}:fontcolor=white:borderw=${mBw}:bordercolor=${accent}:box=1:boxcolor=${accent}@0.85:boxborderw=${mBoxPad}`));
             break;
           case 'badge':
-            // White text on solid accent rounded box
-            drawTextParts.push(dt(`${mFontSize}:fontcolor=white:borderw=0:box=1:boxcolor=${accent}:boxborderw=14`));
+            drawTextParts.push(dt(`${mFontSize}:fontcolor=white:borderw=0:box=1:boxcolor=${accent}:boxborderw=${mBoxPad}`));
             break;
           case 'glow':
-            // Simulated glow: large accent-colored blurred border behind, then crisp white text on top
-            drawTextParts.push(dt(`${mFontSize + 12}:fontcolor=${accent}@0.4:borderw=12:bordercolor=${accent}@0.3:box=1:boxcolor=0x000000@0.0:boxborderw=0`));
-            drawTextParts.push(dt(`${mFontSize + 8}:fontcolor=${accent}@0.7:borderw=6:bordercolor=${accent}@0.5:box=1:boxcolor=0x000000@0.0:boxborderw=0`));
-            drawTextParts.push(dt(`${mFontSize + 4}:fontcolor=white:borderw=3:bordercolor=${accent}:box=1:boxcolor=0x000000@0.6:boxborderw=14`));
+            drawTextParts.push(dt(`${mFontSize + Math.round(12 * scale)}:fontcolor=${accent}@0.4:borderw=${Math.round(12 * scale)}:bordercolor=${accent}@0.3`));
+            drawTextParts.push(dt(`${mFontSize + Math.round(8 * scale)}:fontcolor=${accent}@0.7:borderw=${Math.round(6 * scale)}:bordercolor=${accent}@0.5`));
+            drawTextParts.push(dt(`${mFontSize + Math.round(4 * scale)}:fontcolor=white:borderw=${mBw}:bordercolor=${accent}:box=1:boxcolor=0x000000@0.6:boxborderw=${mBoxPad}`));
             break;
           case 'fire':
-            // Gold text on red/orange box
-            drawTextParts.push(dt(`${mFontSize + 4}:fontcolor=0xFFD700:borderw=3:bordercolor=0xFF0000:box=1:boxcolor=0xFF4500:boxborderw=14`));
+            drawTextParts.push(dt(`${mFontSize + Math.round(4 * scale)}:fontcolor=0xFFD700:borderw=${mBw}:bordercolor=0xFF0000:box=1:boxcolor=0xFF4500:boxborderw=${mBoxPad}`));
             break;
           case 'neon':
-            // Accent text with white border on dark box
-            drawTextParts.push(dt(`${mFontSize}:fontcolor=${accent}:borderw=3:bordercolor=white:box=1:boxcolor=0x000000@0.6:boxborderw=10`));
+            drawTextParts.push(dt(`${mFontSize}:fontcolor=${accent}:borderw=${mBw}:bordercolor=white:box=1:boxcolor=0x000000@0.6:boxborderw=${Math.round(10 * scale)}`));
             break;
           case 'slash':
-            // White text on accent box, over black diagonal gap
-            drawTextParts.push(dt(`${mFontSize - 4}:fontcolor=white:borderw=2:bordercolor=0x000000:box=1:boxcolor=${accent}:boxborderw=10`));
+            drawTextParts.push(dt(`${mFontSize - Math.round(4 * scale)}:fontcolor=white:borderw=${Math.round(2 * scale)}:bordercolor=0x000000:box=1:boxcolor=${accent}:boxborderw=${Math.round(10 * scale)}`));
             break;
           case 'clean':
-            // Small white text on subtle dark box
-            drawTextParts.push(dt(`${Math.max(22, mFontSize - 8)}:fontcolor=white:borderw=1:bordercolor=0x444444:box=1:boxcolor=0x222222:boxborderw=6`));
+            drawTextParts.push(dt(`${Math.max(Math.round(22 * scale), mFontSize - Math.round(8 * scale))}:fontcolor=white:borderw=${Math.round(1 * scale)}:bordercolor=0x444444:box=1:boxcolor=0x222222:boxborderw=${Math.round(6 * scale)}`));
             break;
         }
       }
@@ -890,7 +941,7 @@ export function createScriptStudioRouter(): Router {
       const splitPath = path.join(docDir, splitFilename);
 
       const filterStr = filterParts.join(';');
-      console.log('[split-screen] style=%s labelStyle=%s filter=%s', mStyle, lStyle, filterStr);
+      console.log('[split-screen] orientation=%s size=%dx%d style=%s labelStyle=%s filter=%s', orientation, outW, outH, mStyle, lStyle, filterStr);
       await execFileAsync(ffmpeg, [
         '-nostdin',
         '-stream_loop', '-1', '-i', leftPath,
@@ -921,6 +972,8 @@ export function createScriptStudioRouter(): Router {
     if (isNaN(blockIndex) || !req.file) { res.status(400).json({ error: 'Invalid blockIndex or no file' }); return; }
 
     const zoomEffect = (req.body?.zoomEffect as string) || 'zoom-in';
+    const orientation = (req.body?.orientation as string) || getDocOrientation(docId);
+    const isPortrait = orientation === 'portrait';
 
     try {
       const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
@@ -958,7 +1011,7 @@ export function createScriptStudioRouter(): Router {
         '-nostdin',
         '-loop', '1',
         '-i', imgPath,
-        '-vf', `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,zoompan=z=${zoomExpr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=1920x1080:fps=${fps}`,
+        '-vf', `scale=${isPortrait ? 1080 : 1920}:${isPortrait ? 1920 : 1080}:force_original_aspect_ratio=decrease,pad=${isPortrait ? 1080 : 1920}:${isPortrait ? 1920 : 1080}:(ow-iw)/2:(oh-ih)/2,zoompan=z=${zoomExpr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${isPortrait ? '1080x1920' : '1920x1080'}:fps=${fps}`,
         '-c:v', 'libx264',
         '-preset', process.env.FFMPEG_PRESET || 'superfast',
         '-pix_fmt', 'yuv420p',
@@ -967,7 +1020,7 @@ export function createScriptStudioRouter(): Router {
       ], { timeout: 60000 });
 
       if (block?.chartSpec) {
-        const composited = await compositeChartOnBg(block, videoPath, docId, 'landscape');
+        const composited = await compositeChartOnBg(block, videoPath, docId, orientation);
         if (composited) {
           res.json({ ok: true, filename: composited, duration: durationSec });
           return;
@@ -1004,7 +1057,7 @@ export function createScriptStudioRouter(): Router {
       const block = getBlock(docId, blockIndex);
       if (block?.chartSpec) {
         const bgPath = path.join(docDir, result.filename);
-        const composited = await compositeChartOnBg(block, bgPath, docId, 'landscape');
+        const composited = await compositeChartOnBg(block, bgPath, docId, getDocOrientation(docId));
         if (composited) {
           res.json({ ok: true, filename: composited, duration: result.duration });
           return;
@@ -1061,14 +1114,10 @@ export function createScriptStudioRouter(): Router {
     const audioDir = path.resolve(cacheDir, 'block_audio');
     fs.mkdirSync(audioDir, { recursive: true });
 
-    // Return cached audio unless force-regenerate is requested
-    if (!force && block.audioPath && (block.audioDurationMs ?? 0) > 0 && fs.existsSync(path.join(audioDir, block.audioPath))) {
-      res.json({ cached: true, audioDurationMs: block.audioDurationMs });
-      return;
-    }
-
     try {
       const s = getSettings();
+      const userVoice = (req.body as any)?.voice || undefined;
+      const userRate = (req.body as any)?.rate || undefined;
       const voice = (req.body as any)?.voice ?? s.get('default_voice') ?? 'en-US-GuyNeural';
       const rate = (req.body as any)?.rate ?? s.get('default_tts_rate') ?? '0';
       const engineOverride = (req.body as any)?.engine as string | undefined; // 'omnivoice' | 'edge-tts'
@@ -1077,7 +1126,7 @@ export function createScriptStudioRouter(): Router {
       const doc = getDoc(docId);
       const voiceGroups: VoiceGroup[] = doc?.parsed?.voiceGroups ?? [];
       const docVoiceConfig: string | null = doc?.parsed?.voiceConfig ?? null;
-      const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate });
+      const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate });
 
       // Allow caller to override the engine
       const targetEngine = (engineOverride === 'omnivoice' || engineOverride === 'edge-tts') ? engineOverride : resolved.engine;
@@ -1086,6 +1135,12 @@ export function createScriptStudioRouter(): Router {
       const ttsText = norm.normalized;
       const cacheComponents = [ttsText, targetEngine, resolved.voiceId, resolved.emotion ?? '', resolved.rate ?? ''].join('|');
       const contentHash = createHash('sha256').update(cacheComponents).digest('hex').slice(0, 16);
+
+      // Return cached audio if hash matches (voice/rate/engine unchanged)
+      if (!force && block.contentHash === contentHash && block.audioPath && (block.audioDurationMs ?? 0) > 0 && fs.existsSync(path.join(audioDir, block.audioPath))) {
+        res.json({ cached: true, audioDurationMs: block.audioDurationMs, engine: block.audioEngine });
+        return;
+      }
 
       const audioFilename = `block_${docId.slice(0, 8)}_${blockIndex}_${targetEngine}_${contentHash}.mp3`;
       const audioPath = path.join(audioDir, audioFilename);
@@ -1150,6 +1205,8 @@ export function createScriptStudioRouter(): Router {
     ndLine(res, { type: 'start', total: narrationBlocks.length });
 
     const s = getSettings();
+    const userVoice = (req.body as any)?.voice || undefined;
+    const userRate = (req.body as any)?.rate || undefined;
     const voice = (req.body as any)?.voice ?? s.get('default_voice') ?? 'en-US-GuyNeural';
     const rate = (req.body as any)?.rate ?? s.get('default_tts_rate') ?? '0';
     const voiceGroups: VoiceGroup[] = doc.parsed?.voiceGroups ?? [];
@@ -1162,7 +1219,7 @@ export function createScriptStudioRouter(): Router {
     let errors = 0;
     for (const block of narrationBlocks) {
       try {
-        const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate });
+        const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate });
         const targetEngine = (engine === 'omnivoice' || engine === 'edge-tts') ? engine : resolved.engine;
 
         const norm = normalizeTtsText(block.narration);
@@ -1373,7 +1430,7 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string, 10);
     const doc = getDoc(docId);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
-    const orientation = (req.body?.orientation as 'landscape' | 'portrait') || 'landscape';
+    const orientation = (req.body?.orientation as 'landscape' | 'portrait') || getDocOrientation(docId);
     const chartOpacity = Math.min(1, Math.max(0, parseFloat(req.body?.chartOpacity) || 0.5));
     const animationDurationSec = req.body?.animationDurationSec != null
       ? Math.max(0.5, parseFloat(req.body.animationDurationSec))
@@ -1418,7 +1475,7 @@ export function createScriptStudioRouter(): Router {
 
     if (!compositionId) { res.status(400).json({ error: 'compositionId is required' }); return; }
 
-    const allowed = ['Intro', 'Outro', 'ChartBigNumber', 'ChartLine', 'ChartBars', 'ChartVs'];
+    const allowed = ['Intro', 'Outro', 'ChartBigNumber', 'ChartLine', 'ChartBars', 'ChartVs', 'SplitScreen'];
     if (!allowed.includes(compositionId)) {
       res.status(400).json({ error: `Unsupported composition: ${compositionId}. Allowed: ${allowed.join(', ')}` });
       return;
@@ -1440,7 +1497,52 @@ export function createScriptStudioRouter(): Router {
     try {
       const { renderChart } = await import('../services/chart-renderer.service');
 
-      if (compositionId.startsWith('Chart')) {
+      if (compositionId === 'SplitScreen') {
+        // SplitScreen — render via chart-renderer pipeline (same Remotion bundle)
+        const { renderMedia: remotionRender, getCompositions } = await import('@remotion/renderer');
+        const { bundle } = await import('@remotion/bundler');
+        const rootPath = path.resolve(__dirname, '../remotion/Root.tsx');
+        const rootFallback = path.resolve(__dirname, '../../src/remotion/Root.tsx');
+        const entryPoint = fs.existsSync(rootPath) ? rootPath : rootFallback;
+
+        const serveUrl = await bundle({ entryPoint });
+        // Resolve relative filenames to http:// URLs via Express static serving
+        const port = process.env.PORT || 3002;
+        const resolvedProps = { ...userProps };
+        for (const key of ['leftSrc', 'rightSrc'] as const) {
+          const val = resolvedProps[key];
+          if (typeof val === 'string' && val && !val.startsWith('http')) {
+            resolvedProps[key] = `http://localhost:${port}/renders/storyboard/doc_${docId}/${val}`;
+          }
+        }
+        const splitProps = {
+          durationInFrames,
+          ...resolvedProps,
+        };
+        const inputProps = splitProps as unknown as Record<string, unknown>;
+        const s = getSettings();
+        const browserExecutable = s.get('chrome_executable_path') || undefined;
+        const chromiumOptions = { disableWebSecurity: true, gl: 'angle' as const };
+        const compositions = await getCompositions(serveUrl, { inputProps, browserExecutable, chromiumOptions });
+        const composition = compositions.find((c) => c.id === 'SplitScreen');
+        if (!composition) throw new Error('SplitScreen composition not found in bundle');
+
+        await remotionRender({
+          composition: { ...composition, durationInFrames, width: w, height: h },
+          serveUrl,
+          codec: 'h264',
+          outputLocation: outputPath,
+          inputProps,
+          browserExecutable,
+          chromiumOptions,
+          muted: true,
+        });
+
+        // Mark block as split visual type
+        updateBlockVisual(docId, blockIndex, { visualType: 'split', clipAssetPath: filename });
+
+        res.json({ ok: true, filename, durationSec });
+      } else if (compositionId.startsWith('Chart')) {
         // Chart compositions — use chart-renderer
         const chartType = compositionId === 'ChartBigNumber' ? 'big-number'
           : compositionId === 'ChartLine' ? 'line'
@@ -1587,21 +1689,38 @@ export function createScriptStudioRouter(): Router {
     const exportFilename = `${base}_${preset}${orientSuffix}${ext}`;
     const exportPath = path.join(outDir, exportFilename);
 
+    // Switch to NDJSON streaming for progress
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-cache');
+    const send = (obj: Record<string, unknown>) => { try { res.write(JSON.stringify(obj) + '\n'); } catch {} };
+
     // If already exported, return immediately
     if (fs.existsSync(exportPath)) {
       const stat = fs.statSync(exportPath);
-      res.json({ ok: true, filename: exportFilename, url: `/api/storyboard/video/${exportFilename}`, sizeKB: Math.round(stat.size / 1024) });
+      send({ ok: true, filename: exportFilename, url: `/api/storyboard/video/${exportFilename}`, sizeKB: Math.round(stat.size / 1024) });
+      res.end();
       return;
     }
 
     try {
+      const { spawn } = await import('child_process');
+      const { resolveFfmpegPathSync } = await import('../services/import.service');
+      const ffmpeg = resolveFfmpegPathSync('ffmpeg');
+      const ffprobe = resolveFfmpegPathSync('ffprobe');
+
+      // Get source duration for progress calculation
       const { promisify } = await import('util');
       const { execFile } = await import('child_process');
       const execFileAsync = promisify(execFile);
-      const { resolveFfmpegPathSync } = await import('../services/import.service');
-      const ffmpeg = resolveFfmpegPathSync('ffmpeg');
+      let totalDurationUs = 0;
+      try {
+        const probeResult = await execFileAsync(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', srcPath]);
+        totalDurationUs = Math.round(parseFloat(probeResult.stdout.trim()) * 1_000_000);
+      } catch { /* duration unknown, progress will show without percentage */ }
 
-      await execFileAsync(ffmpeg, [
+      send({ progress: true, step: 'export', detail: `Starting ${target.label} export...`, percent: 0 });
+
+      const proc = spawn(ffmpeg, [
         '-i', srcPath,
         '-vf', `scale=${target.w}:${target.h}:flags=lanczos`,
         '-c:v', 'libx264',
@@ -1609,15 +1728,53 @@ export function createScriptStudioRouter(): Router {
         '-crf', '18',
         '-c:a', 'copy',
         '-movflags', '+faststart',
+        '-progress', 'pipe:1',
         '-y', exportPath,
-      ], { timeout: 600000 });
+      ]);
+
+      // Kill ffmpeg if client disconnects (abort)
+      let cancelled = false;
+      req.on('close', () => {
+        if (!proc.killed) {
+          cancelled = true;
+          proc.kill('SIGKILL');
+        }
+      });
+
+      let lastPercent = 0;
+      let stderrBuf = '';
+      proc.stdout.on('data', (chunk: Buffer) => {
+        const text = chunk.toString();
+        const timeMatch = text.match(/out_time_us=(\d+)/);
+        if (timeMatch && totalDurationUs > 0) {
+          const currentUs = parseInt(timeMatch[1], 10);
+          const percent = Math.min(99, Math.round((currentUs / totalDurationUs) * 100));
+          if (percent > lastPercent) {
+            lastPercent = percent;
+            send({ progress: true, step: 'export', detail: `Encoding ${target.label}... ${percent}%`, percent });
+          }
+        }
+      });
+      proc.stderr.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
+
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => { proc.kill('SIGKILL'); reject(new Error('Export timed out (600s)')); }, 600000);
+        proc.on('close', (code) => {
+          clearTimeout(timeout);
+          if (cancelled) reject(new Error('Export cancelled'));
+          else if (code === 0) resolve();
+          else reject(new Error(`FFmpeg exited with code ${code}: ${stderrBuf.slice(-500)}`));
+        });
+        proc.on('error', (err) => { clearTimeout(timeout); reject(err); });
+      });
 
       const stat = fs.statSync(exportPath);
-      res.json({ ok: true, filename: exportFilename, url: `/api/storyboard/video/${exportFilename}`, sizeKB: Math.round(stat.size / 1024) });
+      send({ ok: true, filename: exportFilename, url: `/api/storyboard/video/${exportFilename}`, sizeKB: Math.round(stat.size / 1024) });
     } catch (err) {
       if (fs.existsSync(exportPath)) fs.unlinkSync(exportPath);
-      res.status(500).json({ error: (err as Error).message });
+      send({ error: (err as Error).message });
     }
+    res.end();
   });
 
   // ── Watermark logo upload / status ──

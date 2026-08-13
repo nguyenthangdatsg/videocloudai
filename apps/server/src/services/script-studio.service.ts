@@ -23,6 +23,7 @@ export interface ChartSpec {
   sourceLabel?: string;
   data: string;
   parsedData?: ChartParsedData;
+  chartAnimSec?: number;
 }
 
 export interface ScriptBlock {
@@ -520,8 +521,10 @@ function resolveStatTags(data: string): string {
 
 function parseChartTag(rawTagValue: string): ChartSpec {
   // Format: type | data | "title" | source label
+  // Resolve nested [STAT: desc | fallback | type] before splitting on pipes
+  const resolved = resolveStatTags(rawTagValue);
   // Pipe-split — minimum 2 parts required
-  const parts = rawTagValue.split(/\s*\|\s*/);
+  const parts = resolved.split(/\s*\|\s*/);
   if (parts.length < 2) throw new Error('CHART tag requires at least: type | data');
 
   const chartType = parts[0].trim().toLowerCase();
@@ -540,9 +543,9 @@ function parseChartTag(rawTagValue: string): ChartSpec {
     const m = data.trim().match(/^([^\d\-]*)?([\d,\.]+)(.*)$/);
     if (m) {
       spec.parsedData = {
-        prefix: m[1].trim() || undefined,
+        prefix: (m[1] ?? '').trim() || undefined,
         value: parseFloat(m[2].replace(/,/g, '')),
-        suffix: m[3].trim() || undefined,
+        suffix: (m[3] ?? '').trim() || undefined,
       };
     }
   } else if (chartType === 'line') {
@@ -576,6 +579,22 @@ function parseChartTag(rawTagValue: string): ChartSpec {
         rightLabel: rightPart.slice(0, ri).trim(),
         rightValue: rightPart.slice(ri + 1).trim(),
       };
+    } else if (items.length === 1 && parts[2] && parts[2].includes(':')) {
+      // LLM wrote each side as a separate pipe section:
+      // [CHART: vs | Canada: free healthcare | USA: paid healthcare | title | source]
+      const leftPart = data;
+      const rightPart = parts[2].trim();
+      const li = leftPart.indexOf(':');
+      const ri = rightPart.indexOf(':');
+      spec.parsedData = {
+        leftLabel: leftPart.slice(0, li).trim(),
+        leftValue: leftPart.slice(li + 1).trim(),
+        rightLabel: rightPart.slice(0, ri).trim(),
+        rightValue: rightPart.slice(ri + 1).trim(),
+      };
+      // Shift title & sourceLabel since parts[2] was consumed as right side
+      spec.title = (parts[3]?.trim() ?? '').replace(/^["']|["']$/g, '') || undefined;
+      spec.sourceLabel = parts[4]?.trim() || undefined;
     }
   }
 
@@ -1044,7 +1063,7 @@ export function resolveBlockVoice(
   blockVoiceConfig: string | null | undefined,
   docVoiceConfig: string | null | undefined,
   voiceGroups: VoiceGroup[],
-  appDefaults: { voice: string; rate: string },
+  appDefaults: { voice: string; rate: string; userVoice?: string; userRate?: string },
 ): ResolvedVoiceConfig {
   const blockParsed = parseVoiceConfig(blockVoiceConfig);
   const docParsed = parseVoiceConfig(docVoiceConfig);
@@ -1053,12 +1072,12 @@ export function resolveBlockVoice(
   const groupId = blockParsed.group || docParsed.group;
   const group = groupId ? voiceGroups.find(g => g.id === groupId) : undefined;
 
-  // Resolution order: block > group > doc > app defaults
+  // Resolution order: block > group > user-selected (produce settings) > doc > system defaults
   const engine = (blockParsed.engine || group?.engine || docParsed.engine || 'edge-tts') as 'edge-tts' | 'omnivoice';
-  const voiceId = blockParsed.voice || group?.voiceId || docParsed.voice || appDefaults.voice;
+  const voiceId = blockParsed.voice || group?.voiceId || appDefaults.userVoice || docParsed.voice || appDefaults.voice;
   const fallbackVoice = group?.fallbackVoice || blockParsed['fallback-voice'] || blockParsed['fallback'];
   const emotion = blockParsed.emotion || group?.emotion || docParsed.emotion;
-  const rate = blockParsed.rate || group?.rate || docParsed.rate || appDefaults.rate;
+  const rate = blockParsed.rate || group?.rate || appDefaults.userRate || docParsed.rate || appDefaults.rate;
   const pitch = blockParsed.pitch || group?.pitch || docParsed.pitch;
 
   const pauseBefore = blockParsed['pause-before'] ? parseInt(blockParsed['pause-before']) : undefined;
@@ -1479,6 +1498,7 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
   aiPrompt?: string | null;
   clipStartSec?: number | null;
   clipEndSec?: number | null;
+  chartSpec?: ChartSpec;
 }): void {
   const oldBlock = getBlock(docId, blockIndex);
   if (oldBlock && oldBlock.renderedClipPath && fs.existsSync(oldBlock.renderedClipPath)) {
@@ -1497,7 +1517,7 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
   const updates: string[] = [];
   const vals: unknown[] = [];
 
-  if ('narration' in fields && fields.narration != null) { updates.push('narration = ?'); vals.push(fields.narration); }
+  if ('narration' in fields) { updates.push('narration = ?'); vals.push(fields.narration ?? ''); }
   if ('openingText' in fields) { updates.push('opening_text = ?'); vals.push(fields.openingText ?? null); }
   if ('overlays' in fields) { updates.push('overlays_json = ?'); vals.push(JSON.stringify(fields.overlays ?? [])); }
   if ('overlayStyle' in fields) { updates.push('overlay_style_json = ?'); vals.push(fields.overlayStyle ? JSON.stringify(fields.overlayStyle) : null); }
@@ -1534,6 +1554,11 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
         setTimeout(() => deleteClipFile(docId, oldClip), 0);
       }
     }
+  }
+
+  if ('chartSpec' in fields && fields.chartSpec) {
+    updates.push('chart_spec_json = ?');
+    vals.push(JSON.stringify(fields.chartSpec));
   }
 
   if (!updates.length) return;
@@ -1754,7 +1779,8 @@ export function splitBlockAtText(docId: string, blockIndex: number, leftText: st
      visual_type, motion, display_number, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)`,
     [randomUUID(), docId, newIdx, row.segment_index, row.segment_name, row.scene_number,
-     rightText.trim(), row.pexels_query, row.pace_hint, row.voice_config, row.visual_type, motion,
+     rightText.trim(), row.pexels_query, row.pace_hint, row.voice_config,
+     row.visual_type === 'chart' ? 'pexels' : row.visual_type, motion,
      displayNum, now, now],
   );
 
@@ -2188,7 +2214,8 @@ export function breakdownBlock(docId: string, blockIndex: number): { ok: boolean
        visual_type, motion, display_number, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)`,
       [randomUUID(), docId, newIdx, row.segment_index, row.segment_name, row.scene_number,
-       sentences[i], row.pexels_query, row.pace_hint, row.voice_config, row.visual_type, motion,
+       sentences[i], row.pexels_query, row.pace_hint, row.voice_config,
+       row.visual_type === 'chart' ? 'pexels' : row.visual_type, motion,
        displayNum, now, now],
     );
   }
@@ -2358,15 +2385,26 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
 
       // Chart wins if both [CHART:] and [FLOW:] present (conflict already warned during parse)
       const hasFlow = !!block.flowPrompt && !block.chartSpec;
-      const parsedVisualType = block.chartSpec ? 'chart' : hasFlow ? 'ai' : block.pexelsQuery ? 'pexels' : 'inherit';
-      const visualType = parsedVisualType === 'inherit'
-        ? (existing ? existing.visual_type : 'pexels')
-        : parsedVisualType;
-
       const aiPrompt = hasFlow ? block.flowPrompt! : null;
+      const chartSpecJson = block.chartSpec ? JSON.stringify(block.chartSpec) : null;
+      const parsedVisualType = block.chartSpec ? 'chart' : hasFlow ? 'ai' : block.pexelsQuery ? 'pexels' : 'inherit';
+      // Inherit visual_type from existing block, but fix inconsistencies:
+      // - 'chart' without chart_spec is invalid → reset to 'pexels'
+      // - 'ai' without ai_prompt is invalid → reset to 'pexels'
+      let visualType: string;
+      if (parsedVisualType !== 'inherit') {
+        visualType = parsedVisualType;
+      } else if (existing) {
+        const inheritedType = existing.visual_type;
+        if (inheritedType === 'chart' && !chartSpecJson) visualType = 'pexels';
+        else if (inheritedType === 'ai' && !aiPrompt) visualType = 'pexels';
+        else visualType = inheritedType;
+      } else {
+        visualType = 'pexels';
+      }
+
       const motion = MOTION_CYCLE[blockIndex % MOTION_CYCLE.length];
       const overlaysJson = JSON.stringify(block.overlays || []);
-      const chartSpecJson = block.chartSpec ? JSON.stringify(block.chartSpec) : null;
       const paceHint = block.paceHint ?? null;
       const openingText = block.openingText ?? null;
 
@@ -2378,22 +2416,28 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
         );
       } else {
         // Compare actual narration text, not just hash — content_hash can be NULL after previous sync
-        const narrationChanged = (existing.narration ?? '') !== (block.narration ?? '') && existing.audio_path !== null;
+        const narrationTextChanged = (existing.narration ?? '') !== (block.narration ?? '');
+        const hasAudio = !!existing.audio_path;
         // Only consider visual "changed" when the block has NO user-assigned clip.
         // If the user already picked a stock video or split screen, preserve it even if the
         // parsed pexels_query / ai_prompt changed — user intent wins over parser output.
         const hasUserClip = !!existing.clip_asset_path;
+        // Preserve user-set visual type when they have a clip, but fix inconsistencies
+        let targetVisualType = hasUserClip ? existing.visual_type : visualType;
+        if (targetVisualType === 'chart' && !chartSpecJson) targetVisualType = 'pexels';
+        if (targetVisualType === 'ai' && !aiPrompt) targetVisualType = 'pexels';
+
         const visualChanged = !hasUserClip && (
           (existing.pexels_query ?? null) !== (block.pexelsQuery ?? null)
           || (existing.chart_spec_json ?? null) !== (chartSpecJson ?? null)
           || (existing.ai_prompt ?? null) !== (aiPrompt ?? null)
           || existing.visual_type !== visualType
         );
+        // Also detect when visual_type needs fixing (e.g. 'chart' without chart spec)
+        const typeNeedsFix = existing.visual_type !== targetVisualType;
 
-        const targetVisualType = hasUserClip ? existing.visual_type : visualType;
-
-        if (narrationChanged) {
-          // Reset audio + render, keep clip asset path
+        if (narrationTextChanged && hasAudio) {
+          // Narration changed and audio exists — reset audio + render, keep clip asset path
           dbRun(
             `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, narration = ?, pexels_query = ?,
              chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?, opening_text = ?, content_hash = NULL,
@@ -2402,26 +2446,28 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
              WHERE doc_id = ? AND block_index = ?`,
             [si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, targetVisualType, openingText, now, docId, blockIndex],
           );
-        } else if (visualChanged) {
-          // Keep audio, reset clip + render — delete old clip files
+        } else if (narrationTextChanged || visualChanged) {
+          // Narration text changed (no audio to reset) or visual changed — update narration + visual, reset clip + render
           const oldFiles = collectBlockClipFiles(existing);
           dbRun(
-            `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, pexels_query = ?,
-             chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?, opening_text = ?,
+            `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, narration = ?, pexels_query = ?,
+             chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?, opening_text = ?, content_hash = NULL,
              clip_asset_path = NULL, ai_asset_path = NULL, rendered_clip_path = NULL,
              status = CASE WHEN status IN ('clip_ready','rendered') THEN 'audio_ready' ELSE status END,
              error_msg = NULL, updated_at = ?
              WHERE doc_id = ? AND block_index = ?`,
-            [si + 1, seg.name, sceneNum, block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, openingText, now, docId, blockIndex],
+            [si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, openingText, now, docId, blockIndex],
           );
           for (const f of oldFiles) deleteClipFile(docId, f);
         } else {
-          // Just update metadata (including pexels_query for future use, but keep clips intact)
+          // Just update metadata — keep clips intact, but always fix visual_type/chart_spec inconsistencies
           dbRun(
             `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, pexels_query = ?,
-             overlays_json = ?, pace_hint = ?, voice_config = ?, opening_text = ?, updated_at = ?
+             overlays_json = ?, pace_hint = ?, voice_config = ?, opening_text = ?,
+             visual_type = ?, chart_spec_json = ?, updated_at = ?
              WHERE doc_id = ? AND block_index = ?`,
-            [si + 1, seg.name, sceneNum, block.pexelsQuery ?? null, overlaysJson, paceHint, voiceConfig, openingText, now, docId, blockIndex],
+            [si + 1, seg.name, sceneNum, block.pexelsQuery ?? null, overlaysJson, paceHint, voiceConfig, openingText,
+             targetVisualType, chartSpecJson, now, docId, blockIndex],
           );
         }
       }

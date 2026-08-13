@@ -126,6 +126,7 @@ function buildRenderSpec(
       rightLabel: pd.rightLabel ?? 'Right',
       rightValue: pd.rightValue ?? '0',
       title: spec.title,
+      sourceLabel: spec.sourceLabel,
     } as ChartVsConfig,
     width,
     height,

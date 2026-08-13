@@ -30,14 +30,12 @@ export function ChartLine(props: ChartLineConfig) {
 
   const isPortrait = H > W;
   const scale = Math.min(W, H) / 1080;
-  // Safe margin = 6% of min(W,H) used by FFmpeg crop overlay + buffer
   const safeMargin = Math.round(Math.min(W, H) * 0.08);
   const padL = Math.max(Math.round((isPortrait ? 100 : 140) * scale), safeMargin);
   const padR = Math.max(Math.round((isPortrait ? 80 : 100) * scale), safeMargin);
   const padT = Math.max(Math.round((isPortrait ? 120 : 160) * scale), safeMargin);
   const padB = Math.max(Math.round((isPortrait ? 120 : 160) * scale), safeMargin);
   const chartW = W - padL - padR;
-  // In portrait, let chart use up to 1.2x width for height so it fills the tall frame without overflow
   const chartH = Math.min(H - padT - padB, isPortrait ? Math.round(W * 1.2) : H - padT - padB);
 
   const values = dataPoints.map((p) => p.value);
@@ -45,7 +43,6 @@ export function ChartLine(props: ChartLineConfig) {
   const maxV = Math.max(...values);
   const vRange = maxV - minV || 1;
 
-  // In portrait, center the chart area vertically
   const chartTop = isPortrait ? Math.round((H - chartH) / 2) : padT;
 
   const pts = dataPoints.map((p, i) => ({
@@ -55,8 +52,6 @@ export function ChartLine(props: ChartLineConfig) {
     value: p.value,
   }));
 
-  // Build SVG polyline for drawProgress
-  // We interpolate along the polyline
   const totalPts = pts.length;
   const visibleCount = drawProgress * (totalPts - 1);
 
@@ -76,14 +71,44 @@ export function ChartLine(props: ChartLineConfig) {
 
   const polylineStr = polyPts.map((p) => `${p.x},${p.y}`).join(' ');
 
+  const accentAlpha = (a: number) => {
+    const hex = accentColor.replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    return `rgba(${r},${g},${b},${a})`;
+  };
+
+  const titleFade = interpolate(frame, [0, Math.min(fps * 0.4, 10)], [0, 1], { extrapolateRight: 'clamp' });
+  const sourceFade = interpolate(frame, [Math.min(fps * 0.6, 15), Math.min(fps * 1.0, 24)], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+
+  const lineStroke = Math.round((isPortrait ? 5 : 4) * scale);
+  const dotR = Math.round((isPortrait ? 10 : 8) * scale);
+  const dotRInner = Math.round((isPortrait ? 5 : 4) * scale);
+  const fontSize = Math.round((isPortrait ? 24 : 20) * scale);
+  const labelFont = Math.round((isPortrait ? 22 : 20) * scale);
+  const gridFont = Math.round((isPortrait ? 22 : 20) * scale);
+
+  // Area fill polygon string
+  const areaStr = polyPts.length > 1
+    ? `${polylineStr} ${polyPts[polyPts.length - 1].x},${chartTop + chartH} ${polyPts[0].x},${chartTop + chartH}`
+    : '';
+
+  const gradId = 'areaGrad';
+
   return (
     <div style={{
       width: '100%',
       height: '100%',
-      background: bgColor,
+      background: `radial-gradient(ellipse at 50% 60%, ${accentAlpha(0.04)} 0%, ${bgColor} 70%)`,
       fontFamily: '"Inter", "Helvetica Neue", Arial, sans-serif',
       opacity: fadeIn,
+      overflow: 'hidden',
     }}>
+      {/* Title */}
       {title && (
         <div style={{
           position: 'absolute',
@@ -91,15 +116,33 @@ export function ChartLine(props: ChartLineConfig) {
           left: padL,
           right: padR,
           color: 'rgba(255,255,255,0.85)',
-          fontSize: Math.round((isPortrait ? 48 : 44) * scale),
+          fontSize: Math.round((isPortrait ? 44 : 40) * scale),
           fontWeight: 700,
           textAlign: 'center',
+          opacity: titleFade,
+          transform: `translateY(${(1 - titleFade) * -16}px)`,
         }}>
           {title}
         </div>
       )}
 
       <svg width={W} height={H} style={{ position: 'absolute', top: 0, left: 0 }}>
+        <defs>
+          {/* Vertical gradient for area fill */}
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={accentColor} stopOpacity={0.25} />
+            <stop offset="100%" stopColor={accentColor} stopOpacity={0.02} />
+          </linearGradient>
+          {/* Glow filter for the line */}
+          <filter id="lineGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation={Math.round(4 * scale)} result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
         {/* Grid lines */}
         {[0, 0.25, 0.5, 0.75, 1].map((frac) => {
           const y = chartTop + frac * chartH;
@@ -107,34 +150,46 @@ export function ChartLine(props: ChartLineConfig) {
           return (
             <g key={frac}>
               <line x1={padL} y1={y} x2={padL + chartW} y2={y}
-                stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
-              <text x={padL - Math.round(12 * scale)} y={y + 5} textAnchor="end"
-                fill="rgba(255,255,255,0.35)" fontSize={Math.round((isPortrait ? 26 : 22) * scale)}>
+                stroke="rgba(255,255,255,0.06)" strokeWidth={1} strokeDasharray={`${Math.round(4 * scale)} ${Math.round(4 * scale)}`} />
+              <text x={padL - Math.round(12 * scale)} y={y + gridFont * 0.35} textAnchor="end"
+                fill="rgba(255,255,255,0.3)" fontSize={gridFont} fontWeight={400}>
                 {val >= 1000 ? `${(val / 1000).toFixed(0)}k` : Math.round(val)}
               </text>
             </g>
           );
         })}
 
-        {/* Line */}
-        {polylineStr && (
-          <polyline
-            points={polylineStr}
-            fill="none"
-            stroke={accentColor}
-            strokeWidth={Math.round((isPortrait ? 6 : 5) * scale)}
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        {/* Area fill with gradient */}
+        {areaStr && (
+          <polygon
+            points={areaStr}
+            fill={`url(#${gradId})`}
           />
         )}
 
-        {/* Area fill */}
-        {polyPts.length > 1 && (
-          <polygon
-            points={`${polylineStr} ${polyPts[polyPts.length - 1].x},${chartTop + chartH} ${polyPts[0].x},${chartTop + chartH}`}
-            fill={accentColor}
-            opacity={0.12}
-          />
+        {/* Line with glow */}
+        {polylineStr && (
+          <>
+            {/* Glow shadow line */}
+            <polyline
+              points={polylineStr}
+              fill="none"
+              stroke={accentAlpha(0.4)}
+              strokeWidth={lineStroke + Math.round(4 * scale)}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              filter="url(#lineGlow)"
+            />
+            {/* Main line */}
+            <polyline
+              points={polylineStr}
+              fill="none"
+              stroke={accentColor}
+              strokeWidth={lineStroke}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </>
         )}
 
         {/* Data points */}
@@ -142,16 +197,25 @@ export function ChartLine(props: ChartLineConfig) {
           const visible = i <= visibleCount;
           if (!visible) return null;
           const dotOpacity = interpolate(visibleCount, [i - 0.3, i], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+          const dotScale = interpolate(visibleCount, [i - 0.3, i], [0.5, 1], {
+            easing: Easing.out(Easing.back(1.5)),
+            extrapolateLeft: 'clamp',
+            extrapolateRight: 'clamp',
+          });
           return (
-            <g key={i} opacity={dotOpacity}>
-              <circle cx={p.x} cy={p.y} r={Math.round((isPortrait ? 12 : 10) * scale)} fill={accentColor} />
-              <text x={p.x} y={p.y - Math.round((isPortrait ? 24 : 20) * scale)} textAnchor="middle"
-                fill="#fff" fontSize={Math.round((isPortrait ? 26 : 22) * scale)} fontWeight={700}>
+            <g key={i} opacity={dotOpacity} transform={`translate(${p.x}, ${p.y}) scale(${dotScale}) translate(${-p.x}, ${-p.y})`}>
+              {/* Outer ring */}
+              <circle cx={p.x} cy={p.y} r={dotR} fill={accentAlpha(0.15)} stroke={accentColor} strokeWidth={Math.round(2 * scale)} />
+              {/* Inner dot */}
+              <circle cx={p.x} cy={p.y} r={dotRInner} fill={accentColor} />
+              {/* Value above */}
+              <text x={p.x} y={p.y - Math.round((isPortrait ? 20 : 16) * scale)} textAnchor="middle"
+                fill="#fff" fontSize={fontSize} fontWeight={700}>
                 {p.value >= 1000 ? `${(p.value / 1000).toFixed(0)}k` : p.value}
               </text>
               {/* Label below x-axis */}
-              <text x={p.x} y={chartTop + chartH + Math.round((isPortrait ? 56 : 48) * scale)} textAnchor="middle"
-                fill="rgba(255,255,255,0.55)" fontSize={Math.round((isPortrait ? 28 : 24) * scale)}>
+              <text x={p.x} y={chartTop + chartH + Math.round((isPortrait ? 48 : 40) * scale)} textAnchor="middle"
+                fill="rgba(255,255,255,0.45)" fontSize={labelFont} fontWeight={500}>
                 {p.label}
               </text>
             </g>
@@ -159,15 +223,18 @@ export function ChartLine(props: ChartLineConfig) {
         })}
       </svg>
 
+      {/* Source */}
       {sourceLabel && (
         <div style={{
           position: 'absolute',
           top: chartTop + chartH + Math.round(80 * scale),
           left: padL,
           right: padR,
-          color: 'rgba(255,255,255,0.3)',
-          fontSize: Math.round(26 * scale),
+          color: 'rgba(255,255,255,0.25)',
+          fontSize: Math.round(22 * scale),
+          fontStyle: 'italic',
           textAlign: 'center',
+          opacity: sourceFade,
         }}>
           {sourceLabel}
         </div>

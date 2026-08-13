@@ -955,7 +955,7 @@ export async function reproduceSingleBlock(
   // ── Chart block ──
   if (block.chartSpec) {
     const chartDur = Math.max(audioDurSec, 4);
-    const animDur = animationDurationSec ?? audioDurSec / 2;
+    const animDur = animationDurationSec ?? block.chartSpec.chartAnimSec ?? audioDurSec / 2;
     log(`Rendering chart... (animation: ${animDur.toFixed(1)}s / ${chartDur.toFixed(1)}s total)`);
 
     // Render dark-bg chart
@@ -981,7 +981,7 @@ export async function reproduceSingleBlock(
           const opacityStr = chartOpacity.toFixed(2);
           const bgHash = crypto.createHash('sha256').update(path.basename(bgClipPath)).digest('hex').slice(0, 8);
           const compositeFilename = `chart_comp_o${opacityStr}_bg${bgHash}_${darkResult.filename}`;
-          const compositePath = path.join(chartDir, compositeFilename);
+          const compositePath = path.join(imageDir, compositeFilename);
           const bgScaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
           const chartMargin = Math.round(Math.min(w, h) * 0.06);
           const chartW = w - chartMargin * 2;
@@ -1146,6 +1146,8 @@ export async function produceBlocks(
   const preset = options.preset || process.env.FFMPEG_PRESET || 'superfast';
 
   const s = getSettings();
+  const userVoice = options.voice || undefined; // explicit user selection from Produce Settings
+  const userRate = options.rate || undefined;
   const voice = options.voice || s.get('default_voice') || 'en-US-GuyNeural';
   const rate = options.rate || s.get('default_tts_rate') || '0';
 
@@ -1234,7 +1236,7 @@ export async function produceBlocks(
     const ttsText = norm.normalized;
 
     // Resolve per-block voice config (block overrides > group > doc > app defaults)
-    const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate });
+    const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate });
 
     // Content hash includes engine + voice + emotion + rate + text so cache collisions are avoided
     const cacheComponents = [ttsText, resolved.engine, resolved.voiceId, resolved.emotion ?? '', resolved.rate ?? ''].join('|');
