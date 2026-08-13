@@ -323,6 +323,7 @@ CREATE TABLE IF NOT EXISTS drama_projects (
   episode_count INTEGER NOT NULL DEFAULT 1,
   story_input TEXT NOT NULL DEFAULT '',
   input_mode TEXT NOT NULL DEFAULT 'idea',
+  ai_long_scene_mode TEXT NOT NULL DEFAULT 'freeze_hold',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

@@ -1645,7 +1645,12 @@
     "stepCharacters": "Extracting characters...",
     "stepLocations": "Extracting locations...",
     "stepStoryboard": "Creating storyboard...",
-    "stepPrompts": "Generating shot prompts..."
+    "stepPrompts": "Generating shot prompts...",
+    "aiLongSceneMode": "AI Long Scene Mode",
+    "freezeHold": "Freeze Hold",
+    "freezeHoldDesc": "1 generation, hold last frame for remainder",
+    "multiGenerate": "Multi-Generate",
+    "multiGenerateDesc": "1 generation per sub-shot for variety"
   },
   "scriptStudio": {
     "title": "Script Studio",

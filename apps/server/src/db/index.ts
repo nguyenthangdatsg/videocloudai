@@ -167,6 +167,7 @@ export function getDb(): Database.Database {
       updated_at TEXT NOT NULL
     )`,
     `CREATE INDEX IF NOT EXISTS idx_frame_video_library_category ON frame_video_library(category)`,
+    `ALTER TABLE drama_projects ADD COLUMN ai_long_scene_mode TEXT NOT NULL DEFAULT 'freeze_hold'`,
   ];
   for (const sql of columnMigrations) {
     try { db.exec(sql); } catch { /* column already exists or index already exists */ }

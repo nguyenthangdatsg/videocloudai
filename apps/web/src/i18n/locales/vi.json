@@ -1645,7 +1645,12 @@
     "stepCharacters": "Đang trích xuất nhân vật...",
     "stepLocations": "Đang trích xuất bối cảnh...",
     "stepStoryboard": "Đang tạo storyboard...",
-    "stepPrompts": "Đang tạo prompt cho shot..."
+    "stepPrompts": "Đang tạo prompt cho shot...",
+    "aiLongSceneMode": "Chế độ cảnh dài AI",
+    "freezeHold": "Giữ khung hình",
+    "freezeHoldDesc": "1 lần tạo, giữ khung hình cuối cho phần còn lại",
+    "multiGenerate": "Tạo nhiều lần",
+    "multiGenerateDesc": "1 lần tạo cho mỗi sub-shot để đa dạng"
   },
   "scriptStudio": {
     "title": "Script Studio",

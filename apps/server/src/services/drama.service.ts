@@ -93,6 +93,7 @@ export class DramaService {
       artStyle: 'art_style', aspectRatio: 'aspect_ratio', language: 'language',
       episodeFormat: 'episode_format', durationTarget: 'duration_target',
       status: 'status', currentStage: 'current_stage', episodeCount: 'episode_count',
+      aiLongSceneMode: 'ai_long_scene_mode',
     };
     for (const [jsKey, dbCol] of Object.entries(allowed)) {
       if ((data as Record<string, unknown>)[jsKey] !== undefined) {
@@ -131,6 +132,7 @@ export class DramaService {
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
       mode: (row.mode || 'video') as 'video' | 'image',
+      aiLongSceneMode: (row.ai_long_scene_mode || 'freeze_hold') as 'freeze_hold' | 'multi_generate',
     };
   }
 

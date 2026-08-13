@@ -58,6 +58,7 @@ export interface DramaProject {
   createdAt: string;
   updatedAt: string;
   mode?: 'video' | 'image';
+  aiLongSceneMode?: 'freeze_hold' | 'multi_generate';
 }
 
 export interface DramaBeat {

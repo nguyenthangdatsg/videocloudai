@@ -613,6 +613,7 @@ function ProjectSettingsModal({ project, onClose, onSave, isSaving }: {
     aspectRatio: project.aspectRatio,
     language: project.language || 'en',
     durationTarget: project.durationTarget,
+    aiLongSceneMode: project.aiLongSceneMode || 'freeze_hold',
   });
 
   const update = (key: string, value: unknown) => setForm(prev => ({ ...prev, [key]: value }));
@@ -678,6 +679,31 @@ function ProjectSettingsModal({ project, onClose, onSave, isSaving }: {
               <select value={form.durationTarget} onChange={e => update('durationTarget', Number(e.target.value))} className="input rounded-xl">
                 {DURATIONS.map(d => <option key={d} value={d}>{t('drama.durationSeconds', { count: d })}</option>)}
               </select>
+            </div>
+          </div>
+
+          {/* AI Long Scene Mode */}
+          <div>
+            <label className="block text-sm font-medium text-c-text mb-1.5">{t('drama.aiLongSceneMode')}</label>
+            <div className="flex gap-2">
+              {([
+                { value: 'freeze_hold', label: t('drama.freezeHold'), desc: t('drama.freezeHoldDesc') },
+                { value: 'multi_generate', label: t('drama.multiGenerate'), desc: t('drama.multiGenerateDesc') },
+              ] as const).map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => update('aiLongSceneMode', opt.value)}
+                  className={clsx(
+                    'flex-1 text-left px-3 py-2.5 rounded-xl border transition-colors',
+                    form.aiLongSceneMode === opt.value
+                      ? 'border-accent-primary bg-accent-muted'
+                      : 'border-c-border hover:bg-c-elevated'
+                  )}
+                >
+                  <div className={clsx('text-sm font-medium', form.aiLongSceneMode === opt.value ? 'text-accent-primary' : 'text-c-text')}>{opt.label}</div>
+                  <div className="text-xs text-c-dim mt-0.5">{opt.desc}</div>
+                </button>
+              ))}
             </div>
           </div>
         </div>
