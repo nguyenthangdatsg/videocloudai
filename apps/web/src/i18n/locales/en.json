@@ -1650,7 +1650,15 @@
     "freezeHold": "Freeze Hold",
     "freezeHoldDesc": "1 generation, hold last frame for remainder",
     "multiGenerate": "Multi-Generate",
-    "multiGenerateDesc": "1 generation per sub-shot for variety"
+    "multiGenerateDesc": "1 generation per sub-shot for variety",
+    "audioPreview": "Audio Preview",
+    "downloadAudio": "Download Audio",
+    "videoPreview": "Video Preview",
+    "downloadVideo": "Download Video",
+    "subtitlesReady": "Subtitles Ready",
+    "generatingSubtitles": "Generating Subtitles...",
+    "generateSubtitles": "Generate Subtitles",
+    "downloadSrt": "Download SRT"
   },
   "scriptStudio": {
     "title": "Script Studio",

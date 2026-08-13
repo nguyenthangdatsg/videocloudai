@@ -5,6 +5,7 @@ import { DramaService } from '../services/drama.service';
 import { NarrationService } from '../services/narration.service';
 import { SubtitleService } from '../services/subtitle.service';
 import { generateVideoClip } from '../services/image-providers';
+import { resolveFfmpegPathSync } from '../services/import.service';
 
 function getZoompanFilter(movement: string, w: number, h: number, duration: number): string {
   const frames = Math.ceil(duration * 24);
@@ -440,7 +441,7 @@ export function createDramaRouter(
 
         await new Promise<void>((resolve, reject) => {
           const { spawn } = require('child_process');
-          const proc = spawn('ffmpeg', [
+          const proc = spawn(resolveFfmpegPathSync('ffmpeg'), [
             '-y',
             '-loop', '1',
             '-i', imgPath,
@@ -583,7 +584,7 @@ export function createDramaRouter(
 
           await new Promise<void>((resolve, reject) => {
             const { spawn } = require('child_process');
-            const proc = spawn('ffmpeg', [
+            const proc = spawn(resolveFfmpegPathSync('ffmpeg'), [
               '-y',
               '-i', rawTtsPath,
               '-filter_complex', `apad=whole_dur=${shotDur}`,
@@ -598,7 +599,7 @@ export function createDramaRouter(
         } else {
           await new Promise<void>((resolve, reject) => {
             const { spawn } = require('child_process');
-            const proc = spawn('ffmpeg', [
+            const proc = spawn(resolveFfmpegPathSync('ffmpeg'), [
               '-y',
               '-f', 'lavfi',
               '-i', `anullsrc=r=44100:cl=mono`,
@@ -621,7 +622,7 @@ export function createDramaRouter(
       const narrationPath = path.join(workDir, 'narration.wav');
       await new Promise<void>((resolve, reject) => {
         const { spawn } = require('child_process');
-        const proc = spawn('ffmpeg', [
+        const proc = spawn(resolveFfmpegPathSync('ffmpeg'), [
           '-y',
           '-f', 'concat',
           '-safe', '0',
@@ -665,7 +666,7 @@ export function createDramaRouter(
 
       await new Promise<void>((resolve, reject) => {
         const { spawn } = require('child_process');
-        const proc = spawn('ffmpeg', finalArgs);
+        const proc = spawn(resolveFfmpegPathSync('ffmpeg'), finalArgs);
         proc.on('close', (code: number) => {
           if (code === 0) resolve();
           else reject(new Error('FFmpeg failed during audio mix/output compression'));
@@ -865,7 +866,7 @@ export function createDramaRouter(
               '-an',
               clipPath
             ];
-            const proc = spawn('ffmpeg', args);
+            const proc = spawn(resolveFfmpegPathSync('ffmpeg'), args);
             proc.on('close', (code: number) => {
               if (code === 0) resolve();
               else reject(new Error(`FFmpeg failed on clip ${shotIndex}`));
@@ -874,7 +875,7 @@ export function createDramaRouter(
         } else {
           await new Promise<void>((resolve, reject) => {
             const { spawn } = require('child_process');
-            const proc = spawn('ffmpeg', [
+            const proc = spawn(resolveFfmpegPathSync('ffmpeg'), [
               '-y',
               '-f', 'lavfi',
               '-i', `color=c=black:s=${w}x${h}:r=24`,
@@ -899,7 +900,7 @@ export function createDramaRouter(
       const mergedVideoOnly = path.join(tempDir, 'merged_video.mp4');
       await new Promise<void>((resolve, reject) => {
         const { spawn } = require('child_process');
-        const proc = spawn('ffmpeg', [
+        const proc = spawn(resolveFfmpegPathSync('ffmpeg'), [
           '-y',
           '-f', 'concat',
           '-safe', '0',
@@ -956,7 +957,7 @@ export function createDramaRouter(
 
       await new Promise<void>((resolve, reject) => {
         const { spawn } = require('child_process');
-        const proc = spawn('ffmpeg', finalArgs);
+        const proc = spawn(resolveFfmpegPathSync('ffmpeg'), finalArgs);
         proc.on('close', (code: number) => {
           if (code === 0) resolve();
           else reject(new Error('FFmpeg failed dubbing audio into video'));

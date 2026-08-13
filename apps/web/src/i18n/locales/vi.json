@@ -1650,7 +1650,15 @@
     "freezeHold": "Giữ khung hình",
     "freezeHoldDesc": "1 lần tạo, giữ khung hình cuối cho phần còn lại",
     "multiGenerate": "Tạo nhiều lần",
-    "multiGenerateDesc": "1 lần tạo cho mỗi sub-shot để đa dạng"
+    "multiGenerateDesc": "1 lần tạo cho mỗi sub-shot để đa dạng",
+    "audioPreview": "Nghe thử Audio",
+    "downloadAudio": "Tải Audio",
+    "videoPreview": "Xem trước Video",
+    "downloadVideo": "Tải Video",
+    "subtitlesReady": "Phụ đề sẵn sàng",
+    "generatingSubtitles": "Đang tạo phụ đề...",
+    "generateSubtitles": "Tạo phụ đề",
+    "downloadSrt": "Tải SRT"
   },
   "scriptStudio": {
     "title": "Script Studio",
