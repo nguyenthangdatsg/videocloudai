@@ -44,7 +44,7 @@ export class DramaService {
     const mode = input.mode || 'video';
     dbRun(
       `INSERT INTO drama_projects (id, title, description, genre, tone, art_style, aspect_ratio, language, episode_format, duration_target, status, current_stage, episode_count, story_input, input_mode, mode, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 'setup', ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 'setup', ?, ?, ?, ?, ?, ?)`,
       [id, input.title, input.description ?? '', input.genre, input.tone, input.artStyle, input.aspectRatio, input.language, input.episodeFormat, input.durationTarget, input.episodeCount ?? 1, input.storyInput ?? '', input.inputMode ?? 'idea', mode, now, now]
     );
 
