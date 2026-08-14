@@ -456,6 +456,23 @@ export class DramaService {
     const row = dbGet<{ story_input: string; input_mode: string }>('SELECT story_input, input_mode FROM drama_projects WHERE id = ?', [projectId]);
     const storyInput = row?.story_input || project.title;
 
+    // Build previous episodes context for story continuity
+    const allEpisodes = this.listEpisodes(projectId);
+    const previousEpisodes = allEpisodes.filter(ep => ep.episodeNumber < episode.episodeNumber);
+    let previousContext = '';
+    if (previousEpisodes.length > 0) {
+      const summaries = previousEpisodes.map(ep => {
+        return `EPISODE ${ep.episodeNumber}: "${ep.title}"
+Synopsis: ${ep.synopsis || 'N/A'}
+Beats: ${JSON.stringify(ep.beats || [])}`;
+      }).join('\n\n');
+      previousContext = `\n\n=== PREVIOUS EPISODES (for story continuity) ===
+${summaries}
+=== END PREVIOUS EPISODES ===
+
+IMPORTANT: This is Episode ${episode.episodeNumber}. The beat sheet MUST continue the story from where Episode ${episode.episodeNumber - 1} left off. Build on existing character arcs, conflicts, and plot threads. Do NOT restart or repeat the story.`;
+    }
+
     // Writer tier settings for outline
     const tierConfig = {
       top:          { temperature: 0.9,  maxTokens: 4000, prefix: 'Write like an award-winning screenwriter with rich, layered storytelling.\n\n' },
@@ -474,7 +491,7 @@ You create compelling beat sheets for ${isFast ? '90-120' : project.durationTarg
 
 Genre: ${project.genre}
 Tone: ${project.tone}
-Format: Vertical video (${project.aspectRatio})
+Format: Vertical video (${project.aspectRatio})${previousContext}
 
 Output ONLY valid JSON array of beats. Each beat has:
 - id: unique string
@@ -484,8 +501,8 @@ Output ONLY valid JSON array of beats. Each beat has:
 - durationEstimate: seconds this beat takes (total must roughly equal ${isFast ? '90-120' : project.durationTarget})
 - sortOrder: integer starting from 0
 
-Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it dramatic and binge-worthy.${pacingInstruction}${langInstruction(project.language)}`,
-      userMessage: `Create a beat sheet for this story:\n\n${storyInput}`,
+Create 5-8 beats${previousEpisodes.length > 0 ? ' that continue the story naturally' : ''} with a strong hook and compelling cliffhanger ending. Make it dramatic and binge-worthy.${pacingInstruction}${langInstruction(project.language)}`,
+      userMessage: `Create a beat sheet for Episode ${episode.episodeNumber}${previousEpisodes.length > 0 ? ' (continuing from previous episodes)' : ''}:\n\n${storyInput}`,
       temperature: tierConfig.temperature,
       maxTokens: tierConfig.maxTokens,
     });
@@ -500,9 +517,12 @@ Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it d
     }
 
     // Generate synopsis
+    const prevSynopses = previousEpisodes.length > 0
+      ? `\nPrevious episodes:\n${previousEpisodes.map(ep => `Ep${ep.episodeNumber}: ${ep.synopsis || 'N/A'}`).join('\n')}\n`
+      : '';
     const synopsisResponse = await llmComplete({
-      systemPrompt: `You are a screenwriter. Write a 2-3 sentence synopsis for this episode based on the beat sheet. Be dramatic and engaging. Output ONLY the synopsis text, no JSON.${langInstruction(project.language)}`,
-      userMessage: `Story: ${storyInput}\n\nBeats: ${JSON.stringify(beats)}`,
+      systemPrompt: `You are a screenwriter. Write a 2-3 sentence synopsis for Episode ${episode.episodeNumber} based on the beat sheet. Be dramatic and engaging. ${previousEpisodes.length > 0 ? 'Show how this episode continues from the previous one(s). ' : ''}Output ONLY the synopsis text, no JSON.${langInstruction(project.language)}`,
+      userMessage: `Story: ${storyInput}\n${prevSynopses}\nEpisode ${episode.episodeNumber} Beats: ${JSON.stringify(beats)}`,
       temperature: 0.7,
       maxTokens: 300,
     });
@@ -528,6 +548,26 @@ Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it d
       ? characters.map(c => `${c.name} (${c.role}): ${c.physicalDescription}. Personality: ${c.personality}`).join('\n')
       : 'Characters will be auto-detected from the script.';
 
+    // Build previous episodes context for story continuity
+    const allEpisodes = this.listEpisodes(projectId);
+    const previousEpisodes = allEpisodes.filter(ep => ep.episodeNumber < episode.episodeNumber);
+    let previousContext = '';
+    if (previousEpisodes.length > 0) {
+      const summaries = previousEpisodes.map(ep => {
+        const scriptSummary = ep.script
+          ? `\n--- Script (shortened) ---\n${ep.script.substring(0, 1500)}${ep.script.length > 1500 ? '\n[...truncated]' : ''}`
+          : '';
+        return `EPISODE ${ep.episodeNumber}: "${ep.title}"
+Synopsis: ${ep.synopsis || 'N/A'}
+Beats: ${JSON.stringify(ep.beats || [])}${scriptSummary}`;
+      }).join('\n\n');
+      previousContext = `\n\n=== PREVIOUS EPISODES (for story continuity) ===
+${summaries}
+=== END PREVIOUS EPISODES ===
+
+IMPORTANT: This is Episode ${episode.episodeNumber}. The script MUST continue the story naturally from where the previous episode(s) left off. Maintain character arcs, ongoing conflicts, and plot threads. Do NOT repeat or restart the story.`;
+    }
+
     // Writer tier settings for script
     const tierConfig = {
       top:          { temperature: 0.9,  maxTokens: 6000, prefix: 'Write like an award-winning screenwriter with rich, layered storytelling.\n\n' },
@@ -545,9 +585,9 @@ Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it d
 Genre: ${project.genre} | Tone: ${project.tone} | Duration: ~${isFast ? '90-120' : project.durationTarget}s
 
 Known characters:
-${charDescriptions}
+${charDescriptions}${previousContext}
 
-Write a complete scene-by-scene script in standard screenplay format:
+Write a complete scene-by-scene script for Episode ${episode.episodeNumber} in standard screenplay format:
 - Use SCENE headers: "SCENE 1 — INT. LOCATION — TIME"
 - Include dialogue with character names in ALL CAPS followed by their line
 - Include action/direction lines in brackets
@@ -556,9 +596,9 @@ Write a complete scene-by-scene script in standard screenplay format:
 - Write punchy, natural dialogue — no exposition dumps
 - Start with a strong visual hook
 - End with a cliffhanger or emotional punch${fastScriptNote}
-${langInstruction(project.language)}
+${previousEpisodes.length > 0 ? '- Continue seamlessly from the previous episode — reference earlier events naturally\n- Develop character arcs and relationships further\n- Build on established conflicts and introduce new twists\n' : ''}${langInstruction(project.language)}
 Output ONLY the script text, formatted for readability.`,
-      userMessage: `Beat sheet:\n${JSON.stringify(episode.beats, null, 2)}\n\nSynopsis: ${episode.synopsis}`,
+      userMessage: `Episode ${episode.episodeNumber} — Beat sheet:\n${JSON.stringify(episode.beats, null, 2)}\n\nSynopsis: ${episode.synopsis}`,
       temperature: tierConfig.temperature,
       maxTokens: tierConfig.maxTokens,
     });
