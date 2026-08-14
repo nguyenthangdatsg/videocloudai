@@ -52,47 +52,11 @@ for %%p in (3001 3002 5173 5174) do (
 timeout /t 2 /nobreak >nul
 
 :StartServer
-:: Check if the path contains spaces
-set "PROJECT_DIR=%~dp0"
-if not "%PROJECT_DIR%"=="%PROJECT_DIR: =%" (
-    echo.
-    echo ============================================================
-    echo [WARN] Directory path contains spaces.
-    echo        Bypassing Turborepo for compatibility.
-    echo ============================================================
-    goto RunDirect
-)
-
-echo.
-echo ============================================
-echo [START] Running npm run dev via Turborepo...
-echo   Frontend: http://localhost:5174
-echo   Backend:  http://localhost:3002/api
-echo ============================================
-echo.
-
-:: Start the dev server
-call npm run dev
-if errorlevel 1 (
-    echo.
-    echo [WARN] Turborepo execution failed. Retrying in Direct Mode...
-    goto RunDirect
-)
-
-:: If we get here, the server stopped
-echo.
-echo ============================================
-echo   Server has stopped.
-echo ============================================
-echo Press any key to exit...
-pause
-exit /b 0
-
-
-:RunDirect
+:: Always use Direct Mode — separate windows for backend and frontend
+:: so errors are visible and don't get swallowed by Turborepo
 echo.
 echo ============================================================
-echo [COMPILING] Building packages sequentially for compatibility...
+echo [COMPILING] Building packages sequentially...
 echo ============================================================
 echo.
 
