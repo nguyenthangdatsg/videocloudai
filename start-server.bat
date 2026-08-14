@@ -36,13 +36,18 @@ if not exist "node_modules" goto RunNpmInstall
 if not exist "node_modules\.bin\turbo.cmd" goto RunNpmInstall
 
 :CheckPorts
-:: Check if ports are already in use
-netstat -ano | findstr ":3002 " | findstr "LISTENING" >nul 2>&1
-if not errorlevel 1 goto Port3002InUse
-
-:CheckPort5174
-netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
-if not errorlevel 1 goto Port5174InUse
+:: Kill any existing VideoCloudAI processes on our ports
+echo [CLEANUP] Checking for existing processes on ports 3002 and 5174...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3002 " ^| findstr "LISTENING"') do (
+    echo [CLEANUP] Killing existing process on port 3002 (PID: %%a)
+    taskkill /PID %%a /F >nul 2>&1
+)
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5174 " ^| findstr "LISTENING"') do (
+    echo [CLEANUP] Killing existing process on port 5174 (PID: %%a)
+    taskkill /PID %%a /F >nul 2>&1
+)
+:: Brief pause to let ports release
+timeout /t 2 /nobreak >nul
 
 :StartServer
 :: Check if the path contains spaces
@@ -228,14 +233,3 @@ echo.
 pause
 exit /b 1
 
-:Port3002InUse
-echo [WARN] Port 3002 (backend) is already in use. Server may already be running.
-echo Press any key to continue anyway, or close this window to cancel.
-pause
-goto CheckPort5174
-
-:Port5174InUse
-echo [WARN] Port 5174 (frontend) is already in use.
-echo Press any key to continue anyway, or close this window to cancel.
-pause
-goto StartServer
