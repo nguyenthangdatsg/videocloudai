@@ -8,8 +8,8 @@ dist/
 *.db
 *.db-shm
 *.db-wal
-# Track the main app database (for cross-machine persistence)
-!database/videocloudai.db
+*.db.corrupted
+*.db.yesterday
 cache/
 renders/
 assets/
