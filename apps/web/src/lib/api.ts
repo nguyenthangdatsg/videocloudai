@@ -804,6 +804,7 @@ export const dramaApi = {
   extractLocations: (projectId: string, episodeId: string) => api.post<DramaLocation[]>(`/drama/projects/${projectId}/episodes/${episodeId}/extract-locations`).then(r => r.data),
   generateStoryboard: (projectId: string, episodeId: string) => api.post<DramaScene[]>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-storyboard`).then(r => r.data),
   generateShotPrompt: (projectId: string, shotId: string) => api.post<DramaShot>(`/drama/projects/${projectId}/shots/${shotId}/generate-prompt`).then(r => r.data),
+  generateShotImage: (projectId: string, shotId: string, provider?: string) => api.post<DramaShot>(`/drama/projects/${projectId}/shots/${shotId}/generate-image`, { provider }).then(r => r.data),
   generateShotVideo: (projectId: string, shotId: string, mode?: 'ai' | 'motion') => api.post<DramaShot>(`/drama/projects/${projectId}/shots/${shotId}/generate-video`, { mode }).then(r => r.data),
   generateAllPrompts: async (
     projectId: string,

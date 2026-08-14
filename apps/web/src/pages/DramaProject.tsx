@@ -1440,11 +1440,12 @@ function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateSto
                   {scene.shots.length > 0 ? (
                     <div className="divide-y divide-c-border">
                       {scene.shots.map(shot => (
-                        <ShotCard key={shot.id} shot={shot} characters={characters}
+                        <ShotCard key={shot.id} shot={shot} characters={characters} projectId={projectId}
                           onGeneratePrompt={() => promptMutation.mutate(shot.id)}
                           isGeneratingPrompt={promptMutation.isPending && promptMutation.variables === shot.id}
                           onUpdateDuration={(d) => updateShotDuration(shot.id, d)}
                           onUpdateShot={(data) => dramaApi.updateShot(shot.id, data).then(() => queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] }))}
+                          onRefresh={() => queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] })}
                         />
                       ))}
                     </div>
@@ -1463,14 +1464,17 @@ function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateSto
   );
 }
 
-function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt, onUpdateDuration, onUpdateShot }: {
+function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt, onUpdateDuration, onUpdateShot, projectId, onRefresh }: {
   shot: DramaShot; characters: DramaCharacter[]; onGeneratePrompt: () => void; isGeneratingPrompt: boolean;
   onUpdateDuration: (duration: number) => void; onUpdateShot?: (data: Partial<DramaShot>) => void;
+  projectId?: string; onRefresh?: () => void;
 }) {
   const { t } = useTranslation();
   const [showPrompt, setShowPrompt] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [generatingImage, setGeneratingImage] = useState(false);
+  const [generatingVideo, setGeneratingVideo] = useState(false);
   const [editForm, setEditForm] = useState({
     description: shot.description || '',
     dialogueLine: shot.dialogueLine || '',
@@ -1479,6 +1483,30 @@ function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt, onUp
     transitionOut: shot.transitionOut || 'cut',
     prompt: shot.prompt || '',
   });
+
+  const handleGenerateImage = async () => {
+    if (!projectId) return;
+    setGeneratingImage(true);
+    try {
+      await dramaApi.generateShotImage(projectId, shot.id);
+      onRefresh?.();
+    } catch (err: any) {
+      console.error('[ShotCard] Generate image failed:', err.message);
+    }
+    setGeneratingImage(false);
+  };
+
+  const handleGenerateVideo = async (mode: 'motion' | 'ai') => {
+    if (!projectId) return;
+    setGeneratingVideo(true);
+    try {
+      await dramaApi.generateShotVideo(projectId, shot.id, mode);
+      onRefresh?.();
+    } catch (err: any) {
+      console.error('[ShotCard] Generate video failed:', err.message);
+    }
+    setGeneratingVideo(false);
+  };
   const shotChars = characters.filter(c => shot.characterIds.includes(c.id));
 
   const STATUS_COLORS: Record<string, string> = {
@@ -1597,12 +1625,33 @@ function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt, onUp
           )}
 
           {!editing && (
-            <div className="mt-2 flex items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <button onClick={onGeneratePrompt} disabled={isGeneratingPrompt}
                 className="btn-ghost flex items-center gap-1 text-xs rounded-full px-3 py-1 disabled:opacity-40">
                 {isGeneratingPrompt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                {t('drama.generatePrompt')}
+                {shot.prompt ? t('drama.regenPrompt') : t('drama.generatePrompt')}
               </button>
+              {shot.prompt && !shot.keyframeUrl && (
+                <button onClick={handleGenerateImage} disabled={generatingImage}
+                  className="btn-ghost flex items-center gap-1 text-xs rounded-full px-3 py-1 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-40">
+                  {generatingImage ? <Loader2 className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
+                  {t('drama.generateImage')}
+                </button>
+              )}
+              {shot.keyframeUrl && (
+                <button onClick={handleGenerateImage} disabled={generatingImage}
+                  className="btn-ghost flex items-center gap-1 text-xs rounded-full px-3 py-1 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 disabled:opacity-40">
+                  {generatingImage ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                  {t('drama.regenImage')}
+                </button>
+              )}
+              {shot.keyframeUrl && (
+                <button onClick={() => handleGenerateVideo('motion')} disabled={generatingVideo}
+                  className="btn-ghost flex items-center gap-1 text-xs rounded-full px-3 py-1 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 disabled:opacity-40">
+                  {generatingVideo ? <Loader2 className="w-3 h-3 animate-spin" /> : <Film className="w-3 h-3" />}
+                  {shot.videoUrl ? t('drama.reMotion') : t('drama.genMotion')}
+                </button>
+              )}
               {shot.prompt && (
                 <button onClick={() => setShowPrompt(!showPrompt)}
                   className="btn-ghost flex items-center gap-1 text-xs rounded-full px-3 py-1">

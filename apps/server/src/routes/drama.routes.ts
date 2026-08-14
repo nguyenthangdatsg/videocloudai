@@ -411,6 +411,36 @@ export function createDramaRouter(
     }
   });
 
+  // Generate keyframe image for a single shot
+  router.post('/projects/:projectId/shots/:shotId/generate-image', async (req, res) => {
+    const { projectId, shotId } = req.params;
+    const { provider } = req.body as { provider?: string };
+    try {
+      const shot = dramaService.getShot(shotId);
+      if (!shot) return res.status(404).json({ error: 'Shot not found' });
+      if (!shot.prompt) return res.status(400).json({ error: 'Shot has no prompt. Generate a prompt first.' });
+
+      const project = dramaService.getProject(projectId);
+      const ar = project?.aspectRatio || '9:16';
+
+      const imagesDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'images');
+      fs.mkdirSync(imagesDir, { recursive: true });
+      const filename = `drama_${shotId}_${Date.now()}.png`;
+      const destPath = path.join(imagesDir, filename);
+      const keyframeUrl = `/api/image/file/${filename}`;
+
+      console.log('[Drama] Generating image for shot %s, prompt: %s', shotId, shot.prompt.substring(0, 80));
+      await generateImageWithFallback(shot.prompt, ar, destPath, provider || 'auto');
+      const updated = dramaService.updateShot(shotId, { keyframeUrl, generationStatus: 'completed' } as any);
+      console.log('[Drama] Image generated for shot %s: %s', shotId, keyframeUrl);
+      res.json(updated);
+    } catch (err) {
+      console.error('[Drama] Generate image FAILED for shot %s:', shotId, (err as Error).message);
+      dramaService.updateShot(shotId, { generationStatus: 'failed' } as any);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.post('/projects/:projectId/shots/:shotId/generate-video', async (req, res) => {
     const { projectId, shotId } = req.params;
     const { model, mode = 'motion' } = req.body as { model?: string; mode?: 'ai' | 'motion' };
