@@ -32,6 +32,9 @@ import {
   Settings,
   Wrench,
   Video,
+  Zap,
+  Timer,
+  RotateCcw,
 } from 'lucide-react';
 import { dramaApi, musicApi } from '../lib/api';
 import type {
@@ -264,6 +267,42 @@ export function DramaProjectPage() {
     onError: onMutationError,
   });
 
+  const resetStep = useCallback(async (step: 'outline' | 'script' | 'characters' | 'locations' | 'storyboard' | 'video') => {
+    if (!id || !selectedEpisodeId) return;
+    if (!window.confirm(t('drama.confirmReset'))) return;
+    try {
+      switch (step) {
+        case 'outline':
+          await dramaApi.updateEpisode(selectedEpisodeId, { beats: [], synopsis: '', durationEstimate: 0 } as Partial<DramaEpisode>);
+          break;
+        case 'script':
+          await dramaApi.updateEpisode(selectedEpisodeId, { script: '' } as Partial<DramaEpisode>);
+          break;
+        case 'characters':
+          if (characters) {
+            await Promise.all(characters.map(c => dramaApi.deleteCharacter(c.id)));
+          }
+          break;
+        case 'locations':
+          if (locations) {
+            await Promise.all(locations.map(l => dramaApi.deleteLocation(l.id)));
+          }
+          break;
+        case 'storyboard':
+          if (scenes) {
+            await Promise.all(scenes.map(s => dramaApi.deleteScene(s.id)));
+          }
+          break;
+        case 'video':
+          await dramaApi.updateEpisode(selectedEpisodeId, { audioFilename: null, audioDuration: null, srtFilename: null, videoFilename: null } as Partial<DramaEpisode>);
+          break;
+      }
+      queryClient.invalidateQueries({ queryKey: ['drama'] });
+    } catch (err) {
+      onMutationError(err);
+    }
+  }, [id, selectedEpisodeId, characters, locations, scenes, queryClient, t, onMutationError]);
+
   const autoGenLogRef = useRef<HTMLDivElement>(null);
   const handleAutoGenerate = useCallback(async () => {
     if (!id || !selectedEpisodeId) return;
@@ -320,6 +359,11 @@ export function DramaProjectPage() {
               <span className="px-1.5 py-0.5 rounded-full bg-accent-muted text-accent-primary text-xs font-medium">{t(`drama.${project.genre === 'sci-fi' ? 'genreSciFi' : 'genre' + project.genre.charAt(0).toUpperCase() + project.genre.slice(1)}` as string)}</span>
               <span>{project.aspectRatio}</span>
               <span>{project.durationTarget}s</span>
+              {project.pacing === 'fast' && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 text-xs font-medium">
+                  <Zap className="w-3 h-3" />{t('drama.pacingFast')}
+                </span>
+              )}
               <span>{LANGUAGES.find(l => l.value === project.language)?.label || project.language}</span>
               <span>{project.episodeCount} {t('drama.episodes').toLowerCase()}</span>
             </div>
@@ -559,10 +603,12 @@ export function DramaProjectPage() {
           {/* Tab content */}
           <div className="flex-1 overflow-y-auto p-4">
             {activeTab === 'outline' && selectedEpisode && (
-              <OutlineTab episode={selectedEpisode} onGenerate={(tier) => outlineMutation.mutate(tier)} isGenerating={outlineMutation.isPending} />
+              <OutlineTab episode={selectedEpisode} onGenerate={(tier) => outlineMutation.mutate(tier)} isGenerating={outlineMutation.isPending}
+                onReset={() => resetStep('outline')} />
             )}
             {activeTab === 'script' && selectedEpisode && (
-              <ScriptTab episode={selectedEpisode} onGenerate={(tier) => scriptMutation.mutate(tier)} isGenerating={scriptMutation.isPending} />
+              <ScriptTab episode={selectedEpisode} onGenerate={(tier) => scriptMutation.mutate(tier)} isGenerating={scriptMutation.isPending}
+                onReset={() => resetStep('script')} />
             )}
             {activeTab === 'characters' && (
               <CharactersTab
@@ -570,6 +616,7 @@ export function DramaProjectPage() {
                 characters={characters ?? []} onExtract={() => charactersMutation.mutate()} isExtracting={charactersMutation.isPending}
                 onAdd={(name) => addCharacterMutation.mutate({ name })} onDelete={(charId) => deleteCharacterMutation.mutate(charId)}
                 onUpdate={(charId, data) => updateCharacterMutation.mutate({ charId, data })} hasScript={!!selectedEpisode?.script}
+                onReset={() => resetStep('characters')}
               />
             )}
             {activeTab === 'locations' && (
@@ -578,11 +625,13 @@ export function DramaProjectPage() {
                 locations={locations ?? []} onExtract={() => locationsMutation.mutate()} isExtracting={locationsMutation.isPending}
                 onAdd={(name) => addLocationMutation.mutate({ name })} onDelete={(locId) => deleteLocationMutation.mutate(locId)}
                 onUpdate={(locId, data) => updateLocationMutation.mutate({ locId, data })} hasScript={!!selectedEpisode?.script}
+                onReset={() => resetStep('locations')}
               />
             )}
             {activeTab === 'storyboard' && selectedEpisode && (
               <StoryboardTab projectId={id!} episodeId={selectedEpisodeId!} scenes={scenes ?? []} characters={characters ?? []}
                 onGenerateStoryboard={() => storyboardMutation.mutate()} isGenerating={storyboardMutation.isPending} hasScript={!!selectedEpisode.script}
+                onReset={() => resetStep('storyboard')}
               />
             )}
             {activeTab === 'video' && selectedEpisode && project && (
@@ -624,6 +673,7 @@ function ProjectSettingsModal({ project, onClose, onSave, isSaving }: {
     language: project.language || 'en',
     durationTarget: project.durationTarget,
     aiLongSceneMode: project.aiLongSceneMode || 'freeze_hold',
+    pacing: project.pacing || 'normal',
   });
 
   const update = (key: string, value: unknown) => setForm(prev => ({ ...prev, [key]: value }));
@@ -689,6 +739,34 @@ function ProjectSettingsModal({ project, onClose, onSave, isSaving }: {
               <select value={form.durationTarget} onChange={e => update('durationTarget', Number(e.target.value))} className="input rounded-xl">
                 {DURATIONS.map(d => <option key={d} value={d}>{t('drama.durationSeconds', { count: d })}</option>)}
               </select>
+            </div>
+          </div>
+
+          {/* Pacing */}
+          <div>
+            <label className="block text-sm font-medium text-c-text mb-1.5">{t('drama.pacing')}</label>
+            <div className="flex gap-2">
+              {([
+                { value: 'normal', icon: Timer, label: t('drama.pacingNormal'), desc: t('drama.pacingNormalDesc') },
+                { value: 'fast', icon: Zap, label: t('drama.pacingFast'), desc: t('drama.pacingFastDesc') },
+              ] as const).map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => update('pacing', opt.value)}
+                  className={clsx(
+                    'flex-1 text-left px-3 py-2.5 rounded-xl border transition-colors',
+                    form.pacing === opt.value
+                      ? 'border-accent-primary bg-accent-muted'
+                      : 'border-c-border hover:bg-c-elevated'
+                  )}
+                >
+                  <div className={clsx('flex items-center gap-1.5 text-sm font-medium', form.pacing === opt.value ? 'text-accent-primary' : 'text-c-text')}>
+                    <opt.icon className="w-3.5 h-3.5" />
+                    {opt.label}
+                  </div>
+                  <div className="text-xs text-c-dim mt-0.5">{opt.desc}</div>
+                </button>
+              ))}
             </div>
           </div>
 
@@ -768,7 +846,17 @@ function WriterTierSelector({ value, onChange }: { value: string; onChange: (v: 
   );
 }
 
-function OutlineTab({ episode, onGenerate, isGenerating }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean }) {
+function ResetButton({ onReset, hasData }: { onReset: () => void; hasData: boolean }) {
+  const { t } = useTranslation();
+  if (!hasData) return null;
+  return (
+    <button onClick={onReset} className="btn-ghost flex items-center gap-1.5 text-xs rounded-full px-3 py-1.5 text-red-400 hover:bg-red-500/10" aria-label={t('drama.reset')}>
+      <RotateCcw className="w-3.5 h-3.5" />{t('drama.reset')}
+    </button>
+  );
+}
+
+function OutlineTab({ episode, onGenerate, isGenerating, onReset }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean; onReset: () => void }) {
   const { t } = useTranslation();
   const [writerTier, setWriterTier] = useState('professional');
   const beats = episode.beats ?? [];
@@ -784,10 +872,13 @@ function OutlineTab({ episode, onGenerate, isGenerating }: { episode: DramaEpiso
 
       <WriterTierSelector value={writerTier} onChange={setWriterTier} />
 
-      <button onClick={() => onGenerate(writerTier)} disabled={isGenerating} className="btn-primary flex items-center gap-2 rounded-full">
-        {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-        {isGenerating ? t('drama.generatingOutline') : t('drama.generateOutline')}
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={() => onGenerate(writerTier)} disabled={isGenerating} className="btn-primary flex items-center gap-2 rounded-full">
+          {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+          {isGenerating ? t('drama.generatingOutline') : t('drama.generateOutline')}
+        </button>
+        <ResetButton onReset={onReset} hasData={beats.length > 0} />
+      </div>
 
       {beats.length > 0 ? (
         <div className="space-y-2">
@@ -819,7 +910,7 @@ function OutlineTab({ episode, onGenerate, isGenerating }: { episode: DramaEpiso
 
 // ── Script Tab ──
 
-function ScriptTab({ episode, onGenerate, isGenerating }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean }) {
+function ScriptTab({ episode, onGenerate, isGenerating, onReset }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean; onReset: () => void }) {
   const { t } = useTranslation();
   const [writerTier, setWriterTier] = useState('professional');
 
@@ -827,10 +918,13 @@ function ScriptTab({ episode, onGenerate, isGenerating }: { episode: DramaEpisod
     <div className="space-y-4 max-w-3xl">
       <WriterTierSelector value={writerTier} onChange={setWriterTier} />
 
-      <button onClick={() => onGenerate(writerTier)} disabled={isGenerating || !episode.beats?.length} className="btn-primary flex items-center gap-2 rounded-full">
-        {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-        {isGenerating ? t('drama.generatingScript') : t('drama.generateScript')}
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={() => onGenerate(writerTier)} disabled={isGenerating || !episode.beats?.length} className="btn-primary flex items-center gap-2 rounded-full">
+          {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+          {isGenerating ? t('drama.generatingScript') : t('drama.generateScript')}
+        </button>
+        <ResetButton onReset={onReset} hasData={!!episode.script} />
+      </div>
 
       {episode.script ? (
         <div className="card rounded-2xl p-4">
@@ -851,10 +945,10 @@ function ScriptTab({ episode, onGenerate, isGenerating }: { episode: DramaEpisod
 
 // ── Characters Tab ──
 
-function CharactersTab({ projectId, characters, onExtract, isExtracting, onAdd, onDelete, onUpdate, hasScript }: {
+function CharactersTab({ projectId, characters, onExtract, isExtracting, onAdd, onDelete, onUpdate, hasScript, onReset }: {
   projectId: string; characters: DramaCharacter[]; onExtract: () => void; isExtracting: boolean;
   onAdd: (name: string) => void; onDelete: (id: string) => void;
-  onUpdate: (id: string, data: Partial<DramaCharacter>) => void; hasScript: boolean;
+  onUpdate: (id: string, data: Partial<DramaCharacter>) => void; hasScript: boolean; onReset: () => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -881,10 +975,13 @@ function CharactersTab({ projectId, characters, onExtract, isExtracting, onAdd, 
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <button onClick={onExtract} disabled={isExtracting || !hasScript} className="btn-primary flex items-center gap-2 rounded-full">
-        {isExtracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
-        {isExtracting ? t('drama.extractingCharacters') : t('drama.extractCharacters')}
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={onExtract} disabled={isExtracting || !hasScript} className="btn-primary flex items-center gap-2 rounded-full">
+          {isExtracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+          {isExtracting ? t('drama.extractingCharacters') : t('drama.extractCharacters')}
+        </button>
+        <ResetButton onReset={onReset} hasData={characters.length > 0} />
+      </div>
 
       <div className="flex items-center gap-2">
         <input
@@ -1027,10 +1124,10 @@ function CharacterEditPanel({ character, onSave, onClose }: { character: DramaCh
 
 // ── Locations Tab ──
 
-function LocationsTab({ projectId, locations, onExtract, isExtracting, onAdd, onDelete, onUpdate, hasScript }: {
+function LocationsTab({ projectId, locations, onExtract, isExtracting, onAdd, onDelete, onUpdate, hasScript, onReset }: {
   projectId: string; locations: DramaLocation[]; onExtract: () => void; isExtracting: boolean;
   onAdd: (name: string) => void; onDelete: (id: string) => void;
-  onUpdate: (id: string, data: Partial<DramaLocation>) => void; hasScript: boolean;
+  onUpdate: (id: string, data: Partial<DramaLocation>) => void; hasScript: boolean; onReset: () => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -1050,10 +1147,13 @@ function LocationsTab({ projectId, locations, onExtract, isExtracting, onAdd, on
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <button onClick={onExtract} disabled={isExtracting || !hasScript} className="btn-primary flex items-center gap-2 rounded-full">
-        {isExtracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
-        {isExtracting ? t('drama.extractingLocations') : t('drama.extractLocations')}
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={onExtract} disabled={isExtracting || !hasScript} className="btn-primary flex items-center gap-2 rounded-full">
+          {isExtracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
+          {isExtracting ? t('drama.extractingLocations') : t('drama.extractLocations')}
+        </button>
+        <ResetButton onReset={onReset} hasData={locations.length > 0} />
+      </div>
 
       <div className="flex items-center gap-2">
         <input
@@ -1176,9 +1276,9 @@ function LocationEditPanel({ location, onSave, onClose }: { location: DramaLocat
 
 // ── Storyboard Tab ──
 
-function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateStoryboard, isGenerating, hasScript }: {
+function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateStoryboard, isGenerating, hasScript, onReset }: {
   projectId: string; episodeId: string; scenes: DramaScene[]; characters: DramaCharacter[];
-  onGenerateStoryboard: () => void; isGenerating: boolean; hasScript: boolean;
+  onGenerateStoryboard: () => void; isGenerating: boolean; hasScript: boolean; onReset: () => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -1188,6 +1288,18 @@ function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateSto
     mutationFn: (shotId: string) => dramaApi.generateShotPrompt(projectId, shotId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] }),
   });
+
+  const updateShotDuration = useCallback((shotId: string, duration: number) => {
+    dramaApi.updateShot(shotId, { duration } as Partial<DramaShot>).then(() => {
+      queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+    });
+  }, [queryClient]);
+
+  const setAllShotsDuration = useCallback(async (duration: number) => {
+    const allShots = scenes.flatMap(s => s.shots);
+    await Promise.all(allShots.map(sh => dramaApi.updateShot(sh.id, { duration } as Partial<DramaShot>)));
+    queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+  }, [scenes, queryClient]);
 
   const toggleScene = (sceneId: string) => {
     setExpandedScenes(prev => {
@@ -1207,11 +1319,24 @@ function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateSto
           {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
           {isGenerating ? t('drama.generatingStoryboard') : t('drama.generateStoryboard')}
         </button>
+        <ResetButton onReset={onReset} hasData={scenes.length > 0} />
         {scenes.length > 0 && (
           <div className="flex items-center gap-3 text-xs text-c-muted">
             <span>{t('drama.sceneCount')}: {scenes.length}</span>
             <span>{t('drama.shotCount')}: {totalShots}</span>
             <span>{t('drama.totalDuration')}: {totalDuration.toFixed(1)}s</span>
+            <span className="text-c-dim">|</span>
+            <span className="text-c-dim">{t('drama.setAllDuration')}:</span>
+            <select
+              onChange={e => { if (e.target.value) setAllShotsDuration(Number(e.target.value)); e.target.value = ''; }}
+              defaultValue=""
+              className="text-xs bg-c-elevated border border-c-border rounded-lg px-1.5 py-0.5 cursor-pointer hover:border-accent-primary/50 transition-colors"
+            >
+              <option value="" disabled>—</option>
+              {[0.5, 1, 1.5, 2, 2.5, 3, 4, 5].map(d => (
+                <option key={d} value={d}>{d}s</option>
+              ))}
+            </select>
           </div>
         )}
       </div>
@@ -1243,6 +1368,7 @@ function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateSto
                         <ShotCard key={shot.id} shot={shot} characters={characters}
                           onGeneratePrompt={() => promptMutation.mutate(shot.id)}
                           isGeneratingPrompt={promptMutation.isPending && promptMutation.variables === shot.id}
+                          onUpdateDuration={(d) => updateShotDuration(shot.id, d)}
                         />
                       ))}
                     </div>
@@ -1261,8 +1387,9 @@ function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateSto
   );
 }
 
-function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt }: {
+function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt, onUpdateDuration }: {
   shot: DramaShot; characters: DramaCharacter[]; onGeneratePrompt: () => void; isGeneratingPrompt: boolean;
+  onUpdateDuration: (duration: number) => void;
 }) {
   const { t } = useTranslation();
   const [showPrompt, setShowPrompt] = useState(false);
@@ -1301,7 +1428,15 @@ function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt }: {
             <span className={clsx('px-1.5 py-0.5 text-xs rounded-full', STATUS_COLORS[shot.generationStatus])}>
               {t(`drama.${STATUS_KEYS[shot.generationStatus]}`)}
             </span>
-            <span className="text-xs text-c-dim">{shot.duration}s</span>
+            <select
+              value={shot.duration}
+              onChange={e => onUpdateDuration(Number(e.target.value))}
+              className="text-xs text-c-dim bg-c-elevated border border-c-border rounded-lg px-1.5 py-0.5 cursor-pointer hover:border-accent-primary/50 transition-colors"
+            >
+              {[0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map(d => (
+                <option key={d} value={d}>{d}s</option>
+              ))}
+            </select>
             {shot.consistencyScore != null && (
               <span className={clsx('text-xs', shot.consistencyScore >= 0.8 ? 'text-emerald-400' : shot.consistencyScore >= 0.6 ? 'text-yellow-400' : 'text-red-400')}>
                 {t('drama.consistencyScore')}: {(shot.consistencyScore * 100).toFixed(0)}%
@@ -1406,6 +1541,8 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
   const totalShots = allShots.length;
   const shotsWithPrompt = allShots.filter(sh => sh.prompt).length;
   const shotsWithImage = allShots.filter(sh => sh.keyframeUrl).length;
+  const shotsWithVideo = allShots.filter(sh => sh.videoUrl).length;
+  const shotsNeedingVideo = allShots.filter(sh => sh.keyframeUrl && !sh.videoUrl).length;
   const completedShots = allShots.filter(sh => sh.generationStatus === 'completed').length;
   const totalDuration = allShots.reduce((sum, sh) => sum + sh.duration, 0);
 
@@ -1427,7 +1564,14 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
   const [generatingSubtitles, setGeneratingSubtitles] = useState(false);
   const [subtitlesMsg, setSubtitlesMsg] = useState('');
   const [animatingShots, setAnimatingShots] = useState<Set<string>>(new Set());
+  const [generatingVideos, setGeneratingVideos] = useState(false);
+  const [videoGenProgress, setVideoGenProgress] = useState<string[]>([]);
   const [previewShot, setPreviewShot] = useState<DramaShot | null>(null);
+  const [musicSearch, setMusicSearch] = useState('');
+  const [musicResults, setMusicResults] = useState<Array<{ id: string; title: string; artist: string; duration: number; previewUrl: string; _raw: any }>>([]);
+  const [searchingMusic, setSearchingMusic] = useState(false);
+  const [downloadingTrack, setDownloadingTrack] = useState<string | null>(null);
+  const [previewAudioUrl, setPreviewAudioUrl] = useState<string | null>(null);
 
   useEffect(() => {
     musicApi.cached().then(setCachedMusic).catch(() => {});
@@ -1445,11 +1589,25 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
     };
   }, []);
 
-  // Generate all prompts
-  const generateAllPromptsMutation = useMutation({
-    mutationFn: () => dramaApi.generateAllPrompts(projectId, episodeId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] }),
-  });
+  // Generate all prompts (streaming)
+  const [generatingPrompts, setGeneratingPrompts] = useState(false);
+  const [promptGenProgress, setPromptGenProgress] = useState<string[]>([]);
+  const handleGenerateAllPrompts = async () => {
+    setGeneratingPrompts(true);
+    setPromptGenProgress([]);
+    try {
+      await dramaApi.generateAllPrompts(projectId, episodeId, (data) => {
+        if (data.detail) setPromptGenProgress(prev => [...prev, data.detail!]);
+        if (data.done) {
+          setPromptGenProgress(prev => [...prev, `Done: ${data.generated} generated, ${data.failed} failed out of ${data.total}`]);
+          queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+        }
+      });
+    } catch (err: any) {
+      setPromptGenProgress(prev => [...prev, `Error: ${err.message}`]);
+    }
+    setGeneratingPrompts(false);
+  };
 
   // Build prompts list from shots that have prompts but no images
   const getShotsForGeneration = useCallback((onlyFailed = false) => {
@@ -1587,6 +1745,92 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
     queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
   };
 
+  // Extension-based video generation (Han2YT with mediaType: 'video')
+  const handleStartVideoGeneration = () => {
+    const shotsToGen = allShots
+      .map((shot, i) => ({ shotId: shot.id, index: i, prompt: shot.prompt || shot.description || '' }))
+      .filter(s => {
+        const shot = allShots[s.index];
+        return shot.keyframeUrl && !shot.videoUrl && s.prompt;
+      });
+    if (!shotsToGen.length) return;
+
+    setGeneratingVideos(true);
+    setVideoGenProgress([`Starting AI video generation for ${shotsToGen.length} shots via extension...`]);
+
+    setShotStatuses(prev => {
+      const next = new Map(prev);
+      shotsToGen.forEach(s => next.set(s.shotId, 'pending'));
+      return next;
+    });
+
+    const indexMap = shotsToGen.map(s => s.index);
+    const prompts = shotsToGen.map(s => ({ timestamp: s.shotId, prompt: s.prompt }));
+    const sessionId = Date.now() + '_video_' + Math.random().toString(36).slice(2, 8);
+
+    const onProgress = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== sessionId) return;
+      if (d.detail) setVideoGenProgress(prev => [...prev, d.detail]);
+      if (d.status === 'generating' && typeof d.index === 'number') {
+        const shot = shotsToGen[d.index];
+        if (shot) setShotStatuses(prev => new Map(prev).set(shot.shotId, 'generating'));
+        const realIdx = indexMap[d.index];
+        if (realIdx != null) shotCardRefs.current[realIdx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    };
+
+    const onImage = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== sessionId) return;
+      if (typeof d.index !== 'number') return;
+      const shot = shotsToGen[d.index];
+      if (!shot) return;
+      if (d.status === 'done') {
+        setShotStatuses(prev => new Map(prev).set(shot.shotId, 'done'));
+        dramaApi.updateShot(shot.shotId, { videoUrl: d.url, generationStatus: 'completed' } as Partial<DramaShot>).catch(() => {});
+      } else if (d.status === 'error') {
+        setShotStatuses(prev => new Map(prev).set(shot.shotId, 'error'));
+      }
+    };
+
+    const cleanup = () => {
+      window.removeEventListener('Han2YT_flow_progress', onProgress);
+      window.removeEventListener('Han2YT_flow_image', onImage);
+      window.removeEventListener('Han2YT_flow_done', onDone);
+      window.removeEventListener('Han2YT_flow_error', onError);
+    };
+
+    const finalize = () => {
+      cleanup();
+      setGeneratingVideos(false);
+      queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+    };
+
+    const onDone = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== sessionId) return;
+      setVideoGenProgress(prev => [...prev, `Done: ${d.done}/${d.total} AI videos generated`]);
+      finalize();
+    };
+
+    const onError = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d.sessionId && d.sessionId !== sessionId) return;
+      setVideoGenProgress(prev => [...prev, `Error: ${d.error}`]);
+      finalize();
+    };
+
+    window.addEventListener('Han2YT_flow_progress', onProgress);
+    window.addEventListener('Han2YT_flow_image', onImage);
+    window.addEventListener('Han2YT_flow_done', onDone);
+    window.addEventListener('Han2YT_flow_error', onError);
+
+    window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
+      detail: { prompts, delayMin: 10, delayMax: 30, mediaType: 'video', provider: flowProvider, sessionId },
+    }));
+  };
+
   const failedCount = Array.from(shotStatuses.values()).filter(s => s === 'error').length +
     allShots.filter(sh => sh.prompt && !sh.keyframeUrl && !shotStatuses.has(sh.id)).length;
 
@@ -1676,12 +1920,12 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
         {/* Generate all prompts */}
         {shotsWithPrompt < totalShots && totalShots > 0 && (
           <button
-            onClick={() => generateAllPromptsMutation.mutate()}
-            disabled={generateAllPromptsMutation.isPending}
+            onClick={handleGenerateAllPrompts}
+            disabled={generatingPrompts}
             className="btn-primary flex items-center gap-2 rounded-full text-xs"
           >
-            {generateAllPromptsMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-            {generateAllPromptsMutation.isPending ? t('drama.generatingAllPrompts') : `${t('drama.generateAllPrompts')} (${totalShots - shotsWithPrompt})`}
+            {generatingPrompts ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+            {generatingPrompts ? t('drama.generatingAllPrompts') : `${t('drama.generateAllPrompts')} (${totalShots - shotsWithPrompt})`}
           </button>
         )}
 
@@ -1724,10 +1968,97 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
           </div>
         )}
 
-        {!flowAvailable && shotsWithPrompt > 0 && (
+        {/* Server-side image generation (works without extension) */}
+        {shotsWithPrompt > 0 && pendingGenCount > 0 && !generating && (
+          <button
+            onClick={() => {
+              setGenerating(true);
+              setGenProgress([`Generating ${pendingGenCount} images via API...`]);
+              dramaApi.generateImages(projectId, episodeId, (data) => {
+                if (data.detail) setGenProgress(prev => [...prev, data.detail!]);
+                if (data.shotId && data.status) {
+                  setShotStatuses(prev => {
+                    const next = new Map(prev);
+                    next.set(data.shotId!, data.status === 'done' ? 'done' : data.status === 'error' ? 'error' : 'generating');
+                    return next;
+                  });
+                }
+                if (data.done) {
+                  setGenProgress(prev => [...prev, `Done: ${data.generated}/${data.total} images generated`]);
+                  setGenerating(false);
+                  queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+                }
+              }).catch(err => {
+                setGenProgress(prev => [...prev, `Error: ${err.message}`]);
+                setGenerating(false);
+              });
+            }}
+            className="flex items-center gap-1.5 text-xs py-1.5 px-4 rounded-full font-medium bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <Camera className="w-3.5 h-3.5" /> {t('drama.generateImagesAPI')} ({pendingGenCount})
+          </button>
+        )}
+
+        {!flowAvailable && shotsWithPrompt > 0 && pendingGenCount === 0 && (
           <div className="text-xs text-c-dim flex items-center gap-2">
-            <Info className="w-3.5 h-3.5" />
-            {t('drama.installExtensionHint')}
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            {t('drama.allImagesGenerated')}
+          </div>
+        )}
+
+        {/* Generate AI Videos from keyframe images */}
+        {shotsNeedingVideo > 0 && !generating && !generatingVideos && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Extension-based video generation */}
+            {flowAvailable && (
+              <button
+                onClick={handleStartVideoGeneration}
+                className="flex items-center gap-1.5 text-xs py-1.5 px-4 rounded-full font-medium bg-cyan-600 hover:bg-cyan-700 text-white"
+              >
+                <Video className="w-3.5 h-3.5" /> {t('drama.generateAIVideosExt')} ({shotsNeedingVideo})
+              </button>
+            )}
+            {/* API-based video generation (Gemini Veo) */}
+            <button
+              onClick={() => {
+                setGeneratingVideos(true);
+                setVideoGenProgress([`Generating AI videos for ${shotsNeedingVideo} shots via API...`]);
+                dramaApi.generateAIVideos(projectId, episodeId, (data) => {
+                  if (data.detail) setVideoGenProgress(prev => [...prev, data.detail!]);
+                  if (data.shotId && data.status) {
+                    setShotStatuses(prev => {
+                      const next = new Map(prev);
+                      next.set(data.shotId!, data.status === 'done' ? 'done' : data.status === 'error' ? 'error' : 'generating');
+                      return next;
+                    });
+                  }
+                  if (data.done) {
+                    setVideoGenProgress(prev => [...prev, `Done: ${data.generated}/${data.total} AI videos generated`]);
+                    setGeneratingVideos(false);
+                    queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] });
+                  }
+                }).catch(err => {
+                  setVideoGenProgress(prev => [...prev, `Error: ${err.message}`]);
+                  setGeneratingVideos(false);
+                });
+              }}
+              className="flex items-center gap-1.5 text-xs py-1.5 px-4 rounded-full font-medium bg-violet-600 hover:bg-violet-700 text-white"
+            >
+              <Video className="w-3.5 h-3.5" /> {t('drama.generateAIVideosAPI')} ({shotsNeedingVideo})
+            </button>
+          </div>
+        )}
+
+        {generatingVideos && (
+          <div className="flex items-center gap-2 text-xs text-violet-400">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('drama.generatingAIVideos')}
+          </div>
+        )}
+
+        {shotsWithVideo > 0 && (
+          <div className="text-xs text-c-dim flex items-center gap-2">
+            <Film className="w-3.5 h-3.5 text-violet-400" />
+            {t('drama.aiVideosCount', { count: shotsWithVideo, total: totalShots })}
           </div>
         )}
 
@@ -1749,10 +2080,24 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
         )}
       </div>
 
+      {/* Prompt generation progress log */}
+      {promptGenProgress.length > 0 && (
+        <div className="border border-amber-500/20 rounded-xl p-3 bg-c-surface max-h-32 overflow-y-auto text-xs text-c-muted space-y-0.5">
+          {promptGenProgress.map((msg, i) => <div key={i}>{msg}</div>)}
+        </div>
+      )}
+
       {/* Generation progress log */}
       {genProgress.length > 0 && (
         <div className="border border-c-border rounded-xl p-3 bg-c-surface max-h-32 overflow-y-auto text-xs text-c-muted space-y-0.5">
           {genProgress.map((msg, i) => <div key={i}>{msg}</div>)}
+        </div>
+      )}
+
+      {/* Video generation progress log */}
+      {videoGenProgress.length > 0 && (
+        <div className="border border-violet-500/20 rounded-xl p-3 bg-c-surface max-h-32 overflow-y-auto text-xs text-c-muted space-y-0.5">
+          {videoGenProgress.map((msg, i) => <div key={i}>{msg}</div>)}
         </div>
       )}
 
@@ -1815,7 +2160,15 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
                           {shot.prompt && <span title="Has prompt"><Wand2 className="w-2.5 h-2.5 text-violet-400" /></span>}
                         </div>
                         <p className="text-[10px] text-c-dim truncate mt-0.5">{shot.description}</p>
-                        
+                        {shot.prompt && (
+                          <details className="mt-0.5">
+                            <summary className="text-[10px] text-violet-400 cursor-pointer hover:text-violet-300 flex items-center gap-0.5">
+                              <Eye className="w-2.5 h-2.5" /> {t('drama.prompt')}
+                            </summary>
+                            <p className="text-[10px] text-c-muted mt-1 bg-c-elevated rounded-lg p-1.5 break-words">{shot.prompt}</p>
+                          </details>
+                        )}
+
                         {shot.keyframeUrl && !shot.videoUrl && (
                           <div className="pt-1 flex gap-1">
                             <button
@@ -1873,13 +2226,16 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
         <div className="card rounded-2xl p-6 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
             <div>
-              <label className="block text-xs text-c-muted mb-1">Background Music</label>
+              <label className="block text-xs text-c-muted mb-1">{t('drama.backgroundMusic')}</label>
               <select value={bgMusic} onChange={e => setBgMusic(e.target.value)} className="input text-xs rounded-lg py-1.5 w-full pr-8">
-                <option value="">No Background Music</option>
+                <option value="">{t('drama.noBackgroundMusic')}</option>
                 {cachedMusic.map(m => (
                   <option key={m.filename} value={m.filename}>{m.filename}</option>
                 ))}
               </select>
+              {bgMusic && (
+                <audio key={bgMusic} controls src={`/api/music/stream/${encodeURIComponent(bgMusic)}`} className="w-full h-8 mt-1.5" />
+              )}
             </div>
             <div>
               <label className="block text-xs text-c-muted mb-1">Voice Volume ({Math.round(voiceVolume * 100)}%)</label>
@@ -1889,6 +2245,82 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
               <label className="block text-xs text-c-muted mb-1">Music Volume ({Math.round(musicVolume * 100)}%)</label>
               <input type="range" min="0" max="1" step="0.05" value={musicVolume} onChange={e => setMusicVolume(parseFloat(e.target.value))} className="w-full mt-2 accent-violet-500" />
             </div>
+          </div>
+
+          {/* Music search */}
+          <div className="border-t border-c-border pt-3 text-left space-y-2">
+            <label className="block text-xs text-c-muted">{t('drama.searchMusic')}</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={musicSearch}
+                onChange={e => setMusicSearch(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && musicSearch.trim()) {
+                    setSearchingMusic(true);
+                    musicApi.epidemicSearch(musicSearch.trim(), musicSearch.trim(), 8).then(tracks => {
+                      setMusicResults(tracks.map(t => ({ id: String(t.id), title: t.title, artist: t.artist || '', duration: t.duration || 0, previewUrl: t.previewUrl || '', _raw: t })));
+                    }).catch(() => setMusicResults([])).finally(() => setSearchingMusic(false));
+                  }
+                }}
+                placeholder={t('drama.musicSearchPlaceholder')}
+                className="input text-xs rounded-lg py-1.5 flex-1"
+              />
+              <button
+                onClick={() => {
+                  if (!musicSearch.trim()) return;
+                  setSearchingMusic(true);
+                  musicApi.epidemicSearch(musicSearch.trim(), musicSearch.trim(), 8).then(tracks => {
+                    setMusicResults(tracks.map(t => ({ id: String(t.id), title: t.title, artist: t.artist || '', duration: t.duration || 0, previewUrl: t.previewUrl || '', _raw: t })));
+                  }).catch(() => setMusicResults([])).finally(() => setSearchingMusic(false));
+                }}
+                disabled={searchingMusic || !musicSearch.trim()}
+                className="btn-primary text-xs rounded-lg px-3 py-1.5 disabled:opacity-50"
+              >
+                {searchingMusic ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t('drama.search')}
+              </button>
+            </div>
+            {musicResults.length > 0 && (
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {musicResults.map(track => (
+                  <div key={track.id} className="flex items-center gap-2 p-2 rounded-lg bg-c-elevated text-xs">
+                    <button
+                      onClick={() => {
+                        if (previewAudioUrl === track.previewUrl) {
+                          setPreviewAudioUrl(null);
+                        } else if (track.previewUrl) {
+                          setPreviewAudioUrl(track.previewUrl);
+                        }
+                      }}
+                      className="text-c-muted hover:text-c-text"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate text-c-text">{track.title}</div>
+                      <div className="truncate text-c-dim">{track.artist} &middot; {Math.round(track.duration)}s</div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setDownloadingTrack(track.id);
+                        musicApi.epidemicDownload(track._raw).then(result => {
+                          musicApi.cached().then(setCachedMusic);
+                          setBgMusic(result.filename);
+                        }).catch(err => alert(err.message)).finally(() => setDownloadingTrack(null));
+                      }}
+                      disabled={downloadingTrack === track.id}
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-accent-primary/10 text-accent-primary hover:bg-accent-primary/20 whitespace-nowrap"
+                    >
+                      {downloadingTrack === track.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                      {t('drama.useTrack')}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {previewAudioUrl && (
+              <audio autoPlay controls src={previewAudioUrl} className="w-full h-8" />
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -2013,6 +2445,18 @@ function VideoAudioTab({ project, projectId, episodeId, scenes, episode }: { pro
               {episode.audioDuration && (
                 <span className="text-xs text-c-dim">{episode.audioDuration.toFixed(1)}s</span>
               )}
+              <button
+                onClick={() => {
+                  if (!confirm(t('drama.deleteFinalVideoConfirm'))) return;
+                  dramaApi.updateEpisode(episodeId, { videoFilename: null } as any).then(() => {
+                    queryClient.invalidateQueries({ queryKey: ['drama', 'episodes'] });
+                  });
+                }}
+                className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {t('drama.deleteFinalVideo')}
+              </button>
             </div>
           </div>
         </div>
@@ -2140,7 +2584,7 @@ function ExportTab({ project, episode, scenes }: { project: DramaProject; episod
           <div className="aspect-video bg-black rounded-xl overflow-hidden max-w-lg">
             <video controls src={`/renders/${episode.videoFilename}`} className="w-full h-full" />
           </div>
-          <div className="flex justify-start">
+          <div className="flex justify-start gap-3">
             <a
               href={`/renders/${episode.videoFilename}`}
               download
@@ -2149,6 +2593,18 @@ function ExportTab({ project, episode, scenes }: { project: DramaProject; episod
               <Download className="w-3.5 h-3.5" />
               Download Dubbed Video
             </a>
+            <button
+              onClick={() => {
+                if (!confirm(t('drama.deleteFinalVideoConfirm'))) return;
+                dramaApi.updateEpisode(episode.id, { videoFilename: null } as any).then(() => {
+                  queryClient.invalidateQueries({ queryKey: ['drama', 'episodes'] });
+                });
+              }}
+              className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 px-3 py-2"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {t('drama.deleteFinalVideo')}
+            </button>
           </div>
         </div>
       )}

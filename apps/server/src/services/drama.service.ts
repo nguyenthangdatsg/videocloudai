@@ -94,6 +94,7 @@ export class DramaService {
       episodeFormat: 'episode_format', durationTarget: 'duration_target',
       status: 'status', currentStage: 'current_stage', episodeCount: 'episode_count',
       aiLongSceneMode: 'ai_long_scene_mode',
+      pacing: 'pacing',
     };
     for (const [jsKey, dbCol] of Object.entries(allowed)) {
       if ((data as Record<string, unknown>)[jsKey] !== undefined) {
@@ -133,6 +134,7 @@ export class DramaService {
       updatedAt: row.updated_at as string,
       mode: (row.mode || 'video') as 'video' | 'image',
       aiLongSceneMode: (row.ai_long_scene_mode || 'freeze_hold') as 'freeze_hold' | 'multi_generate',
+      pacing: (row.pacing || 'normal') as 'normal' | 'fast',
     };
   }
 
@@ -454,9 +456,14 @@ export class DramaService {
       assistant:    { temperature: 0.6,  maxTokens: 1500, prefix: 'Keep it concise and efficient.\n\n' },
     }[writerTier];
 
+    const isFast = project.pacing === 'fast';
+    const pacingInstruction = isFast
+      ? `\n\nPACING: FAST — This is a speed-paced short video. Keep beats extremely tight and punchy. Each beat should be 8-15 seconds max. Cut filler, go straight to action. Total duration MUST be 90-120 seconds. Rapid emotional shifts, no slow build-ups.`
+      : '';
+
     const response = await llmComplete({
       systemPrompt: `${tierConfig.prefix}You are a professional screenwriter specializing in short-form vertical drama for TikTok/YouTube Shorts.
-You create compelling beat sheets for ${project.durationTarget}-second episodes.
+You create compelling beat sheets for ${isFast ? '90-120' : project.durationTarget}-second episodes.
 
 Genre: ${project.genre}
 Tone: ${project.tone}
@@ -467,10 +474,10 @@ Output ONLY valid JSON array of beats. Each beat has:
 - type: one of "hook", "setup", "inciting-incident", "rising-action", "midpoint", "escalation", "climax", "resolution", "cliffhanger"
 - description: vivid 1-2 sentence description of what happens
 - emotionTag: the dominant emotion (e.g. "shock", "tension", "sadness", "rage", "hope")
-- durationEstimate: seconds this beat takes (total must roughly equal ${project.durationTarget})
+- durationEstimate: seconds this beat takes (total must roughly equal ${isFast ? '90-120' : project.durationTarget})
 - sortOrder: integer starting from 0
 
-Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it dramatic and binge-worthy.${langInstruction(project.language)}`,
+Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it dramatic and binge-worthy.${pacingInstruction}${langInstruction(project.language)}`,
       userMessage: `Create a beat sheet for this story:\n\n${storyInput}`,
       temperature: tierConfig.temperature,
       maxTokens: tierConfig.maxTokens,
@@ -521,9 +528,14 @@ Create 5-8 beats with a strong hook and compelling cliffhanger ending. Make it d
       assistant:    { temperature: 0.6,  maxTokens: 3000, prefix: 'Keep it concise and efficient.\n\n' },
     }[writerTier];
 
+    const isFast = project.pacing === 'fast';
+    const fastScriptNote = isFast
+      ? `\n\nPACING: FAST — Write for a 90-120 second speed-paced video. Every line must earn its place. Short, punchy dialogue (1-2 sentences max per character). Minimal action descriptions. Rapid scene transitions. No pauses, no lingering — cut to the next beat immediately. Think TikTok attention span.`
+      : '';
+
     const response = await llmComplete({
       systemPrompt: `${tierConfig.prefix}You are a professional drama screenwriter for short-form vertical content.
-Genre: ${project.genre} | Tone: ${project.tone} | Duration: ~${project.durationTarget}s
+Genre: ${project.genre} | Tone: ${project.tone} | Duration: ~${isFast ? '90-120' : project.durationTarget}s
 
 Known characters:
 ${charDescriptions}
@@ -536,7 +548,7 @@ Write a complete scene-by-scene script in standard screenplay format:
 - Include mood/music notes in [Music: ...] tags
 - Write punchy, natural dialogue — no exposition dumps
 - Start with a strong visual hook
-- End with a cliffhanger or emotional punch
+- End with a cliffhanger or emotional punch${fastScriptNote}
 ${langInstruction(project.language)}
 Output ONLY the script text, formatted for readability.`,
       userMessage: `Beat sheet:\n${JSON.stringify(episode.beats, null, 2)}\n\nSynopsis: ${episode.synopsis}`,
@@ -822,9 +834,15 @@ Output ONLY valid JSON array. Each location has:
     const charList = characters.map(c => `${c.name} (${c.id})`).join(', ');
     const locList = locations.map(l => `${l.name} (${l.id})`).join(', ');
 
+    const isFastPace = project.pacing === 'fast';
+    const targetDuration = isFastPace ? '90-120' : String(project.durationTarget);
+    const fastStoryboardNote = isFastPace
+      ? `\n- FAST PACING: Each shot should be 1.5-3 seconds. Use rapid cuts. More shots per scene, shorter duration each. Think music-video pacing — constant visual movement. No shot longer than 3 seconds.`
+      : '';
+
     const response = await llmComplete({
       systemPrompt: `You are a professional storyboard artist and cinematographer for short-form vertical drama.
-Break the script into scenes and shots for a ${project.durationTarget}-second ${project.aspectRatio} video.
+Break the script into scenes and shots for a ${targetDuration}-second ${project.aspectRatio} video.
 Genre: ${project.genre} | Tone: ${project.tone} | Art Style: ${project.artStyle}
 
 Available characters: ${charList || 'None defined'}
@@ -850,8 +868,8 @@ Output ONLY valid JSON with this structure:
           "characterIds": ["character_id"],
           "action": "what character does",
           "expression": "facial expression",
-          "dialogueLine": "dialogue if any",
-          "duration": 4,
+          "dialogueLine": "character dialogue OR narrator voiceover text — EVERY shot MUST have audio",
+          "duration": ${isFastPace ? 2 : 4},
           "transitionOut": "cut|fade|dissolve"
         }
       ]
@@ -860,17 +878,19 @@ Output ONLY valid JSON with this structure:
 }
 
 Rules:
-- Each scene should have 2-5 shots
+- CRITICAL: Every single shot MUST have a dialogueLine — either character dialogue or narrator voiceover describing the action. No shot should be silent.
+- For shots without character dialogue, write a narrator voiceover that describes the visual action (e.g. "The camera reveals the abandoned garden, overgrown and forgotten.")
+- Each scene should have ${isFastPace ? '3-8' : '2-5'} shots
 - Vary camera angles for visual interest (don't repeat same angle consecutively)
 - Use close-ups for emotional beats, wide shots for establishing
-- Total duration of all shots should roughly equal ${project.durationTarget}s
-- Match character and location IDs from the provided lists when possible${langInstruction(project.language)}`,
+- Total duration of all shots should roughly equal ${targetDuration}s
+- Match character and location IDs from the provided lists when possible${fastStoryboardNote}${langInstruction(project.language)}`,
       userMessage: `Generate storyboard from this script:\n\n${episode.script}`,
       temperature: 0.7,
       maxTokens: 6000,
     });
 
-    let storyboardData: { scenes: Array<{
+    type StoryboardScene = {
       sceneNumber: number; heading: string; locationId?: string; description?: string;
       mood?: string; musicMood?: string; durationEstimate?: number;
       shots: Array<{
@@ -878,12 +898,57 @@ Rules:
         characterIds?: string[]; action?: string; expression?: string; dialogueLine?: string;
         duration?: number; transitionOut?: string;
       }>;
-    }> };
-    try {
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      storyboardData = jsonMatch ? JSON.parse(jsonMatch[0]) : { scenes: [] };
-    } catch {
-      storyboardData = { scenes: [] };
+    };
+
+    const parseStoryboard = (text: string): StoryboardScene[] => {
+      try {
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.scenes?.length > 0) return parsed.scenes;
+        }
+      } catch { /* ignore */ }
+      try {
+        // Try parsing as array directly
+        const arrMatch = text.match(/\[[\s\S]*\]/);
+        if (arrMatch) {
+          const parsed = JSON.parse(arrMatch[0]);
+          if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].shots) return parsed;
+        }
+      } catch { /* ignore */ }
+      return [];
+    };
+
+    let scenes = parseStoryboard(response);
+
+    // Retry once if parsing failed
+    if (scenes.length === 0) {
+      console.warn('[drama] Storyboard parse failed, retrying LLM call...');
+      const retry = await llmComplete({
+        systemPrompt: 'You are a JSON generator. Convert the following storyboard description into valid JSON with structure: {"scenes":[...]}. Output ONLY the JSON, no markdown.',
+        userMessage: response || `Generate a storyboard for: ${episode.script?.slice(0, 500)}`,
+        temperature: 0.3,
+        maxTokens: 6000,
+      });
+      scenes = parseStoryboard(retry);
+    }
+
+    if (scenes.length === 0) {
+      throw new Error('Failed to generate storyboard: LLM returned unparseable response');
+    }
+
+    // Scale shot durations to match target
+    const targetDur = isFastPace ? 105 : project.durationTarget; // 105 = midpoint of 90-120
+    const totalGenerated = scenes.reduce((sum, s) => sum + (s.shots || []).reduce((ss, sh) => ss + (sh.duration || 2), 0), 0);
+    if (totalGenerated > 0 && Math.abs(totalGenerated - targetDur) > 5) {
+      const scale = targetDur / totalGenerated;
+      for (const s of scenes) {
+        for (const sh of (s.shots || [])) {
+          sh.duration = Math.round((sh.duration || 2) * scale * 2) / 2; // round to 0.5s
+          if (sh.duration < 0.5) sh.duration = 0.5;
+        }
+        s.durationEstimate = (s.shots || []).reduce((sum, sh) => sum + (sh.duration || 2), 0);
+      }
     }
 
     // Delete existing scenes for this episode
@@ -894,7 +959,7 @@ Rules:
 
     // Create scenes and shots
     const results: DramaScene[] = [];
-    for (const sceneData of storyboardData.scenes) {
+    for (const sceneData of scenes) {
       const scene = this.createScene(episodeId, {
         sceneNumber: sceneData.sceneNumber,
         heading: sceneData.heading,
@@ -948,6 +1013,17 @@ Rules:
     const locations = this.listLocations(projectId);
     const sceneLocation = scene?.locationId ? locations.find(l => l.id === scene.locationId) : null;
 
+    // Build visual consistency bible — canonical descriptions for ALL characters and locations
+    const allCharBible = characters.map(c => {
+      const ref = c.referencePrompt ? `\nCanonical prompt: ${c.referencePrompt}` : '';
+      return `CHARACTER "${c.name}": ${c.physicalDescription}. Wardrobe: ${c.wardrobeDefault}. Age: ${c.age}, Gender: ${c.gender}.${ref}`;
+    }).join('\n');
+
+    const allLocBible = locations.map(l => {
+      const ref = l.referencePrompt ? `\nCanonical prompt: ${l.referencePrompt}` : '';
+      return `LOCATION "${l.name}": ${l.description}. Lighting: ${l.lighting || 'natural'}. Time: ${l.timeOfDay || 'day'}.${ref}`;
+    }).join('\n');
+
     const response = await llmComplete({
       systemPrompt: `You are an expert AI image generation prompt engineer for ${project.artStyle} style vertical video frames.
 Create a detailed, optimized prompt for generating a single video frame/image.
@@ -958,12 +1034,22 @@ Output ONLY valid JSON:
   "negativePrompt": "things to avoid"
 }
 
+=== VISUAL CONSISTENCY BIBLE ===
+CRITICAL: You MUST use the EXACT same visual descriptions every time a character or location appears. Never invent new details — use ONLY what is defined below. This ensures the same person/place looks identical across all frames.
+
+${allCharBible || 'No characters defined.'}
+
+${allLocBible || 'No locations defined.'}
+=== END BIBLE ===
+
 Rules:
 - Start with the art style: ${project.artStyle}
-- Include character descriptions for consistency
+- ALWAYS copy character appearance details word-for-word from the bible above — same hair color, same outfit, same features
+- ALWAYS copy location details word-for-word from the bible above — same architecture, same colors, same props
+- If a canonical prompt exists, incorporate its key visual descriptors verbatim
 - Specify camera angle, lighting, mood
 - Add quality tags: cinematic lighting, detailed, high quality, 8k
-- Negative prompt should include: deformed, blurry, bad anatomy, extra limbs, watermark, text, low quality
+- Negative prompt should include: deformed, blurry, bad anatomy, extra limbs, watermark, text, low quality, inconsistent character design
 - For ${project.aspectRatio} aspect ratio vertical video`,
       userMessage: `Generate prompt for this shot:
 Description: ${shot.description}

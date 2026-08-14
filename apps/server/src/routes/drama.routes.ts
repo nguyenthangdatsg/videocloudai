@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { DramaService } from '../services/drama.service';
 import { NarrationService } from '../services/narration.service';
 import { SubtitleService } from '../services/subtitle.service';
-import { generateVideoClip } from '../services/image-providers';
+import { generateVideoClip, generateImageWithFallback } from '../services/image-providers';
 import { resolveFfmpegPathSync } from '../services/import.service';
 
 function getZoompanFilter(movement: string, w: number, h: number, duration: number): string {
@@ -430,7 +430,14 @@ export function createDramaRouter(
 
       if (mode === 'ai') {
         if (!shot.prompt) return res.status(400).json({ error: 'Shot has no prompt generated yet' });
-        await generateVideoClip(shot.prompt, ar, destPath, duration, model);
+        // Use keyframe image as reference for image-to-video if available
+        let refImagePath: string | undefined;
+        if (shot.keyframeUrl) {
+          const imagesDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'images');
+          const candidate = path.join(imagesDir, path.basename(shot.keyframeUrl));
+          if (fs.existsSync(candidate)) refImagePath = candidate;
+        }
+        await generateVideoClip(shot.prompt, ar, destPath, duration, model, refImagePath);
       } else {
         if (!shot.keyframeUrl) return res.status(400).json({ error: 'Shot has no keyframe image generated yet' });
         const imagesDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'images');
@@ -471,19 +478,96 @@ export function createDramaRouter(
     }
   });
 
-  // Batch generate prompts for all shots missing prompts
+  // Batch generate prompts for all shots missing prompts (NDJSON streaming)
   router.post('/projects/:projectId/episodes/:episodeId/generate-all-prompts', async (req, res) => {
+    const projectId = req.params.projectId;
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
     try {
+      // Auto-generate reference prompts for characters & locations (consistency bible)
+      const characters = dramaService.listCharacters(projectId);
+      const charsNeedRef = characters.filter(c => !c.referencePrompt);
+      if (charsNeedRef.length > 0) {
+        res.write(JSON.stringify({ step: 'bible', detail: `Generating reference prompts for ${charsNeedRef.length} characters...` }) + '\n');
+        for (const c of charsNeedRef) {
+          for (let retry = 0; retry < 3; retry++) {
+            try {
+              if (retry > 0) await new Promise(r => setTimeout(r, 5000 * retry));
+              await dramaService.generateCharacterPrompt(projectId, c.id);
+              res.write(JSON.stringify({ step: 'bible', detail: `Character "${c.name}" reference prompt ready` }) + '\n');
+              break;
+            } catch (err) {
+              if (retry === 2) res.write(JSON.stringify({ step: 'bible', detail: `Character "${c.name}" failed after 3 attempts: ${(err as Error).message}`, error: true }) + '\n');
+            }
+          }
+        }
+      }
+
+      const locations = dramaService.listLocations(projectId);
+      const locsNeedRef = locations.filter(l => !l.referencePrompt);
+      if (locsNeedRef.length > 0) {
+        res.write(JSON.stringify({ step: 'bible', detail: `Generating reference prompts for ${locsNeedRef.length} locations...` }) + '\n');
+        for (const l of locsNeedRef) {
+          for (let retry = 0; retry < 3; retry++) {
+            try {
+              if (retry > 0) await new Promise(r => setTimeout(r, 5000 * retry));
+              await dramaService.generateLocationPrompt(projectId, l.id);
+              res.write(JSON.stringify({ step: 'bible', detail: `Location "${l.name}" reference prompt ready` }) + '\n');
+              break;
+            } catch (err) {
+              if (retry === 2) res.write(JSON.stringify({ step: 'bible', detail: `Location "${l.name}" failed after 3 attempts: ${(err as Error).message}`, error: true }) + '\n');
+            }
+          }
+        }
+      }
+
       const scenes = dramaService.listScenes(req.params.episodeId);
       const shotsWithoutPrompt = scenes.flatMap(s => s.shots).filter(sh => !sh.prompt);
-      const results: Array<{ id: string; prompt: string }> = [];
-      for (const shot of shotsWithoutPrompt) {
-        const updated = await dramaService.generateShotPrompt(req.params.projectId, shot.id);
-        results.push({ id: updated.id, prompt: updated.prompt });
+      const total = shotsWithoutPrompt.length;
+      let generated = 0;
+      let failed = 0;
+
+      res.write(JSON.stringify({ step: 'prompts', detail: `Generating prompts for ${total} shots...`, total }) + '\n');
+
+      const MAX_RETRIES = 5;
+      let pending = shotsWithoutPrompt.map((shot, i) => ({ shot, originalIndex: i }));
+      let attempt = 0;
+
+      while (pending.length > 0 && attempt < MAX_RETRIES) {
+        attempt++;
+        if (attempt > 1) {
+          const backoff = Math.min(5000 * attempt, 30000);
+          res.write(JSON.stringify({ step: 'prompts', detail: `Retry round ${attempt}/${MAX_RETRIES}: ${pending.length} remaining, waiting ${backoff / 1000}s...` }) + '\n');
+          await new Promise(r => setTimeout(r, backoff));
+        }
+
+        const stillPending: typeof pending = [];
+        for (let j = 0; j < pending.length; j++) {
+          const { shot, originalIndex } = pending[j];
+          if (j > 0) await new Promise(r => setTimeout(r, 1500));
+          try {
+            const updated = await dramaService.generateShotPrompt(projectId, shot.id);
+            generated++;
+            res.write(JSON.stringify({ step: 'prompts', index: originalIndex, shotId: shot.id, status: 'done', prompt: updated.prompt.substring(0, 80), generated, total }) + '\n');
+          } catch (err) {
+            stillPending.push({ shot, originalIndex });
+            res.write(JSON.stringify({ step: 'prompts', index: originalIndex, shotId: shot.id, status: 'error', attempt, error: (err as Error).message, generated, total }) + '\n');
+            // Extra backoff after failure
+            await new Promise(r => setTimeout(r, 3000));
+          }
+        }
+        pending = stillPending;
       }
-      res.json({ generated: results.length, shots: results });
+
+      failed = pending.length;
+      res.write(JSON.stringify({ done: true, generated, failed, total }) + '\n');
+      res.end();
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.write(JSON.stringify({ done: true, error: (err as Error).message, generated: 0, total: 0 }) + '\n');
+      res.end();
     }
   });
 
@@ -507,6 +591,113 @@ export function createDramaRouter(
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // Batch generate images for shots missing keyframes (server-side, no extension needed)
+  router.post('/projects/:projectId/episodes/:episodeId/generate-images', async (req, res) => {
+    const { projectId, episodeId } = req.params;
+    const { provider } = req.body as { provider?: string };
+    const project = dramaService.getProject(projectId);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    const scenes = dramaService.listScenes(episodeId);
+    const shotsToGen = scenes.flatMap(s => s.shots).filter(sh => sh.prompt && !sh.keyframeUrl);
+
+    if (shotsToGen.length === 0) {
+      res.write(JSON.stringify({ done: true, generated: 0, total: 0 }) + '\n');
+      return res.end();
+    }
+
+    res.write(JSON.stringify({ progress: true, detail: `Generating ${shotsToGen.length} images...`, total: shotsToGen.length }) + '\n');
+
+    const imagesDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'images');
+    fs.mkdirSync(imagesDir, { recursive: true });
+    let generated = 0;
+
+    for (let i = 0; i < shotsToGen.length; i++) {
+      const shot = shotsToGen[i];
+      const filename = `drama_${shot.id}_${Date.now()}.png`;
+      const destPath = path.join(imagesDir, filename);
+      const keyframeUrl = `/api/image/file/${filename}`;
+
+      try {
+        res.write(JSON.stringify({ progress: true, index: i, shotId: shot.id, status: 'generating', detail: `Shot ${i + 1}/${shotsToGen.length}` }) + '\n');
+        await generateImageWithFallback(shot.prompt, project.aspectRatio || '9:16', destPath, provider || 'auto');
+        dramaService.updateShot(shot.id, { keyframeUrl, generationStatus: 'completed' });
+        generated++;
+        res.write(JSON.stringify({ progress: true, index: i, shotId: shot.id, status: 'done', url: keyframeUrl }) + '\n');
+      } catch (err) {
+        dramaService.updateShot(shot.id, { generationStatus: 'failed' });
+        res.write(JSON.stringify({ progress: true, index: i, shotId: shot.id, status: 'error', error: (err as Error).message }) + '\n');
+      }
+    }
+
+    res.write(JSON.stringify({ done: true, generated, total: shotsToGen.length }) + '\n');
+    res.end();
+  });
+
+  // Batch generate AI videos from keyframe images using Gemini Veo (image-to-video)
+  router.post('/projects/:projectId/episodes/:episodeId/generate-ai-videos', async (req, res) => {
+    const { projectId, episodeId } = req.params;
+    const { model } = req.body as { model?: string };
+    const project = dramaService.getProject(projectId);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    const scenes = dramaService.listScenes(episodeId);
+    const allShots = scenes.flatMap(s => s.shots);
+    // Only generate for shots that have a keyframe image but no video yet
+    const shotsToGen = allShots.filter(sh => sh.keyframeUrl && !sh.videoUrl);
+
+    if (shotsToGen.length === 0) {
+      res.write(JSON.stringify({ done: true, generated: 0, total: 0 }) + '\n');
+      return res.end();
+    }
+
+    res.write(JSON.stringify({ progress: true, detail: `Generating AI videos for ${shotsToGen.length} shots...`, total: shotsToGen.length }) + '\n');
+
+    const ar = project.aspectRatio || '9:16';
+    const imagesDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'images');
+    const videosDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'videos');
+    fs.mkdirSync(videosDir, { recursive: true });
+    let generated = 0;
+
+    for (let i = 0; i < shotsToGen.length; i++) {
+      const shot = shotsToGen[i];
+      const filename = `drama_shot_${shot.id}_${Date.now()}.mp4`;
+      const destPath = path.join(videosDir, filename);
+
+      // Resolve keyframe image path on disk
+      const imgPath = path.join(imagesDir, path.basename(shot.keyframeUrl));
+      if (!fs.existsSync(imgPath)) {
+        res.write(JSON.stringify({ progress: true, index: i, shotId: shot.id, status: 'error', error: 'Keyframe image file not found' }) + '\n');
+        continue;
+      }
+
+      try {
+        res.write(JSON.stringify({ progress: true, index: i, shotId: shot.id, status: 'generating', detail: `Shot ${i + 1}/${shotsToGen.length} (AI video from image)` }) + '\n');
+        const duration = shot.duration || 4.0;
+        await generateVideoClip(shot.prompt || 'Animate this scene', ar, destPath, duration, model, imgPath);
+
+        const videoUrl = `/api/image/video/file/${filename}`;
+        dramaService.updateShot(shot.id, { videoUrl, generationStatus: 'completed' });
+        generated++;
+        res.write(JSON.stringify({ progress: true, index: i, shotId: shot.id, status: 'done', url: videoUrl }) + '\n');
+      } catch (err) {
+        dramaService.updateShot(shot.id, { generationStatus: 'failed' });
+        res.write(JSON.stringify({ progress: true, index: i, shotId: shot.id, status: 'error', error: (err as Error).message }) + '\n');
+      }
+    }
+
+    res.write(JSON.stringify({ done: true, generated, total: shotsToGen.length }) + '\n');
+    res.end();
   });
 
   router.delete('/projects/:projectId/episodes/:episodeId/images', (req, res) => {
@@ -567,11 +758,13 @@ export function createDramaRouter(
         const shotWavPath = path.join(workDir, `shot_${shotIndex}.wav`);
         shotAudioPaths.push(shotWavPath);
 
-        const text = shot.dialogueLine ? shot.dialogueLine.trim() : '';
+        // Use dialogue line, or fall back to shot description as narration
+        const text = (shot.dialogueLine || shot.description || '').trim();
 
         if (text) {
           let voiceId = 'en-US-AndrewMultilingualNeural';
-          if (shot.characterIds && shot.characterIds.length > 0) {
+          const hasDialogue = !!shot.dialogueLine?.trim();
+          if (hasDialogue && shot.characterIds && shot.characterIds.length > 0) {
             const firstChar = charMap.get(shot.characterIds[0]);
             if (firstChar && firstChar.voiceId) {
               voiceId = firstChar.voiceId;
@@ -645,7 +838,10 @@ export function createDramaRouter(
 
       if (bgMusicTrack) {
         res.write(JSON.stringify({ progress: true, step: 'mux', detail: `Mixing background music: ${bgMusicTrack}...` }) + '\n');
-        const musicPath = path.join(path.resolve(process.env.ASSETS_DIR ?? './assets', 'music'), path.basename(bgMusicTrack));
+        const musicCacheDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'music');
+        const musicAssetsDir = path.resolve(process.env.ASSETS_DIR ?? './assets', 'music');
+        let musicPath = path.join(musicCacheDir, path.basename(bgMusicTrack));
+        if (!fs.existsSync(musicPath)) musicPath = path.join(musicAssetsDir, path.basename(bgMusicTrack));
         if (fs.existsSync(musicPath)) {
           finalArgs = [
             '-y',

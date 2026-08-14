@@ -445,7 +445,8 @@ export function getVideoModels(): readonly string[] {
 }
 
 /**
- * Generate a short video clip from a text prompt using Google Gemini Veo.
+ * Generate a short video clip using Google Gemini Veo.
+ * Supports text-to-video (prompt only) and image-to-video (prompt + reference image).
  * Returns the path to the saved .mp4 file.
  */
 export async function generateVideoClip(
@@ -454,6 +455,7 @@ export async function generateVideoClip(
   destPath: string,
   durationSeconds: number = 5,
   model?: string,
+  referenceImagePath?: string,
 ): Promise<{ providerId: string }> {
   const ai = getGenAIClient();
   const videoModel = model || 'veo-2.0-generate-001';
@@ -466,13 +468,14 @@ export async function generateVideoClip(
   };
   const ar = arMap[aspectRatio] || '16:9';
 
-  console.log(`[video-gen] model=${videoModel} ar=${ar} duration=${durationSeconds}s prompt="${prompt.slice(0, 80)}..."`);
+  const hasImage = referenceImagePath && fs.existsSync(referenceImagePath);
+  console.log(`[video-gen] model=${videoModel} ar=${ar} duration=${durationSeconds}s image=${hasImage ? 'yes' : 'no'} prompt="${prompt.slice(0, 80)}..."`);
 
   const t0 = Date.now();
 
   try {
-    // Use generateVideos API
-    let operation = await ai.models.generateVideos({
+    // Build request params
+    const params: any = {
       model: videoModel,
       prompt,
       config: {
@@ -480,7 +483,24 @@ export async function generateVideoClip(
         numberOfVideos: 1,
         durationSeconds,
       },
-    });
+    };
+
+    // Add reference image for image-to-video
+    if (hasImage) {
+      const imgBuffer = fs.readFileSync(referenceImagePath);
+      const ext = path.extname(referenceImagePath).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.png': 'image/png', '.webp': 'image/webp',
+      };
+      params.image = {
+        imageBytes: imgBuffer.toString('base64'),
+        mimeType: mimeMap[ext] || 'image/jpeg',
+      };
+    }
+
+    // Use generateVideos API
+    let operation = await ai.models.generateVideos(params);
 
     // Poll until done
     while (!operation.done) {

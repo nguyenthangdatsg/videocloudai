@@ -796,10 +796,100 @@ export const dramaApi = {
   generateStoryboard: (projectId: string, episodeId: string) => api.post<DramaScene[]>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-storyboard`).then(r => r.data),
   generateShotPrompt: (projectId: string, shotId: string) => api.post<DramaShot>(`/drama/projects/${projectId}/shots/${shotId}/generate-prompt`).then(r => r.data),
   generateShotVideo: (projectId: string, shotId: string, mode?: 'ai' | 'motion') => api.post<DramaShot>(`/drama/projects/${projectId}/shots/${shotId}/generate-video`, { mode }).then(r => r.data),
-  generateAllPrompts: (projectId: string, episodeId: string) => api.post<{ generated: number; shots: Array<{ id: string; prompt: string }> }>(`/drama/projects/${projectId}/episodes/${episodeId}/generate-all-prompts`).then(r => r.data),
+  generateAllPrompts: async (
+    projectId: string,
+    episodeId: string,
+    onProgress?: (data: { step?: string; detail?: string; index?: number; shotId?: string; status?: string; prompt?: string; error?: string | boolean; done?: boolean; generated?: number; failed?: number; total?: number }) => void,
+  ): Promise<{ generated: number; failed: number; total: number }> => {
+    const res = await fetch(`/api/drama/projects/${projectId}/episodes/${episodeId}/generate-all-prompts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error(`Failed: ${res.status}`);
+    const reader = res.body?.getReader();
+    if (!reader) return { generated: 0, failed: 0, total: 0 };
+    const decoder = new TextDecoder();
+    let buf = '';
+    let result = { generated: 0, failed: 0, total: 0 };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.done) result = { generated: parsed.generated ?? 0, failed: parsed.failed ?? 0, total: parsed.total ?? 0 };
+          onProgress?.(parsed);
+        } catch { /* skip */ }
+      }
+    }
+    if (buf.trim()) try { const p = JSON.parse(buf); if (p.done) result = { generated: p.generated ?? 0, failed: p.failed ?? 0, total: p.total ?? 0 }; onProgress?.(p); } catch { /* skip */ }
+    return result;
+  },
   reviewEpisode: (projectId: string, episodeId: string) => api.post<{ score: number; feedback: string; issues: Array<{ area: string; severity: string; detail: string; fix?: string }> }>(`/drama/projects/${projectId}/episodes/${episodeId}/review`).then(r => r.data),
   applyReviewFixes: (projectId: string, episodeId: string, issues: Array<{ area: string; severity: string; detail: string; fix?: string }>) => api.post<DramaEpisode>(`/drama/projects/${projectId}/episodes/${episodeId}/apply-fixes`, { issues }).then(r => r.data),
   clearEpisodeImages: (projectId: string, episodeId: string) => api.delete<{ cleared: number }>(`/drama/projects/${projectId}/episodes/${episodeId}/images`).then(r => r.data),
+  generateImages: async (
+    projectId: string,
+    episodeId: string,
+    onProgress: (data: { index?: number; shotId?: string; status?: string; detail?: string; url?: string; error?: string; done?: boolean; generated?: number; total?: number }) => void,
+    provider?: string,
+  ): Promise<void> => {
+    const res = await fetch(`/api/drama/projects/${projectId}/episodes/${episodeId}/generate-images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    if (!res.ok) throw new Error(`Failed: ${res.status}`);
+    const reader = res.body?.getReader();
+    if (!reader) return;
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try { onProgress(JSON.parse(line)); } catch { /* skip */ }
+      }
+    }
+    if (buf.trim()) try { onProgress(JSON.parse(buf)); } catch { /* skip */ }
+  },
+  generateAIVideos: async (
+    projectId: string,
+    episodeId: string,
+    onProgress: (data: { index?: number; shotId?: string; status?: string; detail?: string; url?: string; error?: string; done?: boolean; generated?: number; total?: number }) => void,
+    model?: string,
+  ): Promise<void> => {
+    const res = await fetch(`/api/drama/projects/${projectId}/episodes/${episodeId}/generate-ai-videos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+    if (!res.ok) throw new Error(`Failed: ${res.status}`);
+    const reader = res.body?.getReader();
+    if (!reader) return;
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try { onProgress(JSON.parse(line)); } catch { /* skip */ }
+      }
+    }
+    if (buf.trim()) try { onProgress(JSON.parse(buf)); } catch { /* skip */ }
+  },
   generateAudio: async (
     projectId: string,
     episodeId: string,

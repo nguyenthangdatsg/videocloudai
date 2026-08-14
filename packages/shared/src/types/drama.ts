@@ -59,6 +59,7 @@ export interface DramaProject {
   updatedAt: string;
   mode?: 'video' | 'image';
   aiLongSceneMode?: 'freeze_hold' | 'multi_generate';
+  pacing?: 'normal' | 'fast';
 }
 
 export interface DramaBeat {
@@ -193,6 +194,7 @@ export interface CreateDramaProjectInput {
   storyInput?: string;
   inputMode?: 'idea' | 'outline' | 'script' | 'novel' | 'generate';
   mode?: 'video' | 'image';
+  pacing?: 'normal' | 'fast';
 }
 
 // Story generation input
