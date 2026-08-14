@@ -51,7 +51,7 @@ import { initProviders } from './providers';
 import { getJobQueue } from './queue/queue';
 import { createApp } from './app';
 
-const PORT = parseInt(process.env.PORT ?? '3001');
+const PORT = parseInt(process.env.PORT ?? '3002');
 
 function isPortInUse(port: number): Promise<boolean> {
   return new Promise((resolve) => {
