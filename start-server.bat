@@ -11,6 +11,10 @@ echo.
 cd /d "%~dp0"
 if errorlevel 1 goto NoProjectDir
 
+:: ── Force consistent ports ──
+set PORT=3002
+set VITE_BACKEND_PORT=3002
+
 :: Verify node is available
 where node >nul 2>&1
 if errorlevel 1 goto NoNode
@@ -36,15 +40,13 @@ if not exist "node_modules" goto RunNpmInstall
 if not exist "node_modules\.bin\turbo.cmd" goto RunNpmInstall
 
 :CheckPorts
-:: Kill any existing VideoCloudAI processes on our ports
-echo [CLEANUP] Checking for existing processes on ports 3002 and 5174...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3002 " ^| findstr "LISTENING"') do (
-    echo [CLEANUP] Killing existing process on port 3002 (PID: %%a)
-    taskkill /PID %%a /F >nul 2>&1
-)
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5174 " ^| findstr "LISTENING"') do (
-    echo [CLEANUP] Killing existing process on port 5174 (PID: %%a)
-    taskkill /PID %%a /F >nul 2>&1
+:: Kill any existing processes on ALL possible ports (3001, 3002, 5173, 5174)
+echo [CLEANUP] Killing existing processes on ports 3001, 3002, 5173, 5174...
+for %%p in (3001 3002 5173 5174) do (
+    for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%%p " ^| findstr "LISTENING" 2^>nul') do (
+        echo [CLEANUP] Killing PID %%a on port %%p
+        taskkill /PID %%a /F >nul 2>&1
+    )
 )
 :: Brief pause to let ports release
 timeout /t 2 /nobreak >nul
@@ -55,13 +57,14 @@ set "PROJECT_DIR=%~dp0"
 if not "%PROJECT_DIR%"=="%PROJECT_DIR: =%" (
     echo.
     echo ============================================================
-    echo [WARN] Directory path contains spaces. 
+    echo [WARN] Directory path contains spaces.
     echo        Bypassing Turborepo for compatibility.
     echo ============================================================
     goto RunDirect
 )
 
 echo.
+echo ============================================
 echo [START] Running npm run dev via Turborepo...
 echo   Frontend: http://localhost:5174
 echo   Backend:  http://localhost:3002/api
@@ -108,6 +111,8 @@ if errorlevel 1 goto BuildFailed
 echo.
 echo ============================================================
 echo [START] Launching dev servers directly (bypassing turbo)...
+echo   Frontend: http://localhost:5174
+echo   Backend:  http://localhost:3002/api
 echo ============================================================
 echo.
 
@@ -115,31 +120,34 @@ echo.
 cd /d "%~dp0"
 
 :: Start backend — cmd /k keeps window open if it crashes so user can see the error
-start "VideoCloudAI Backend" cmd /k "cd /d "%~dp0apps\server" && echo [Backend] Starting on port 3002... && call npm run dev"
+:: PORT=3002 is already set via environment variable above
+start "VideoCloudAI Backend" cmd /k "cd /d "%~dp0apps\server" && set PORT=3002 && echo [Backend] Starting on port 3002... && call npm run dev"
 
-:: Wait a moment for backend to initialize before starting frontend
-timeout /t 3 /nobreak >nul
-
-:: Verify backend is running before starting frontend
+:: Wait for backend to initialize before starting frontend
+echo [WAIT] Waiting for backend to start on port 3002...
+timeout /t 5 /nobreak >nul
 netstat -ano | findstr ":3002 " | findstr "LISTENING" >nul 2>&1
 if errorlevel 1 (
     echo.
     echo ============================================================
     echo [ERROR] Backend failed to start on port 3002!
     echo         Check the "VideoCloudAI Backend" window for errors.
-    echo         Log file: logs\backend.log
     echo ============================================================
     echo.
     echo Press any key to start frontend anyway...
     pause
+) else (
+    echo [OK] Backend is running on port 3002
 )
 
 :: Start frontend — cmd /k keeps window open if it crashes
-start "VideoCloudAI Frontend" cmd /k "cd /d "%~dp0apps\web" && echo [Frontend] Starting on port 5174... && call npm run dev"
+start "VideoCloudAI Frontend" cmd /k "cd /d "%~dp0apps\web" && set VITE_BACKEND_PORT=3002 && echo [Frontend] Starting on port 5174... && call npm run dev"
 
 echo.
 echo ============================================================
 echo   Dev servers launched in separate windows!
+echo   Frontend: http://localhost:5174
+echo   Backend:  http://localhost:3002/api
 echo   If a window shows an error, it will stay open for you to read.
 echo   Close those windows to stop the servers.
 echo ============================================================
@@ -195,7 +203,7 @@ echo ============================================================
 echo [ERROR] npm (Node Package Manager) was not found.
 echo.
 echo Make sure Node.js is installed correctly (npm is usually bundled
-echo with Node.js). If you just installed it, please restart your 
+echo with Node.js). If you just installed it, please restart your
 echo computer or command prompt window and try again.
 echo ============================================================
 echo.
@@ -250,4 +258,3 @@ echo ------------------------------------------------------------
 echo.
 pause
 exit /b 1
-
