@@ -46,9 +46,12 @@ export function createDramaRouter(
   router.get('/projects', (req, res) => {
     try {
       const mode = req.query.mode as 'video' | 'image' | undefined;
+      console.log('[Drama] GET /projects mode=%s', mode);
       const projects = dramaService.listProjects(mode);
+      console.log('[Drama] Listed %d projects', projects.length);
       res.json(projects);
     } catch (err) {
+      console.error('[Drama] List projects FAILED:', (err as Error).message, (err as Error).stack);
       res.status(500).json({ error: (err as Error).message });
     }
   });
