@@ -604,11 +604,13 @@ export function DramaProjectPage() {
           <div className="flex-1 overflow-y-auto p-4">
             {activeTab === 'outline' && selectedEpisode && (
               <OutlineTab episode={selectedEpisode} onGenerate={(tier) => outlineMutation.mutate(tier)} isGenerating={outlineMutation.isPending}
-                onReset={() => resetStep('outline')} />
+                onReset={() => resetStep('outline')}
+                onUpdateEpisode={(data) => dramaApi.updateEpisode(selectedEpisodeId!, data).then(() => queryClient.invalidateQueries({ queryKey: ['drama', 'episodes'] }))} />
             )}
             {activeTab === 'script' && selectedEpisode && (
               <ScriptTab episode={selectedEpisode} onGenerate={(tier) => scriptMutation.mutate(tier)} isGenerating={scriptMutation.isPending}
-                onReset={() => resetStep('script')} />
+                onReset={() => resetStep('script')}
+                onUpdateEpisode={(data) => dramaApi.updateEpisode(selectedEpisodeId!, data).then(() => queryClient.invalidateQueries({ queryKey: ['drama', 'episodes'] }))} />
             )}
             {activeTab === 'characters' && (
               <CharactersTab
@@ -856,19 +858,53 @@ function ResetButton({ onReset, hasData }: { onReset: () => void; hasData: boole
   );
 }
 
-function OutlineTab({ episode, onGenerate, isGenerating, onReset }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean; onReset: () => void }) {
+function OutlineTab({ episode, onGenerate, isGenerating, onReset, onUpdateEpisode }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean; onReset: () => void; onUpdateEpisode: (data: Partial<DramaEpisode>) => void }) {
   const { t } = useTranslation();
   const [writerTier, setWriterTier] = useState('professional');
+  const [editingSynopsis, setEditingSynopsis] = useState(false);
+  const [synopsisText, setSynopsisText] = useState(episode.synopsis || '');
+  const [editingBeatIdx, setEditingBeatIdx] = useState<number | null>(null);
+  const [beatText, setBeatText] = useState('');
   const beats = episode.beats ?? [];
+
+  const saveSynopsis = () => {
+    onUpdateEpisode({ synopsis: synopsisText });
+    setEditingSynopsis(false);
+  };
+
+  const saveBeat = (idx: number) => {
+    const updated = [...beats];
+    updated[idx] = { ...updated[idx], description: beatText };
+    onUpdateEpisode({ beats: updated });
+    setEditingBeatIdx(null);
+  };
 
   return (
     <div className="space-y-4 max-w-3xl">
-      {episode.synopsis && (
-        <div className="card rounded-2xl p-4">
-          <h3 className="text-sm font-medium text-c-text mb-1.5">{t('drama.synopsis')}</h3>
-          <p className="text-sm text-c-muted leading-relaxed">{episode.synopsis}</p>
+      <div className="card rounded-2xl p-4">
+        <div className="flex items-center justify-between mb-1.5">
+          <h3 className="text-sm font-medium text-c-text">{t('drama.synopsis')}</h3>
+          {!editingSynopsis && (
+            <button onClick={() => { setSynopsisText(episode.synopsis || ''); setEditingSynopsis(true); }} className="p-1 rounded-lg text-c-dim hover:text-accent-primary hover:bg-c-elevated transition-colors">
+              <Eye className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
-      )}
+        {editingSynopsis ? (
+          <div className="space-y-2">
+            <textarea value={synopsisText} onChange={e => setSynopsisText(e.target.value)} rows={4} className="input text-sm rounded-xl resize-none w-full" />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setEditingSynopsis(false)} className="btn-ghost text-xs rounded-full">{t('common.cancel')}</button>
+              <button onClick={saveSynopsis} className="btn-primary flex items-center gap-1.5 text-xs rounded-full"><Save className="w-3 h-3" />{t('common.save')}</button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-c-muted leading-relaxed cursor-pointer hover:bg-c-elevated/50 rounded-lg p-1 -m-1 transition-colors"
+            onClick={() => { setSynopsisText(episode.synopsis || ''); setEditingSynopsis(true); }}>
+            {episode.synopsis || <span className="text-c-dim italic">{t('drama.clickToEdit')}</span>}
+          </p>
+        )}
+      </div>
 
       <WriterTierSelector value={writerTier} onChange={setWriterTier} />
 
@@ -894,7 +930,20 @@ function OutlineTab({ episode, onGenerate, isGenerating, onReset }: { episode: D
                   <span>{beat.durationEstimate}s</span>
                 </div>
               </div>
-              <p className="text-sm text-c-muted">{beat.description}</p>
+              {editingBeatIdx === i ? (
+                <div className="space-y-2">
+                  <textarea value={beatText} onChange={e => setBeatText(e.target.value)} rows={3} className="input text-sm rounded-lg resize-none w-full" />
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => setEditingBeatIdx(null)} className="btn-ghost text-xs rounded-full">{t('common.cancel')}</button>
+                    <button onClick={() => saveBeat(i)} className="btn-primary flex items-center gap-1.5 text-xs rounded-full"><Save className="w-3 h-3" />{t('common.save')}</button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-c-muted cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 rounded-lg p-1 -m-1 transition-colors"
+                  onClick={() => { setBeatText(beat.description); setEditingBeatIdx(i); }}>
+                  {beat.description}
+                </p>
+              )}
             </div>
           ))}
           <div className="text-xs text-c-dim text-right">
@@ -910,9 +959,16 @@ function OutlineTab({ episode, onGenerate, isGenerating, onReset }: { episode: D
 
 // ── Script Tab ──
 
-function ScriptTab({ episode, onGenerate, isGenerating, onReset }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean; onReset: () => void }) {
+function ScriptTab({ episode, onGenerate, isGenerating, onReset, onUpdateEpisode }: { episode: DramaEpisode; onGenerate: (tier?: string) => void; isGenerating: boolean; onReset: () => void; onUpdateEpisode: (data: Partial<DramaEpisode>) => void }) {
   const { t } = useTranslation();
   const [writerTier, setWriterTier] = useState('professional');
+  const [editing, setEditing] = useState(false);
+  const [scriptText, setScriptText] = useState(episode.script || '');
+
+  const saveScript = () => {
+    onUpdateEpisode({ script: scriptText });
+    setEditing(false);
+  };
 
   return (
     <div className="space-y-4 max-w-3xl">
@@ -924,15 +980,34 @@ function ScriptTab({ episode, onGenerate, isGenerating, onReset }: { episode: Dr
           {isGenerating ? t('drama.generatingScript') : t('drama.generateScript')}
         </button>
         <ResetButton onReset={onReset} hasData={!!episode.script} />
+        {episode.script && !editing && (
+          <button onClick={() => { setScriptText(episode.script); setEditing(true); }} className="btn-ghost flex items-center gap-1.5 text-xs rounded-full">
+            <Eye className="w-3.5 h-3.5" />{t('common.edit')}
+          </button>
+        )}
       </div>
 
-      {episode.script ? (
+      {editing ? (
+        <div className="card rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-c-text">{t('drama.script')}</h3>
+            <span className="text-xs text-c-dim">v{episode.scriptVersion}</span>
+          </div>
+          <textarea value={scriptText} onChange={e => setScriptText(e.target.value)} rows={25}
+            className="input text-sm font-mono rounded-xl resize-y w-full leading-relaxed" />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setEditing(false)} className="btn-ghost text-xs rounded-full">{t('common.cancel')}</button>
+            <button onClick={saveScript} className="btn-primary flex items-center gap-1.5 text-xs rounded-full"><Save className="w-3 h-3" />{t('common.save')}</button>
+          </div>
+        </div>
+      ) : episode.script ? (
         <div className="card rounded-2xl p-4">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium text-c-text">{t('drama.script')}</h3>
             <span className="text-xs text-c-dim">v{episode.scriptVersion}</span>
           </div>
-          <pre className="text-sm text-c-muted whitespace-pre-wrap font-mono leading-relaxed max-h-[60vh] overflow-y-auto">
+          <pre className="text-sm text-c-muted whitespace-pre-wrap font-mono leading-relaxed max-h-[60vh] overflow-y-auto cursor-pointer hover:bg-c-elevated/50 rounded-lg p-2 -m-1 transition-colors"
+            onClick={() => { setScriptText(episode.script); setEditing(true); }}>
             {episode.script}
           </pre>
         </div>
@@ -1369,6 +1444,7 @@ function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateSto
                           onGeneratePrompt={() => promptMutation.mutate(shot.id)}
                           isGeneratingPrompt={promptMutation.isPending && promptMutation.variables === shot.id}
                           onUpdateDuration={(d) => updateShotDuration(shot.id, d)}
+                          onUpdateShot={(data) => dramaApi.updateShot(shot.id, data).then(() => queryClient.invalidateQueries({ queryKey: ['drama', 'scenes'] }))}
                         />
                       ))}
                     </div>
@@ -1387,13 +1463,22 @@ function StoryboardTab({ projectId, episodeId, scenes, characters, onGenerateSto
   );
 }
 
-function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt, onUpdateDuration }: {
+function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt, onUpdateDuration, onUpdateShot }: {
   shot: DramaShot; characters: DramaCharacter[]; onGeneratePrompt: () => void; isGeneratingPrompt: boolean;
-  onUpdateDuration: (duration: number) => void;
+  onUpdateDuration: (duration: number) => void; onUpdateShot?: (data: Partial<DramaShot>) => void;
 }) {
   const { t } = useTranslation();
   const [showPrompt, setShowPrompt] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    description: shot.description || '',
+    dialogueLine: shot.dialogueLine || '',
+    cameraAngle: shot.cameraAngle || 'medium',
+    cameraMovement: shot.cameraMovement || 'static',
+    transitionOut: shot.transitionOut || 'cut',
+    prompt: shot.prompt || '',
+  });
   const shotChars = characters.filter(c => shot.characterIds.includes(c.id));
 
   const STATUS_COLORS: Record<string, string> = {
@@ -1404,6 +1489,11 @@ function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt, onUp
   };
   const STATUS_KEYS: Record<string, string> = {
     pending: 'statusPending', generating: 'statusGenerating', completed: 'statusCompleted', failed: 'statusFailed',
+  };
+
+  const saveEdit = () => {
+    if (onUpdateShot) onUpdateShot(editForm as Partial<DramaShot>);
+    setEditing(false);
   };
 
   return (
@@ -1442,31 +1532,86 @@ function ShotCard({ shot, characters, onGeneratePrompt, isGeneratingPrompt, onUp
                 {t('drama.consistencyScore')}: {(shot.consistencyScore * 100).toFixed(0)}%
               </span>
             )}
-          </div>
-          <p className="text-xs text-c-muted mb-1.5">{shot.description}</p>
-          <div className="flex flex-wrap gap-1.5 text-xs">
-            <span className="px-1.5 py-0.5 rounded-full bg-c-elevated text-c-dim">{t(`drama.${ANGLE_KEYS[shot.cameraAngle] || 'medium'}`)}</span>
-            <span className="px-1.5 py-0.5 rounded-full bg-c-elevated text-c-dim">{t(`drama.${MOVEMENT_KEYS[shot.cameraMovement] || 'static'}`)}</span>
-            <span className="px-1.5 py-0.5 rounded-full bg-c-elevated text-c-dim">{t(`drama.${TRANSITION_KEYS[shot.transitionOut] || 'cut'}`)}</span>
-            {shotChars.map(c => (
-              <span key={c.id} className="px-1.5 py-0.5 rounded-full bg-accent-muted text-accent-primary">{c.name}</span>
-            ))}
-          </div>
-          {shot.dialogueLine && <p className="text-xs text-cyan-400 mt-1.5 italic">"{shot.dialogueLine}"</p>}
-          <div className="mt-2 flex items-center gap-2">
-            <button onClick={onGeneratePrompt} disabled={isGeneratingPrompt}
-              className="btn-ghost flex items-center gap-1 text-xs rounded-full px-3 py-1 disabled:opacity-40">
-              {isGeneratingPrompt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-              {t('drama.generatePrompt')}
-            </button>
-            {shot.prompt && (
-              <button onClick={() => setShowPrompt(!showPrompt)}
-                className="btn-ghost flex items-center gap-1 text-xs rounded-full px-3 py-1">
-                <Eye className="w-3 h-3" />{t('drama.prompt')}
+            {!editing && onUpdateShot && (
+              <button onClick={() => { setEditForm({ description: shot.description || '', dialogueLine: shot.dialogueLine || '', cameraAngle: shot.cameraAngle || 'medium', cameraMovement: shot.cameraMovement || 'static', transitionOut: shot.transitionOut || 'cut', prompt: shot.prompt || '' }); setEditing(true); }}
+                className="p-1 rounded-lg text-c-dim hover:text-accent-primary hover:bg-c-elevated transition-colors ml-auto">
+                <Eye className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
-          {showPrompt && shot.prompt && (
+
+          {editing ? (
+            <div className="space-y-2 mt-2">
+              <div>
+                <label className="block text-xs text-c-dim mb-0.5">{t('drama.sceneDescription')}</label>
+                <textarea value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} rows={2} className="input text-xs rounded-lg resize-none w-full" />
+              </div>
+              <div>
+                <label className="block text-xs text-c-dim mb-0.5">{t('drama.dialogueLine')}</label>
+                <input value={editForm.dialogueLine} onChange={e => setEditForm(f => ({ ...f, dialogueLine: e.target.value }))} className="input text-xs rounded-lg w-full" />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-xs text-c-dim mb-0.5">{t('drama.cameraAngle')}</label>
+                  <select value={editForm.cameraAngle} onChange={e => setEditForm(f => ({ ...f, cameraAngle: e.target.value as CameraAngle }))} className="input text-xs rounded-lg w-full">
+                    {CAMERA_ANGLES.map(a => <option key={a} value={a}>{t(`drama.${ANGLE_KEYS[a] || a}`)}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-c-dim mb-0.5">{t('drama.cameraMovement')}</label>
+                  <select value={editForm.cameraMovement} onChange={e => setEditForm(f => ({ ...f, cameraMovement: e.target.value as CameraMovement }))} className="input text-xs rounded-lg w-full">
+                    {CAMERA_MOVEMENTS.map(m => <option key={m} value={m}>{t(`drama.${MOVEMENT_KEYS[m] || m}`)}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-c-dim mb-0.5">{t('drama.transition')}</label>
+                  <select value={editForm.transitionOut} onChange={e => setEditForm(f => ({ ...f, transitionOut: e.target.value as ShotTransition }))} className="input text-xs rounded-lg w-full">
+                    {TRANSITIONS.map(tr => <option key={tr} value={tr}>{t(`drama.${TRANSITION_KEYS[tr] || tr}`)}</option>)}
+                  </select>
+                </div>
+              </div>
+              {editForm.prompt && (
+                <div>
+                  <label className="block text-xs text-c-dim mb-0.5">{t('drama.prompt')}</label>
+                  <textarea value={editForm.prompt} onChange={e => setEditForm(f => ({ ...f, prompt: e.target.value }))} rows={3} className="input text-xs rounded-lg resize-none w-full font-mono" />
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setEditing(false)} className="btn-ghost text-xs rounded-full">{t('common.cancel')}</button>
+                <button onClick={saveEdit} className="btn-primary flex items-center gap-1.5 text-xs rounded-full"><Save className="w-3 h-3" />{t('common.save')}</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="text-xs text-c-muted mb-1.5">{shot.description}</p>
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                <span className="px-1.5 py-0.5 rounded-full bg-c-elevated text-c-dim">{t(`drama.${ANGLE_KEYS[shot.cameraAngle] || 'medium'}`)}</span>
+                <span className="px-1.5 py-0.5 rounded-full bg-c-elevated text-c-dim">{t(`drama.${MOVEMENT_KEYS[shot.cameraMovement] || 'static'}`)}</span>
+                <span className="px-1.5 py-0.5 rounded-full bg-c-elevated text-c-dim">{t(`drama.${TRANSITION_KEYS[shot.transitionOut] || 'cut'}`)}</span>
+                {shotChars.map(c => (
+                  <span key={c.id} className="px-1.5 py-0.5 rounded-full bg-accent-muted text-accent-primary">{c.name}</span>
+                ))}
+              </div>
+              {shot.dialogueLine && <p className="text-xs text-cyan-400 mt-1.5 italic">"{shot.dialogueLine}"</p>}
+            </>
+          )}
+
+          {!editing && (
+            <div className="mt-2 flex items-center gap-2">
+              <button onClick={onGeneratePrompt} disabled={isGeneratingPrompt}
+                className="btn-ghost flex items-center gap-1 text-xs rounded-full px-3 py-1 disabled:opacity-40">
+                {isGeneratingPrompt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                {t('drama.generatePrompt')}
+              </button>
+              {shot.prompt && (
+                <button onClick={() => setShowPrompt(!showPrompt)}
+                  className="btn-ghost flex items-center gap-1 text-xs rounded-full px-3 py-1">
+                  <Eye className="w-3 h-3" />{t('drama.prompt')}
+                </button>
+              )}
+            </div>
+          )}
+          {!editing && showPrompt && shot.prompt && (
             <div className="mt-2 space-y-1.5">
               <div className="bg-c-elevated border border-c-border rounded-xl p-2">
                 <div className="text-xs text-c-dim mb-0.5">{t('drama.prompt')}:</div>
