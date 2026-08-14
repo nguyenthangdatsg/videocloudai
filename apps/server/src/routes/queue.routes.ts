@@ -12,7 +12,12 @@ export function createQueueRouter(): Router {
   });
 
   router.get('/stats', (_req: Request, res: Response) => {
-    res.json(getJobQueue().getStats());
+    try {
+      res.json(getJobQueue().getStats());
+    } catch (err) {
+      console.error('[Queue] GET /stats FAILED:', (err as Error).message, (err as Error).stack);
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   router.get('/:id', (req: Request, res: Response) => {

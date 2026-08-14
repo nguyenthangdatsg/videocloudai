@@ -105,6 +105,18 @@ export function createApp() {
   app.use('/api/frame-video-library', createFrameVideoLibraryRouter());
   app.use('/api/script-studio', createScriptStudioRouter());
 
+  // Health check — verifies server + DB are working
+  app.get('/api/health', (_req, res) => {
+    try {
+      const { dbGet } = require('./db');
+      const row = dbGet<{ n: number }>('SELECT 1 as n');
+      res.json({ status: 'ok', db: row?.n === 1 ? 'connected' : 'error', timestamp: new Date().toISOString() });
+    } catch (err) {
+      console.error('[Health] DB check failed:', (err as Error).message);
+      res.status(500).json({ status: 'error', db: 'failed', error: (err as Error).message });
+    }
+  });
+
   // Queue WebSocket events endpoint (SSE)
   app.get('/api/events', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');

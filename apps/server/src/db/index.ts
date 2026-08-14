@@ -25,11 +25,26 @@ export function getDb(): Database.Database {
   const dir = path.dirname(dbPath);
   fs.mkdirSync(dir, { recursive: true });
 
-  console.log('[DB] Opening database at:', dbPath);
-  db = new Database(dbPath);
+  console.log('[DB] __dirname:', __dirname);
+  console.log('[DB] monorepoRoot:', monorepoRoot);
+  console.log('[DB] rawDbPath:', rawDbPath);
+  console.log('[DB] Resolved database path:', dbPath);
+  console.log('[DB] Database dir exists:', fs.existsSync(dir));
+  try {
+    db = new Database(dbPath);
+    console.log('[DB] Database opened OK');
+  } catch (e) {
+    console.error('[DB] FAILED to open database:', (e as Error).message);
+    throw e;
+  }
   console.log('[DB] Executing schema SQL...');
-  db.exec(SCHEMA_SQL);
-  console.log('[DB] Schema OK');
+  try {
+    db.exec(SCHEMA_SQL);
+    console.log('[DB] Schema OK');
+  } catch (e) {
+    console.error('[DB] Schema execution FAILED:', (e as Error).message);
+    throw e;
+  }
 
   // Column migrations — safe to re-run; ALTER TABLE fails silently if column exists
   const columnMigrations = [
