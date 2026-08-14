@@ -751,7 +751,16 @@ export const dramaApi = {
   // Projects
   listProjects: (mode?: 'video' | 'image') => api.get<DramaProject[]>('/drama/projects', { params: { mode } }).then(r => r.data),
   getProject: (id: string) => api.get<DramaProject>(`/drama/projects/${id}`).then(r => r.data),
-  createProject: (data: CreateDramaProjectInput) => api.post<DramaProject>('/drama/projects', data).then(r => r.data),
+  createProject: (data: CreateDramaProjectInput) => {
+    console.log('[Drama] Creating project:', JSON.stringify(data));
+    return api.post<DramaProject>('/drama/projects', data).then(r => {
+      console.log('[Drama] Project created OK:', r.data.id);
+      return r.data;
+    }).catch(err => {
+      console.error('[Drama] Create project FAILED:', err.response?.status, err.response?.data, err.message);
+      throw err;
+    });
+  },
   updateProject: (id: string, data: Partial<DramaProject>) => api.patch<DramaProject>(`/drama/projects/${id}`, data).then(r => r.data),
   deleteProject: (id: string) => api.delete(`/drama/projects/${id}`),
 

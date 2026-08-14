@@ -25,8 +25,11 @@ export function getDb(): Database.Database {
   const dir = path.dirname(dbPath);
   fs.mkdirSync(dir, { recursive: true });
 
+  console.log('[DB] Opening database at:', dbPath);
   db = new Database(dbPath);
+  console.log('[DB] Executing schema SQL...');
   db.exec(SCHEMA_SQL);
+  console.log('[DB] Schema OK');
 
   // Column migrations — safe to re-run; ALTER TABLE fails silently if column exists
   const columnMigrations = [
@@ -170,9 +173,17 @@ export function getDb(): Database.Database {
     `ALTER TABLE drama_projects ADD COLUMN ai_long_scene_mode TEXT NOT NULL DEFAULT 'freeze_hold'`,
     `ALTER TABLE drama_projects ADD COLUMN pacing TEXT NOT NULL DEFAULT 'normal'`,
   ];
+  let migrationOk = 0, migrationSkip = 0;
   for (const sql of columnMigrations) {
-    try { db.exec(sql); } catch { /* column already exists or index already exists */ }
+    try { db.exec(sql); migrationOk++; } catch (e) {
+      migrationSkip++;
+      const msg = (e as Error).message || '';
+      if (!msg.includes('duplicate column') && !msg.includes('already exists')) {
+        console.warn('[DB] Migration warning:', msg, '| SQL:', sql.substring(0, 80));
+      }
+    }
   }
+  console.log('[DB] Migrations: %d applied, %d skipped (already exist)', migrationOk, migrationSkip);
 
   // Seed default templates if database does not have them
   try {

@@ -65,9 +65,12 @@ export function createDramaRouter(
 
   router.post('/projects', (req, res) => {
     try {
+      console.log('[Drama] POST /projects body:', JSON.stringify(req.body));
       const project = dramaService.createProject(req.body);
+      console.log('[Drama] Project created:', project.id);
       res.status(201).json(project);
     } catch (err) {
+      console.error('[Drama] Create project FAILED:', (err as Error).message, (err as Error).stack);
       res.status(500).json({ error: (err as Error).message });
     }
   });

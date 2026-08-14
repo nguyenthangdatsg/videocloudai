@@ -42,14 +42,18 @@ export class DramaService {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const mode = input.mode || 'video';
+    console.log('[DramaService] createProject id=%s title=%s mode=%s genre=%s lang=%s', id, input.title, mode, input.genre, input.language);
+    console.log('[DramaService] INSERT params:', JSON.stringify([id, input.title, input.description ?? '', input.genre, input.tone, input.artStyle, input.aspectRatio, input.language, input.episodeFormat, input.durationTarget, input.episodeCount ?? 1, input.storyInput ?? '', input.inputMode ?? 'idea', mode, now, now]));
     dbRun(
       `INSERT INTO drama_projects (id, title, description, genre, tone, art_style, aspect_ratio, language, episode_format, duration_target, status, current_stage, episode_count, story_input, input_mode, mode, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 'setup', ?, ?, ?, ?, ?, ?)`,
       [id, input.title, input.description ?? '', input.genre, input.tone, input.artStyle, input.aspectRatio, input.language, input.episodeFormat, input.durationTarget, input.episodeCount ?? 1, input.storyInput ?? '', input.inputMode ?? 'idea', mode, now, now]
     );
+    console.log('[DramaService] Project row inserted OK');
 
     // Create initial episode(s)
     const epCount = input.episodeFormat === 'series' ? (input.episodeCount ?? 1) : 1;
+    console.log('[DramaService] Creating %d episode(s)', epCount);
     for (let i = 1; i <= epCount; i++) {
       const epId = crypto.randomUUID();
       dbRun(
@@ -57,9 +61,12 @@ export class DramaService {
          VALUES (?, ?, ?, ?, ?, ?)`,
         [epId, id, i, `Episode ${i}`, now, now]
       );
+      console.log('[DramaService] Episode %d created id=%s', i, epId);
     }
 
-    return this.getProject(id)!;
+    const project = this.getProject(id);
+    console.log('[DramaService] getProject result:', project ? 'found' : 'NOT FOUND');
+    return project!;
   }
 
   getProject(id: string): DramaProject | undefined {
