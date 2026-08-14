@@ -114,15 +114,33 @@ echo.
 :: Go back to project root
 cd /d "%~dp0"
 
-:: Start backend in a new window
-start "VideoCloudAI Backend" cmd /c "cd /d "%~dp0apps\server" && call npm run dev"
+:: Start backend — cmd /k keeps window open if it crashes so user can see the error
+start "VideoCloudAI Backend" cmd /k "cd /d "%~dp0apps\server" && echo [Backend] Starting on port 3002... && call npm run dev"
 
-:: Start frontend in a new window
-start "VideoCloudAI Frontend" cmd /c "cd /d "%~dp0apps\web" && call npm run dev"
+:: Wait a moment for backend to initialize before starting frontend
+timeout /t 3 /nobreak >nul
+
+:: Verify backend is running before starting frontend
+netstat -ano | findstr ":3002 " | findstr "LISTENING" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo ============================================================
+    echo [ERROR] Backend failed to start on port 3002!
+    echo         Check the "VideoCloudAI Backend" window for errors.
+    echo         Log file: logs\backend.log
+    echo ============================================================
+    echo.
+    echo Press any key to start frontend anyway...
+    pause
+)
+
+:: Start frontend — cmd /k keeps window open if it crashes
+start "VideoCloudAI Frontend" cmd /k "cd /d "%~dp0apps\web" && echo [Frontend] Starting on port 5174... && call npm run dev"
 
 echo.
 echo ============================================================
 echo   Dev servers launched in separate windows!
+echo   If a window shows an error, it will stay open for you to read.
 echo   Close those windows to stop the servers.
 echo ============================================================
 echo.
