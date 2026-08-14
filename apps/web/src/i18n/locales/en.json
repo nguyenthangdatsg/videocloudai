@@ -1604,6 +1604,8 @@
     "setAllDuration": "Set all",
     "reset": "Reset",
     "confirmReset": "Are you sure you want to reset this step? This will delete all data for this step.",
+    "resetEpisode": "Reset Episode",
+    "confirmResetEpisode": "Are you sure you want to reset Episode {{n}}? This will clear outline, script, storyboard, and all generated media for this episode.",
     "generateImagesAPI": "Generate Images",
     "allImagesGenerated": "All images generated",
     "generateAIVideos": "Generate AI Videos",

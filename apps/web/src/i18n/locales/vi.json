@@ -1604,6 +1604,8 @@
     "setAllDuration": "Đặt tất cả",
     "reset": "Đặt lại",
     "confirmReset": "Bạn có chắc muốn đặt lại bước này? Tất cả dữ liệu của bước này sẽ bị xóa.",
+    "resetEpisode": "Đặt lại tập",
+    "confirmResetEpisode": "Bạn có chắc muốn đặt lại Tập {{n}}? Thao tác này sẽ xóa cốt truyện, kịch bản, storyboard và tất cả media đã tạo cho tập này.",
     "generateImagesAPI": "Tạo ảnh",
     "allImagesGenerated": "Đã tạo tất cả ảnh",
     "generateAIVideos": "Tạo video AI",

@@ -542,28 +542,49 @@ export function DramaProjectPage() {
             {t('drama.episodes')}
           </div>
           {episodes?.map(ep => (
-            <button
-              key={ep.id}
-              onClick={() => setActiveEpisode(ep.id)}
-              className={clsx(
-                'w-full text-left px-2.5 py-2 rounded-xl text-sm transition-colors',
-                selectedEpisodeId === ep.id
-                  ? 'bg-accent-muted text-accent-primary font-medium'
-                  : 'text-c-muted hover:bg-c-elevated hover:text-c-text'
-              )}
-            >
-              {t('drama.episode', { n: ep.episodeNumber })}
-              {ep.title && ep.title !== `Episode ${ep.episodeNumber}` && (
-                <span className="block text-xs text-c-dim truncate mt-0.5">{ep.title}</span>
-              )}
-              {ep.reviewScore != null && (
-                <span className={clsx(
-                  'text-xs tabular-nums',
-                  ep.reviewScore >= 80 ? 'text-emerald-400' :
-                  ep.reviewScore >= 60 ? 'text-yellow-400' : 'text-red-400'
-                )}>{ep.reviewScore}/100</span>
-              )}
-            </button>
+            <div key={ep.id} className="flex items-center gap-1 group">
+              <button
+                onClick={() => setActiveEpisode(ep.id)}
+                className={clsx(
+                  'flex-1 text-left px-2.5 py-2 rounded-xl text-sm transition-colors min-w-0',
+                  selectedEpisodeId === ep.id
+                    ? 'bg-accent-muted text-accent-primary font-medium'
+                    : 'text-c-muted hover:bg-c-elevated hover:text-c-text'
+                )}
+              >
+                {t('drama.episode', { n: ep.episodeNumber })}
+                {ep.title && ep.title !== `Episode ${ep.episodeNumber}` && (
+                  <span className="block text-xs text-c-dim truncate mt-0.5">{ep.title}</span>
+                )}
+                {ep.reviewScore != null && (
+                  <span className={clsx(
+                    'text-xs tabular-nums',
+                    ep.reviewScore >= 80 ? 'text-emerald-400' :
+                    ep.reviewScore >= 60 ? 'text-yellow-400' : 'text-red-400'
+                  )}>{ep.reviewScore}/100</span>
+                )}
+              </button>
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!window.confirm(t('drama.confirmResetEpisode', { n: ep.episodeNumber }))) return;
+                  try {
+                    // Reset episode data
+                    await dramaApi.updateEpisode(ep.id, { beats: [], synopsis: '', script: '', durationEstimate: 0, audioFilename: null, audioDuration: null, srtFilename: null, videoFilename: null } as Partial<DramaEpisode>);
+                    // Delete scenes for this episode
+                    const epScenes = await dramaApi.listScenes(ep.id);
+                    await Promise.all(epScenes.map(s => dramaApi.deleteScene(s.id)));
+                    queryClient.invalidateQueries({ queryKey: ['drama'] });
+                  } catch (err) {
+                    onMutationError(err);
+                  }
+                }}
+                title={t('drama.resetEpisode')}
+                className="shrink-0 p-1.5 rounded-lg text-c-dim opacity-0 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-400 transition-all"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            </div>
           ))}
         </div>
 
