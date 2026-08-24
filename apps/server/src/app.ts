@@ -25,6 +25,7 @@ import { createDramaRouter } from './routes/drama.routes';
 import { createMediaLibraryRouter } from './routes/media-library.routes';
 import { createFrameVideoLibraryRouter } from './routes/frame-video-library.routes';
 import { createScriptStudioRouter } from './routes/script-studio.routes';
+import { createTransformRouter } from './routes/transform.routes';
 import { DramaService } from './services/drama.service';
 import { ChannelService } from './services/channel.service';
 import { DistributionService } from './services/distribution.service';
@@ -32,6 +33,7 @@ import { PlatformUploadService } from './services/platform-upload.service';
 import { SceneLibraryService } from './services/scene-library.service';
 import { GenerationService } from './services/generation.service';
 import { VideoService } from './services/video.service';
+import { TransformService } from './services/transform.service';
 import { NarrationService } from './services/narration.service';
 import { SubtitleService } from './services/subtitle.service';
 import { getJobQueue } from './queue/queue';
@@ -69,6 +71,7 @@ export function createApp() {
   const narrationService = new NarrationService();
   const subtitleService = new SubtitleService();
   const videoService = new VideoService(libraryService, narrationService, subtitleService);
+  const transformService = new TransformService();
 
   registerHandlers(generationService, videoService, platformUploadService, narrationService, subtitleService);
   getJobQueue().resumePendingJobs();
@@ -104,6 +107,7 @@ export function createApp() {
   app.use('/api/media-library', createMediaLibraryRouter());
   app.use('/api/frame-video-library', createFrameVideoLibraryRouter());
   app.use('/api/script-studio', createScriptStudioRouter());
+  app.use('/api/transform', createTransformRouter(transformService));
 
   // Health check — verifies server + DB are working
   app.get('/api/health', (_req, res) => {
