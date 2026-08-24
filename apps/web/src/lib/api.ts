@@ -1426,3 +1426,53 @@ export const scriptStudioApi = {
   },
 };
 
+// ── Transform Studio ──
+
+export const transformApi = {
+  // Projects
+  listProjects: () =>
+    api.get<{ projects: any[] }>('/transform/projects').then((r) => r.data.projects),
+
+  getProject: (id: string) =>
+    api.get<{ project: any }>(`/transform/projects/${id}`).then((r) => r.data.project),
+
+  createProject: (data: { mode: string; lockedCameraAnchor?: string; sourceImagePath?: string; instruction?: string }) =>
+    api.post<{ project: any }>('/transform/projects', data).then((r) => r.data.project),
+
+  updateProject: (id: string, data: Record<string, unknown>) =>
+    api.put<{ project: any }>(`/transform/projects/${id}`, data).then((r) => r.data.project),
+
+  deleteProject: (id: string) =>
+    api.delete(`/transform/projects/${id}`),
+
+  // Quick mode
+  createQuickJob: (data: { sourceImagePath: string; instruction: string }) =>
+    api.post<{ project: any }>('/transform/quick', data).then((r) => r.data.project),
+
+  convertToAdvanced: (id: string) =>
+    api.post<{ project: any }>(`/transform/quick/${id}/to-advanced`).then((r) => r.data.project),
+
+  // Segments
+  addSegment: (projectId: string, data: { prompt: string; lighting: string; order: number }) =>
+    api.post<{ segment: any }>(`/transform/projects/${projectId}/segments`, data).then((r) => r.data.segment),
+
+  updateSegment: (id: string, data: Record<string, unknown>) =>
+    api.put<{ segment: any }>(`/transform/segments/${id}`, data).then((r) => r.data.segment),
+
+  deleteSegment: (id: string) =>
+    api.delete(`/transform/segments/${id}`),
+
+  reorderSegments: (projectId: string, segmentIds: string[]) =>
+    api.post(`/transform/projects/${projectId}/segments/reorder`, { segmentIds }),
+
+  // Prompts & assembly
+  buildPrompts: (projectId: string) =>
+    api.post<{ prompts: Array<{ segmentId: string; composedPrompt: string }> }>(`/transform/projects/${projectId}/build-prompts`).then((r) => r.data.prompts),
+
+  deriveAnchor: (projectId: string) =>
+    api.post<{ anchor: string }>(`/transform/projects/${projectId}/derive-anchor`).then((r) => r.data.anchor),
+
+  assemble: (projectId: string) =>
+    api.post<{ project: any; outputPath: string; url: string }>(`/transform/projects/${projectId}/assemble`).then((r) => r.data),
+};
+
