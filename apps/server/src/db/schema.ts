@@ -437,4 +437,31 @@ CREATE TABLE IF NOT EXISTS drama_shots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_drama_shots_scene ON drama_shots(scene_id);
+
+CREATE TABLE IF NOT EXISTS transform_projects (
+  id TEXT PRIMARY KEY,
+  mode TEXT NOT NULL DEFAULT 'quick' CHECK(mode IN ('quick', 'advanced')),
+  locked_camera_anchor TEXT NOT NULL DEFAULT '',
+  source_image_path TEXT,
+  instruction TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft',
+  result_path TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS transform_segments (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  segment_order INTEGER NOT NULL DEFAULT 0,
+  prompt TEXT NOT NULL DEFAULT '',
+  lighting TEXT NOT NULL DEFAULT 'natural daylight',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'generating', 'done', 'failed')),
+  asset_path TEXT,
+  retries INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  FOREIGN KEY (project_id) REFERENCES transform_projects(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_transform_segments_project ON transform_segments(project_id);
 `;
