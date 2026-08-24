@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Wand2 } from 'lucide-react';
 import { QuickMode } from './QuickMode';
+import { SetupPanel } from './AdvancedMode/SetupPanel';
+import { SegmentList } from './AdvancedMode/SegmentList';
+import { AssemblePanel } from './AdvancedMode/AssemblePanel';
 
 export function TransformStudio() {
   const { t } = useTranslation();
@@ -44,10 +47,14 @@ export function TransformStudio() {
         />
       )}
       {mode === 'advanced' && (
-        <div className="text-gray-500 text-center py-12">
-          {activeProjectId
-            ? `Advanced mode — Project: ${activeProjectId}`
-            : t('transformStudio.noProjects')}
+        <div className="space-y-6">
+          <SetupPanel activeProjectId={activeProjectId} onProjectCreated={setActiveProjectId} />
+          {activeProjectId && (
+            <>
+              <SegmentList projectId={activeProjectId} />
+              <AssemblePanel projectId={activeProjectId} />
+            </>
+          )}
         </div>
       )}
     </div>

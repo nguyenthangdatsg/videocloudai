@@ -20,6 +20,7 @@ import {
   FileImage,
   Sparkles,
   BookOpen,
+  Wand2,
 } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { useImageGenStore } from '../../store/image-generation';
@@ -54,6 +55,7 @@ export function Sidebar() {
     { path: '/drama', icon: Film, label: t('nav.dramaStudio') },
     { path: '/image-drama', icon: FileImage, label: t('nav.imageDramaStudio') },
     { path: '/script-studio', icon: BookOpen, label: t('nav.scriptStudio') },
+    { path: '/transform', icon: Wand2, label: t('nav.transformStudio') },
     { path: '/channels', icon: Share2, label: t('nav.channels') },
     { path: '/distributions', icon: BarChart2, label: t('nav.distributions') },
     { path: '/settings', icon: Settings, label: t('nav.settings') },

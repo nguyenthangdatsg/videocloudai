@@ -19,6 +19,7 @@ import { MediaLibrary } from './pages/MediaLibrary';
 import { FrameVideoLibrary } from './pages/FrameVideoLibrary';
 import { ScriptStudio } from './pages/script-studio/ScriptStudio';
 import ScriptDoc from './pages/script-studio/ScriptDoc';
+import { TransformStudio } from './pages/transform';
 import { useSSE } from './hooks/useSSE';
 import { ToastContainer } from './components/ui/ToastContainer';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
@@ -52,6 +53,7 @@ function AppShell() {
             <Route path="/image-drama/:id" element={<DramaProjectPage />} />
             <Route path="/script-studio" element={<ScriptStudio />} />
             <Route path="/script-studio/:id" element={<ScriptDoc />} />
+            <Route path="/transform" element={<TransformStudio />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
