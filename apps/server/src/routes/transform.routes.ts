@@ -74,7 +74,8 @@ export function createTransformRouter(transformService: TransformService): Route
       });
       // Auto-derive anchor from source image
       if (sourceImagePath) {
-        await transformService.deriveAnchor(sourceImagePath);
+        const anchor = await transformService.deriveAnchor(sourceImagePath);
+        transformService.updateProject(project.id, { lockedCameraAnchor: anchor });
       }
       const updated = transformService.getProject(project.id);
       res.json({ project: updated });
@@ -137,7 +138,7 @@ export function createTransformRouter(transformService: TransformService): Route
   router.post('/projects/:id/build-prompts', (req, res) => {
     try {
       const result = transformService.buildAllPrompts(req.params.id);
-      res.json(result);
+      res.json({ prompts: result.map(r => ({ segmentId: r.segmentId, composedPrompt: r.prompt })) });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -155,6 +156,7 @@ export function createTransformRouter(transformService: TransformService): Route
         return;
       }
       const anchor = await transformService.deriveAnchor(project.sourceImagePath);
+      transformService.updateProject(req.params.id, { lockedCameraAnchor: anchor });
       res.json({ anchor });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

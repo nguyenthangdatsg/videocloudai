@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Wand2 } from 'lucide-react';
 import { QuickMode } from './QuickMode';
-import { SetupPanel } from './AdvancedMode/SetupPanel';
-import { SegmentList } from './AdvancedMode/SegmentList';
-import { AssemblePanel } from './AdvancedMode/AssemblePanel';
+import SetupPanel from './AdvancedMode/SetupPanel';
+import SegmentList from './AdvancedMode/SegmentList';
+import AssemblePanel from './AdvancedMode/AssemblePanel';
 
 export function TransformStudio() {
   const { t } = useTranslation();
