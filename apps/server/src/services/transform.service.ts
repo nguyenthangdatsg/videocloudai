@@ -5,6 +5,27 @@ import { getSettings } from './settings.service';
 import { resolveFfmpegPathSync } from './import.service';
 import type { VideoTimeline, TimelineClip } from '@videocloudai/shared';
 
+// ── Helpers ──
+
+/** Resolve an image path that may be a URL path (/api/image/file/x.png), a bare filename, or absolute. */
+function resolveImagePath(imagePath: string): string {
+  // Strip URL prefix if present (e.g. "/api/image/file/flow_123.png" -> "flow_123.png")
+  const urlPrefix = '/api/image/file/';
+  let cleaned = imagePath;
+  if (cleaned.startsWith(urlPrefix)) {
+    cleaned = cleaned.slice(urlPrefix.length);
+  }
+
+  // If it's now a bare filename (no directory separators), resolve relative to image cache dir
+  if (!cleaned.includes('/') && !cleaned.includes('\\')) {
+    const imageDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'images');
+    return path.join(imageDir, cleaned);
+  }
+
+  // Otherwise resolve as-is (absolute paths stay absolute, relative paths resolve from CWD)
+  return path.isAbsolute(cleaned) ? cleaned : path.resolve(cleaned);
+}
+
 // ── Types ──
 
 export interface TransformProject {
@@ -254,7 +275,7 @@ export class TransformService {
   // ── LLM Vision — Derive Anchor ──
 
   async deriveAnchor(imagePath: string): Promise<string> {
-    const absolutePath = path.isAbsolute(imagePath) ? imagePath : path.resolve(imagePath);
+    const absolutePath = resolveImagePath(imagePath);
     if (!fs.existsSync(absolutePath)) {
       throw new Error(`Image file not found: ${absolutePath}`);
     }

@@ -61,10 +61,10 @@ export function QuickMode({ onSendToAdvanced }: QuickModeProps) {
 
     try {
       // Step 1: Upload image
-      const { filename } = await uploadMutation.mutateAsync();
+      const { url: uploadedUrl } = await uploadMutation.mutateAsync();
 
-      // Step 2: Create quick job on backend
-      const project = await quickJobMutation.mutateAsync(filename);
+      // Step 2: Create quick job on backend (send URL path so it works for display and convertToAdvanced)
+      const project = await quickJobMutation.mutateAsync(uploadedUrl);
       const projectId = project.id;
 
       // Step 3: Set up quick job state
