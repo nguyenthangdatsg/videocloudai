@@ -312,7 +312,7 @@ export async function downloadDvidsVideo(
 }
 
 export async function importDvidsAsset(dvidsId: string, destDir?: string): Promise<DvidsImportedAsset> {
-  const existing = dbGet<any>(`SELECT * FROM dvids_assets WHERE dvids_id = ?`, dvidsId);
+  const existing = dbGet<any>(`SELECT * FROM dvids_assets WHERE dvids_id = ?`, [dvidsId]);
   if (existing) return toApiRow(existing);
 
   const { filename, localPath, duration, width, height, fileSize, metadata } = await downloadDvidsVideo(dvidsId, destDir);
@@ -323,13 +323,13 @@ export async function importDvidsAsset(dvidsId: string, destDir?: string): Promi
   dbRun(
     `INSERT INTO dvids_assets (dvids_id, title, description, short_description, virin, branch, unit_name, credit, category, keywords, date_published, duration, aspect_ratio, thumbnail_url, local_filename, local_path, width, height, file_size, dvids_url)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    dvidsId, metadata.title, metadata.description, metadata.short_description,
+    [dvidsId, metadata.title, metadata.description, metadata.short_description,
     metadata.virin, metadata.branch, metadata.unit_name, creditJson, metadata.category,
     keywordsJson, metadata.date_published, duration, metadata.aspect_ratio,
-    metadata.thumbnail, filename, localPath, width, height, fileSize, metadata.url,
+    metadata.thumbnail, filename, localPath, width, height, fileSize, metadata.url],
   );
 
-  const row = dbGet<any>(`SELECT * FROM dvids_assets WHERE dvids_id = ?`, dvidsId);
+  const row = dbGet<any>(`SELECT * FROM dvids_assets WHERE dvids_id = ?`, [dvidsId]);
   return toApiRow(row);
 }
 
@@ -434,31 +434,31 @@ export function getImportedAssets(opts: {
   const limit = opts.limit ?? 24;
   const offset = ((opts.page ?? 1) - 1) * limit;
 
-  const total = dbGet<{ cnt: number }>(`SELECT COUNT(*) as cnt FROM dvids_assets ${where}`, ...params)?.cnt ?? 0;
-  const rows = dbAll<any>(`SELECT * FROM dvids_assets ${where} ORDER BY imported_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset);
+  const total = dbGet<{ cnt: number }>(`SELECT COUNT(*) as cnt FROM dvids_assets ${where}`, params)?.cnt ?? 0;
+  const rows = dbAll<any>(`SELECT * FROM dvids_assets ${where} ORDER BY imported_at DESC LIMIT ? OFFSET ?`, [...params, limit, offset]);
 
   return { assets: rows.map(toApiRow), total };
 }
 
 export function getImportedAsset(id: number): DvidsImportedAsset | null {
-  const row = dbGet<any>(`SELECT * FROM dvids_assets WHERE id = ?`, id);
+  const row = dbGet<any>(`SELECT * FROM dvids_assets WHERE id = ?`, [id]);
   return row ? toApiRow(row) : null;
 }
 
 export function updateImportedAsset(id: number, data: { tags?: string[]; collection?: string; is_favorite?: boolean }): DvidsImportedAsset | null {
-  if (data.tags !== undefined) dbRun(`UPDATE dvids_assets SET tags = ? WHERE id = ?`, JSON.stringify(data.tags), id);
-  if (data.collection !== undefined) dbRun(`UPDATE dvids_assets SET collection = ? WHERE id = ?`, data.collection, id);
-  if (data.is_favorite !== undefined) dbRun(`UPDATE dvids_assets SET is_favorite = ? WHERE id = ?`, data.is_favorite ? 1 : 0, id);
+  if (data.tags !== undefined) dbRun(`UPDATE dvids_assets SET tags = ? WHERE id = ?`, [JSON.stringify(data.tags), id]);
+  if (data.collection !== undefined) dbRun(`UPDATE dvids_assets SET collection = ? WHERE id = ?`, [data.collection, id]);
+  if (data.is_favorite !== undefined) dbRun(`UPDATE dvids_assets SET is_favorite = ? WHERE id = ?`, [data.is_favorite ? 1 : 0, id]);
   return getImportedAsset(id);
 }
 
 export function deleteImportedAsset(id: number): boolean {
-  const row = dbGet<any>(`SELECT local_path FROM dvids_assets WHERE id = ?`, id);
+  const row = dbGet<any>(`SELECT local_path FROM dvids_assets WHERE id = ?`, [id]);
   if (!row) return false;
   if (row.local_path && fs.existsSync(row.local_path)) {
     try { fs.unlinkSync(row.local_path); } catch {}
   }
-  dbRun(`DELETE FROM dvids_assets WHERE id = ?`, id);
+  dbRun(`DELETE FROM dvids_assets WHERE id = ?`, [id]);
   return true;
 }
 
@@ -476,6 +476,6 @@ export function autoTagAsset(id: number): string[] {
   }
   if (asset.branch) tags.add(asset.branch.toLowerCase());
   const tagsArr = [...tags];
-  dbRun(`UPDATE dvids_assets SET tags = ? WHERE id = ?`, JSON.stringify(tagsArr), id);
+  dbRun(`UPDATE dvids_assets SET tags = ? WHERE id = ?`, [JSON.stringify(tagsArr), id]);
   return tagsArr;
 }

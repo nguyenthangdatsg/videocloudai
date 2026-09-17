@@ -115,7 +115,7 @@ export function createApp() {
   app.get('/api/health', (_req, res) => {
     try {
       const { dbGet } = require('./db');
-      const row = dbGet<{ n: number }>('SELECT 1 as n');
+      const row = dbGet('SELECT 1 as n') as { n: number } | undefined;
       res.json({ status: 'ok', db: row?.n === 1 ? 'connected' : 'error', timestamp: new Date().toISOString() });
     } catch (err) {
       console.error('[Health] DB check failed:', (err as Error).message);

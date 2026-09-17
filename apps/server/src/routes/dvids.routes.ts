@@ -47,7 +47,8 @@ export function createDvidsRouter(): Router {
   // Get asset details
   router.get('/asset/:id', async (req: Request, res: Response) => {
     try {
-      const dvidsId = req.params.id.includes(':') ? req.params.id : `video:${req.params.id}`;
+      const id = req.params.id as string;
+      const dvidsId = id.includes(':') ? id : `video:${id}`;
       const asset = await getAssetDetails(dvidsId);
       res.json({ asset });
     } catch (err) {
@@ -171,7 +172,7 @@ export function createDvidsRouter(): Router {
   // Serve cached DVIDS video files
   router.get('/file/:filename', (req: Request, res: Response) => {
     const dir = resolveDvidsCacheDir();
-    const filePath = path.join(dir, path.basename(req.params.filename));
+    const filePath = path.join(dir, path.basename(req.params.filename as string));
     if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'File not found' }); return; }
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.sendFile(filePath);

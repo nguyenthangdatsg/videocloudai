@@ -429,7 +429,8 @@ export function createScriptStudioRouter(): Router {
   // Auto-fetch top DVIDS clip for a block and store it locally
   router.post('/docs/:id/blocks/:blockIndex/fetch-dvids', async (req: Request, res: Response) => {
     try {
-      const { id, blockIndex } = req.params;
+      const id = req.params.id as string;
+      const blockIndex = req.params.blockIndex as string;
       const { orientation } = req.body;
       const block = getBlock(id, Number(blockIndex));
       if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
