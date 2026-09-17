@@ -1,4 +1,4 @@
-import { Image, Video, RefreshCw, Trash2, ArrowRight, Globe, Film, Square, Wand2, Upload, ZoomIn, X, CheckCircle, Pencil, Link, Filter } from 'lucide-react';
+import { Image, Video, RefreshCw, Trash2, ArrowRight, Globe, Film, Square, Wand2, Upload, ZoomIn, X, CheckCircle, Pencil, Link, Filter, Shield } from 'lucide-react';
 import { useState, useRef } from 'react';
 import { clsx } from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
@@ -24,6 +24,7 @@ export function ImagesStep() {
     prompts, setPrompts, setStep, saveProject, setLightboxUrl,
     segments, setSegments, handleBuildTimeline,
     compMediaSource, handlePexelsBatch, cancelPexels, pexelsLoading, pexelsProgress, videoMode,
+    handleDvidsBatch, cancelDvids, dvidsLoading, dvidsProgress,
     transcriptEntries,
   } = useStoryboard();
 
@@ -199,11 +200,20 @@ export function ImagesStep() {
           <button
             onClick={() => { setMediaType('pexels'); }}
             className={clsx(
-              'px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors',
+              'px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors border-r border-c-border',
               mediaType === 'pexels' ? 'bg-green-600/20 text-green-400' : 'text-c-muted hover:text-c-text',
             )}
           >
             <Film className="w-3.5 h-3.5" /> Pexels Stock
+          </button>
+          <button
+            onClick={() => { setMediaType('dvids'); }}
+            className={clsx(
+              'px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors',
+              mediaType === 'dvids' ? 'bg-blue-600/20 text-blue-400' : 'text-c-muted hover:text-c-text',
+            )}
+          >
+            <Shield className="w-3.5 h-3.5" /> {t('storyboard.mediaTypeDvids')}
           </button>
         </div>
       </div>
@@ -239,6 +249,50 @@ export function ImagesStep() {
               <div className="font-mono text-[10px] text-c-dim space-y-0.5 max-h-[120px] overflow-auto">
                 {pexelsProgress.slice(-10).map((line, i) => (
                   <div key={i} className={line.includes('Error') || line.includes('error') || line.includes('Failed') ? 'text-red-400' : line.includes('Done') ? 'text-green-400' : ''}>{line}</div>
+                ))}
+              </div>
+            )}
+          </div>
+          {doneImageCount > 0 && !generatingImages && (
+            <div className="flex justify-end">
+              <button onClick={handleBuildTimeline} className="btn-primary text-xs flex items-center gap-1 py-1.5 px-3">
+                {t('storyboard.buildTimeline')} <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+        </div>
+      ) : mediaType === 'dvids' ? (
+        <div className="space-y-3">
+          <div className="border border-blue-800/30 rounded-xl p-4 bg-blue-900/10 space-y-3">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-blue-400" />
+              <span className="text-xs font-medium text-blue-300">{t('storyboard.mediaTypeDvids')}</span>
+            </div>
+            <p className="text-[10px] text-c-dim">{t('storyboard.dvidsDesc')}</p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDvidsBatch}
+                disabled={dvidsLoading || !prompts.length}
+                className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {dvidsLoading ? <Spinner size="sm" /> : <Shield className="w-3.5 h-3.5" />}
+                {t('storyboard.dvidsFetch')}
+              </button>
+              {dvidsLoading && (
+                <button
+                  onClick={cancelDvids}
+                  className="text-xs py-2 px-4 rounded-lg font-medium flex items-center gap-1.5 bg-red-600/20 text-red-400 hover:bg-red-600/30"
+                >
+                  {t('storyboard.dvidsStop')}
+                </button>
+              )}
+            </div>
+            {dvidsProgress.length > 0 && (
+              <div className="max-h-32 overflow-y-auto space-y-0.5 text-[10px] font-mono">
+                {dvidsProgress.slice(-10).map((msg, i) => (
+                  <div key={i} className={msg.includes('Error') || msg.includes('Failed') ? 'text-red-400' : msg.includes('Done') ? 'text-green-400' : 'text-c-dim'}>
+                    {msg}
+                  </div>
                 ))}
               </div>
             )}

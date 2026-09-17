@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { storyboardApi, imageApi, ttsApi, settingsApi, musicApi } from '../../lib/api';
-import type { StoryboardSegment, StoryboardPromptItem, MotionEffect, SubtitleStyle } from '../../lib/api';
+import type { StoryboardSegment, StoryboardPromptItem, MotionEffect, SubtitleStyle, TtsEngine } from '../../lib/api';
 import { TopBar } from '../../components/layout/TopBar';
 import { Spinner } from '../../components/ui/Spinner';
 import {
@@ -71,12 +71,15 @@ export function Storyboard() {
   const [generatingScript, setGeneratingScript] = useState(false);
 
   // Step 2: Audio + Transcribe
-  const [voice, setVoice] = useState('en-US-GuyNeural');
+  const [voice, setVoice] = useState('af_heart');
+  const [edgeVoice, setEdgeVoice] = useState('en-US-GuyNeural');
+  const [kokoroVoice, setKokoroVoice] = useState('af_heart');
   const [langFilter, setLangFilter] = useState('all');
   const [ttsRate, setTtsRate] = useState(0);
   const [ttsPitch, setTtsPitch] = useState(0);
   const [ttsVolume, setTtsVolume] = useState(0);
   const [ttsStyle, setTtsStyle] = useState('');
+  const [ttsEngine, setTtsEngine] = useState<TtsEngine>('kokoro');
   const [voicePreviewLoading, setVoicePreviewLoading] = useState(false);
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
   const [voicePreviewPlaying, setVoicePreviewPlaying] = useState(false);
@@ -168,6 +171,9 @@ export function Storyboard() {
   const [pexelsLoading, setPexelsLoading] = useState(false);
   const [pexelsProgress, setPexelsProgress] = useState<string[]>([]);
   const pexelsAbortRef = useRef<AbortController | null>(null);
+  const [dvidsLoading, setDvidsLoading] = useState(false);
+  const [dvidsProgress, setDvidsProgress] = useState<string[]>([]);
+  const dvidsAbortRef = useRef<AbortController | null>(null);
 
   // Step 7: Assemble
   const [assembling, setAssembling] = useState(false);
@@ -220,8 +226,8 @@ export function Storyboard() {
     }
   }, [assembleProgress]);
 
-  const allEffects: MotionEffect[] = ['static', 'zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'pan-up', 'pan-down'];
-  const [randomEffects, setRandomEffects] = useState<Set<MotionEffect>>(new Set(['zoom-in', 'zoom-out', 'pan-left', 'pan-right']));
+  const allEffects: MotionEffect[] = ['static', 'zoom-in', 'zoom-out', 'fade-in', 'fade-out', 'pan-left', 'pan-right', 'pan-up', 'pan-down'];
+  const [randomEffects, setRandomEffects] = useState<Set<MotionEffect>>(new Set(['zoom-in', 'zoom-out']));
   const [hoveredSegment, setHoveredSegment] = useState<number | null>(null);
   const segmentRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [playingSegment, setPlayingSegment] = useState<number | null>(null);
@@ -579,10 +585,34 @@ export function Storyboard() {
   };
 
   // Voices query
-  const { data: voices } = useQuery({
+  const { data: edgeVoicesData } = useQuery({
     queryKey: ['tts', 'voices'],
     queryFn: ttsApi.voices,
   });
+
+  const { data: kokoroVoicesData } = useQuery({
+    queryKey: ['tts', 'kokoro', 'voices', 'formatted'],
+    queryFn: ttsApi.kokoroVoicesFormatted,
+  });
+
+  // Active voice set depends on engine
+  const voices = ttsEngine === 'kokoro'
+    ? (kokoroVoicesData ? { voices: kokoroVoicesData.voices, languages: kokoroVoicesData.languages } : undefined)
+    : edgeVoicesData;
+
+  const { data: omnivoiceHealthData } = useQuery({
+    queryKey: ['omnivoice', 'health'],
+    queryFn: ttsApi.omnivoiceHealth,
+    refetchInterval: 30_000,
+  });
+  const omnivoiceOnline = omnivoiceHealthData?.reachable ?? false;
+
+  const { data: kokoroHealthData } = useQuery({
+    queryKey: ['kokoro', 'health'],
+    queryFn: ttsApi.kokoroHealth,
+    refetchInterval: 30_000,
+  });
+  const kokoroAvailable = kokoroHealthData?.available ?? false;
 
   // Settings query — apply voice defaults once
   const { data: appSettings } = useQuery({
@@ -592,13 +622,25 @@ export function Storyboard() {
   const [settingsApplied, setSettingsApplied] = useState(false);
   useEffect(() => {
     if (!appSettings || settingsApplied || projectLoaded) return;
-    if (appSettings.default_voice) setVoice(appSettings.default_voice);
+    if (appSettings.default_voice) { setEdgeVoice(appSettings.default_voice); if (ttsEngine !== 'kokoro') setVoice(appSettings.default_voice); }
     if (appSettings.default_tts_rate) setTtsRate(Number(appSettings.default_tts_rate) || 0);
     if (appSettings.default_tts_pitch) setTtsPitch(Number(appSettings.default_tts_pitch) || 0);
     if (appSettings.default_tts_volume) setTtsVolume(Number(appSettings.default_tts_volume) || 0);
     if (appSettings.default_tts_style) setTtsStyle(appSettings.default_tts_style);
     setSettingsApplied(true);
   }, [appSettings, settingsApplied, projectLoaded]);
+
+  // Switch voice when engine changes
+  const handleEngineChange = (eng: TtsEngine) => {
+    // Save current voice for its engine
+    if (ttsEngine === 'kokoro') setKokoroVoice(voice);
+    else setEdgeVoice(voice);
+    // Switch to new engine and restore its voice
+    setTtsEngine(eng);
+    setVoice(eng === 'kokoro' ? kokoroVoice : edgeVoice);
+    setLangFilter('all');
+    setTtsStyle('');
+  };
 
   // Track which template this project uses
   const [projectTemplateId, setProjectTemplateId] = useState<string | null>(null);
@@ -979,6 +1021,7 @@ ENDING (CRITICAL — last 2-3 sentences):
         pitch: fmtPitch,
         volume: fmtVolume,
         style: ttsStyle || undefined,
+        engine: ttsEngine,
       });
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -1008,6 +1051,7 @@ ENDING (CRITICAL — last 2-3 sentences):
           pitch: fmtPitch,
           volume: fmtVolume,
           style: ttsStyle || undefined,
+          engine: ttsEngine,
         },
         (_step, detail) => { if (detail) setAudioProgress((p) => [...p, detail]); },
       );
@@ -1603,6 +1647,85 @@ ENDING (CRITICAL — last 2-3 sentences):
     pexelsAbortRef.current?.abort();
   };
 
+  // DVIDS batch: fetch military stock video clips
+  const handleDvidsBatch = async () => {
+    if (!prompts.length || !projectId) {
+      setError(!prompts.length ? 'No prompts to fetch videos for' : 'No project loaded');
+      return;
+    }
+    setDvidsLoading(true);
+    setError(null);
+    setDvidsProgress([]);
+    const abortCtrl = new AbortController();
+    dvidsAbortRef.current = abortCtrl;
+    try {
+      const isStdMode = videoMode !== 'comparison';
+      const queries = prompts
+        .filter(p => isStdMode || !p.side || p.side === 'left' || p.side === 'right' || p.side === 'both' || p.side === 'win-left' || p.side === 'win-right')
+        .map(p => ({
+          timestamp: p.timestamp,
+          query: (p.text || p.prompt).replace(/\[.*?\]/g, '').replace(/points (left|right|both),?\s*/gi, '').trim(),
+          side: p.side,
+        }))
+        .filter(q => q.query.length > 0);
+      if (!queries.length) {
+        setError('No segments with text to search DVIDS for');
+        setDvidsLoading(false);
+        return;
+      }
+      setDvidsProgress([`Searching ${queries.length} clips from DVIDS...`]);
+      const videos = await storyboardApi.dvidsBatch(queries, (step, detail) => {
+        setDvidsProgress(prev => [...prev, detail || step]);
+      }, abortCtrl.signal);
+      // Merge video results into generatedImages
+      const updatedImages = [...generatedImages];
+      while (updatedImages.length < prompts.length) {
+        updatedImages.push({ index: updatedImages.length, timestamp: prompts[updatedImages.length]?.timestamp || '', prompt: prompts[updatedImages.length]?.prompt || '', filename: '', url: '', status: 'pending' as const } as any);
+      }
+      const successTimestamps = new Set(videos.map(v => v.timestamp));
+      for (const q of queries) {
+        const idx = prompts.findIndex(p => p.timestamp === q.timestamp);
+        if (idx >= 0) {
+          if (successTimestamps.has(q.timestamp)) {
+            const vid = videos.find(v => v.timestamp === q.timestamp)!;
+            updatedImages[idx] = {
+              ...updatedImages[idx],
+              filename: vid.filename,
+              url: vid.url,
+              status: 'done' as const,
+              mediaType: 'video',
+              videoFilename: vid.filename,
+            };
+          } else {
+            updatedImages[idx] = {
+              ...updatedImages[idx],
+              status: 'error' as const,
+            };
+          }
+        }
+      }
+      setGeneratedImages(updatedImages);
+      saveProject({ generatedImages: updatedImages });
+      const doneCount = videos.length;
+      setDvidsProgress(prev => [...prev, `Done — ${doneCount}/${queries.length} clips fetched`]);
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        setDvidsProgress(prev => [...prev, 'Stopped by user']);
+      } else {
+        const msg = (err as Error).message;
+        setError(msg);
+        setDvidsProgress(prev => [...prev, `Error: ${msg}`]);
+      }
+    } finally {
+      dvidsAbortRef.current = null;
+      setDvidsLoading(false);
+    }
+  };
+
+  const cancelDvids = () => {
+    dvidsAbortRef.current?.abort();
+  };
+
   // Regenerate single image
   const [regenIndex, setRegenIndex] = useState<number | null>(null);
   const [editingImageIdx, setEditingImageIdx] = useState<number | null>(null);
@@ -1693,6 +1816,10 @@ ENDING (CRITICAL — last 2-3 sentences):
   };
 
   const handleDropImage = (idx: number) => {
+    // Clear prompt cache so the image doesn't get restored on resume
+    if (prompts[idx]?.prompt) {
+      imageApi.clearPromptCache([prompts[idx].prompt]).catch(() => {});
+    }
     setGeneratedImages((prev) => {
       const updated = prev.map((img, i) =>
         i === idx ? { ...img, filename: '', url: '', status: 'pending' as const } : img,
@@ -2204,6 +2331,15 @@ ENDING (CRITICAL — last 2-3 sentences):
   const stepOrder: WorkflowStep[] = allSteps.map((s) => s.key);
   const currentIdx = stepOrder.indexOf(step);
 
+  // Clamp step: if current step requires incomplete prior steps, fall back to the first incomplete one
+  useEffect(() => {
+    if (currentIdx <= 0) return;
+    const firstIncomplete = allSteps.findIndex((s) => !s.done);
+    if (firstIncomplete >= 0 && firstIncomplete < currentIdx) {
+      setStep(allSteps[firstIncomplete].key);
+    }
+  }, [projectLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Build context value ──
   const contextValue = {
     t, projectId, step, setStep, error, setError, saveProject,
@@ -2221,6 +2357,7 @@ ENDING (CRITICAL — last 2-3 sentences):
     voice, setVoice, langFilter, setLangFilter,
     ttsRate, setTtsRate, ttsPitch, setTtsPitch, ttsVolume, setTtsVolume,
     ttsStyle, setTtsStyle,
+    ttsEngine, setTtsEngine: handleEngineChange, omnivoiceOnline, kokoroAvailable,
     voicePreviewLoading, voicePreviewPlaying, generatingAudio,
     audioProgress, audioFile, handleClearAudio, transcriptEntries, setTranscriptEntries,
     handleSplitEntry,
@@ -2278,12 +2415,13 @@ ENDING (CRITICAL — last 2-3 sentences):
     mascotImageBoth, setMascotImageBoth, mascotImageWin, setMascotImageWin,
     comparisonItems, setComparisonItems, generatingMascot, handleGenerateMascot,
     compMediaSource, setCompMediaSource, handlePexelsBatch, cancelPexels, pexelsLoading, pexelsProgress,
+    handleDvidsBatch, cancelDvids, dvidsLoading, dvidsProgress,
     compRoundPanels, setCompRoundPanels,
     compBgSource, setCompBgSource, compBgQuery, setCompBgQuery, frameTemplateId, setFrameTemplateId,
     assembling, assembleAbortRef, speed, setSpeed, bgColor, setBgColor,
     lightboxUrl, setLightboxUrl,
     assembleProgress, assembleLogRef, assembleStep, assembleClipProgress,
-    result, handleAssemble,
+    result, setResult, handleAssemble,
   };
 
   return (
@@ -2330,7 +2468,8 @@ ENDING (CRITICAL — last 2-3 sentences):
         <nav className="border-b border-c-border bg-c-surface px-4 py-2.5 overflow-x-auto" aria-label="Workflow steps">
           <div className="max-w-7xl mx-auto flex items-center gap-1">
             {allSteps.map((s, i) => {
-              const isAccessible = i <= currentIdx || s.done;
+              const allPriorDone = allSteps.slice(0, i).every((p) => p.done);
+              const isAccessible = i <= currentIdx || (s.done && allPriorDone);
               return (
                 <div key={s.key} className="flex items-center gap-1 shrink-0">
                   <button
@@ -2431,7 +2570,8 @@ ENDING (CRITICAL — last 2-3 sentences):
             {/* Progressive step accordion — completed steps show summaries, current step is expanded */}
             {allSteps.map((s, i) => {
               const isActive = step === s.key;
-              const isFuture = i > currentIdx && !s.done;
+              const allPriorDoneAccordion = allSteps.slice(0, i).every((p) => p.done);
+              const isFuture = i > currentIdx && !(s.done && allPriorDoneAccordion);
               return (
                 <StepAccordion
                   key={s.key}

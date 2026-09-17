@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { imageApi, storyboardApi } from '../lib/api';
 import { useAppStore } from './index';
 
-export type GenMediaType = 'image' | 'video' | 'pexels';
+export type GenMediaType = 'image' | 'video' | 'pexels' | 'dvids';
 
 export interface GenImage {
   timestamp: string;
@@ -426,6 +426,9 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
           let updatedImages = [...t.images];
           const cachedTimestamps = new Set<string>();
           for (const c of cached) {
+            // Skip cache for video-type segments — cached images shouldn't substitute for videos
+            const matchingItem = updatedImages.find(item => item.timestamp === c.timestamp);
+            if (matchingItem?.mediaType === 'video') continue;
             cachedTimestamps.add(c.timestamp);
             updatedImages = updatedImages.map((item) =>
               item.timestamp === c.timestamp && item.status !== 'done'
@@ -440,7 +443,7 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
           next.set(projectId, {
             ...t,
             images: updatedImages,
-            progress: [...t.progress, `Found ${cached.length} cached images, skipping regeneration.`],
+            progress: [...t.progress, `Found ${cachedTimestamps.size} cached images, skipping regeneration.${cached.length > cachedTimestamps.size ? ` (${cached.length - cachedTimestamps.size} video segments need fresh generation)` : ''}`],
           });
 
           // Save to DB immediately
@@ -450,7 +453,9 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
         });
 
         // Filter out cached prompts from what we send to the extension
-        const cachedTimestamps = new Set(cached.map(c => c.timestamp));
+        // Exclude video-type prompts from cache hits — they need fresh generation
+        const videoTimestamps = new Set(prompts.filter(p => p.mediaType === 'video').map(p => p.timestamp));
+        const cachedTimestamps = new Set(cached.filter(c => !videoTimestamps.has(c.timestamp)).map(c => c.timestamp));
         const uncachedPrompts = prompts.filter(p => !cachedTimestamps.has(p.timestamp));
 
         if (uncachedPrompts.length === 0) {
@@ -484,20 +489,20 @@ export const useImageGenStore = create<ImageGenStore>((set, get) => ({
           }
         }
 
-        // Dispatch only uncached prompts to extension (strip per-prompt mediaType for backward compatibility)
+        // Dispatch only uncached prompts to extension (include per-prompt mediaType for mixed image/video batches)
         window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-          detail: { prompts: uncachedPrompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel, sessionId },
+          detail: { prompts: uncachedPrompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel, sessionId },
         }));
       } else {
         // No cache hits — send all prompts to extension
         window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-          detail: { prompts: prompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel, sessionId },
+          detail: { prompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel, sessionId },
         }));
       }
     }).catch(() => {
       // Cache check failed — send all prompts to extension
       window.dispatchEvent(new CustomEvent('Han2YT_flow_start', {
-        detail: { prompts: prompts.map(({ mediaType: _mt, ...rest }) => rest), delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel, sessionId },
+        detail: { prompts, delayMin: 5, delayMax: 15, mediaType, provider: flowProvider, duration, model: flowModel, sessionId },
         }));
     });
 

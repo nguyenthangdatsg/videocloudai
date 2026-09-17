@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { WorkflowStep, TranscriptEntry, StagePart } from './types';
-import type { StoryboardSegment, StoryboardPromptItem, VoiceInfo, MotionEffect, SubtitleStyle } from '../../lib/api';
+import type { StoryboardSegment, StoryboardPromptItem, VoiceInfo, MotionEffect, SubtitleStyle, TtsEngine } from '../../lib/api';
 import type { GenImage, GenMediaType } from '../../store/image-generation';
 
 export interface StoryboardContextValue {
@@ -73,6 +73,10 @@ export interface StoryboardContextValue {
   setTtsVolume: (v: number) => void;
   ttsStyle: string;
   setTtsStyle: (v: string) => void;
+  ttsEngine: TtsEngine;
+  setTtsEngine: (v: TtsEngine) => void;
+  omnivoiceOnline: boolean;
+  kokoroAvailable: boolean;
   voicePreviewLoading: boolean;
   voicePreviewPlaying: boolean;
   generatingAudio: boolean;
@@ -243,6 +247,10 @@ export interface StoryboardContextValue {
   cancelPexels: () => void;
   pexelsLoading: boolean;
   pexelsProgress: string[];
+  handleDvidsBatch: () => void;
+  cancelDvids: () => void;
+  dvidsLoading: boolean;
+  dvidsProgress: string[];
   compRoundPanels: boolean;
   setCompRoundPanels: (v: boolean) => void;
   compBgSource: 'color' | 'pexels';
@@ -287,6 +295,7 @@ export interface StoryboardContextValue {
   assembleStep: string;
   assembleClipProgress: { current: number; total: number };
   result: { filename: string; url: string; sizeKB: number; duration: number } | null;
+  setResult: (v: { filename: string; url: string; sizeKB: number; duration: number } | null) => void;
   handleAssemble: () => void;
 }
 
