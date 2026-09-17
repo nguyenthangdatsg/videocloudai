@@ -12,6 +12,7 @@ import { dbGet, dbAll, dbRun } from '../db';
 import { renderSceneClip, renderComparisonScene } from '../services/remotion-renderer.service';
 import type { SceneClipConfig, ComparisonSceneConfig } from '../remotion/types';
 import { searchAndDownloadBatch as pexelsBatch } from '../services/pexels.service';
+import { searchAndDownloadBatch as dvidsBatch } from '../services/dvids.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -1208,8 +1209,8 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
 
   // ── Generate TTS from script text ──
   router.post('/generate-tts', async (req: Request, res: Response) => {
-    const { text, voice, rate, pitch, volume, style } = req.body as {
-      text?: string; voice?: string; rate?: string; pitch?: string; volume?: string; style?: string;
+    const { text, voice, rate, pitch, volume, style, engine } = req.body as {
+      text?: string; voice?: string; rate?: string; pitch?: string; volume?: string; style?: string; engine?: string;
     };
     if (!text?.trim()) {
       res.status(400).json({ error: 'text is required' });
@@ -1232,6 +1233,7 @@ Write ONLY part ${i + 1} content. ~${wordsPerChunk} words. Continue naturally fr
         pitch,
         volume,
         style: style || undefined,
+        engine: (engine === 'kokoro' || engine === 'omnivoice' || engine === 'edge-tts') ? engine : undefined,
         onProgress: (step, detail) => {
           res.write(JSON.stringify({ progress: true, step, detail }) + '\n');
         },
@@ -1427,12 +1429,21 @@ Rules:
     const hasVideoSegments = expandedSegments.some(s => s.mediaType === 'video');
     const hasImageSegments = expandedSegments.some(s => !s.mediaType || s.mediaType === 'image');
     if (hasVideoSegments && compMediaSource !== 'pexels') {
+      const videoRules = `generate a CINEMATIC VIDEO prompt — NOT a static image description. Focus on:
+- CAMERA MOTION: dolly in, crane shot, tracking shot, slow orbit, push-in, pull-out, aerial sweep, handheld follow
+- SUBJECT ACTION: characters moving, objects transforming, particles flowing, liquids splashing, explosions, reveals
+- DYNAMIC LIGHTING: light rays sweeping, neon flickering, golden hour shifting, dramatic shadows moving
+- TRANSITIONS & REVEALS: slow-motion reveal, time-lapse, zoom burst, whip pan, parallax depth
+- ATMOSPHERE: smoke drifting, rain falling, sparks flying, dust particles floating, lens flare
+- Make it VISUALLY DRAMATIC and attention-grabbing — think Hollywood trailer, not stock footage
+- Use vivid action verbs: "erupts", "sweeps", "bursts", "glides", "crashes", "unfolds"
+- Describe 3-5 seconds of continuous motion, not a frozen moment`;
       if (hasImageSegments) {
         systemPrompt += `\n\nSome segments are tagged [VIDEO] and others are [IMAGE]:
 - [IMAGE] segments: generate a static visual description (composition, colors, objects, scene)
-- [VIDEO] segments: generate a motion-oriented prompt describing what MOVES or FLOWS in the scene (camera motion, action, animation) — suitable for AI video clip generation`;
+- [VIDEO] segments: ${videoRules}`;
       } else {
-        systemPrompt += `\n\nAll segments are for VIDEO clip generation. Generate motion-oriented prompts describing what moves, flows, or changes in each scene — suitable for AI video generation.`;
+        systemPrompt += `\n\nAll segments are for AI VIDEO clip generation. For EVERY prompt, ${videoRules}`;
       }
     }
 
@@ -3009,17 +3020,25 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         // FFmpeg filter uses ':' as option separator — Windows drive letters break it.
         // Use relative path to avoid the colon entirely.
         const relAssPath = path.relative(process.cwd(), assPath).replace(/\\/g, '/');
-        await execFileAsync(ffmpeg, [
-          '-i', videoOnly,
-          '-vf', `ass=${relAssPath}`,
-          '-c:v', 'libx264',
-          '-preset', 'fast',
-          '-crf', '23',
-          '-pix_fmt', 'yuv420p',
-          '-an',
-          '-y',
-          subtitledVideo,
-        ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
+        // Keepalive heartbeat so the HTTP connection doesn't timeout during long subtitle burn
+        const subHeartbeat = setInterval(() => {
+          res.write(JSON.stringify({ progress: true, step: 'subtitles', detail: 'Still burning subtitles...' }) + '\n');
+        }, 30_000);
+        try {
+          await execFileAsync(ffmpeg, [
+            '-i', videoOnly,
+            '-vf', `ass=${relAssPath}`,
+            '-c:v', 'libx264',
+            '-preset', 'fast',
+            '-crf', '23',
+            '-pix_fmt', 'yuv420p',
+            '-an',
+            '-y',
+            subtitledVideo,
+          ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
+        } finally {
+          clearInterval(subHeartbeat);
+        }
 
         videoInput = subtitledVideo;
         res.write(JSON.stringify({ progress: true, step: 'subtitles', detail: 'Subtitles burned successfully' }) + '\n');
@@ -3114,19 +3133,26 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
         if (sfxMixPath) detailParts.push(`SFX (${sfxEvents.length} effects)`);
         res.write(JSON.stringify({ progress: true, step: 'muxing', detail: `Mixing ${detailParts.join(' + ')}...` }) + '\n');
 
-        await execFileAsync(ffmpeg, [
-          ...mixInputs,
-          '-filter_complex', mixParts.join(';'),
-          '-map', '0:v',
-          '-map', '[aout]',
-          '-c:v', 'copy',
-          '-c:a', 'aac',
-          '-b:a', '192k',
-          '-shortest',
-          '-movflags', '+faststart',
-          '-y',
-          outputFile,
-        ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
+        const muxHeartbeat = setInterval(() => {
+          res.write(JSON.stringify({ progress: true, step: 'muxing', detail: 'Still muxing audio...' }) + '\n');
+        }, 30_000);
+        try {
+          await execFileAsync(ffmpeg, [
+            ...mixInputs,
+            '-filter_complex', mixParts.join(';'),
+            '-map', '0:v',
+            '-map', '[aout]',
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            '-shortest',
+            '-movflags', '+faststart',
+            '-y',
+            outputFile,
+          ], { timeout: 3_600_000, maxBuffer: 50 * 1024 * 1024 });
+        } finally {
+          clearInterval(muxHeartbeat);
+        }
       } else {
         res.write(JSON.stringify({ progress: true, step: 'muxing', detail: 'Adding audio track...' }) + '\n');
 
@@ -3228,6 +3254,125 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
     res.json({ ok: true });
   });
 
+  // Re-encode a rendered video at a different resolution/bitrate via FFmpeg
+  // Uses spawn + NDJSON streaming for progress feedback on long encodes
+  router.post('/video/reencode', async (req: Request, res: Response) => {
+    const { filename, quality } = req.body as { filename?: string; quality?: string };
+    if (!filename) { res.status(400).json({ error: 'filename is required' }); return; }
+
+    const srcPath = path.join(outputDir, path.basename(filename));
+    if (!fs.existsSync(srcPath)) { res.status(404).json({ error: 'Source video not found' }); return; }
+
+    const presets: Record<string, { longEdge: number; crf: string; preset: string; label: string }> = {
+      hd:   { longEdge: 1920, crf: '20', preset: 'fast',      label: 'HD (1920p)' },
+      '2k': { longEdge: 2560, crf: '20', preset: 'fast',      label: '2K (2560p)' },
+      '4k': { longEdge: 3840, crf: '18', preset: 'ultrafast',  label: '4K (3840p)' },
+    };
+    const p = presets[quality || 'hd'] || presets.hd;
+
+    // Scale so long edge = target, keep aspect ratio, ensure even dimensions
+    const scaleFilter = `scale='if(gte(iw,ih),${p.longEdge},-2)':'if(gte(iw,ih),-2,${p.longEdge})',pad=ceil(iw/2)*2:ceil(ih/2)*2`;
+
+    const outName = path.basename(filename, '.mp4') + `_${quality || 'hd'}.mp4`;
+    const outPath = path.join(outputDir, outName);
+
+    // Switch to NDJSON streaming for progress
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    let finished = false;
+    const send = (obj: Record<string, unknown>) => { if (!finished) try { res.write(JSON.stringify(obj) + '\n'); } catch {} };
+
+    // If already exported, return immediately
+    if (fs.existsSync(outPath)) {
+      const stat = fs.statSync(outPath);
+      send({ ok: true, filename: outName, url: `/api/storyboard/video/${outName}`, sizeKB: Math.round(stat.size / 1024) });
+      finished = true;
+      res.end();
+      return;
+    }
+
+    try {
+      const ffmpegPath = await resolveFullFfmpeg();
+      const { spawn } = await import('child_process');
+      const { resolveFfmpegPathSync } = await import('../services/import.service');
+
+      // Get source duration for progress calculation
+      let totalDurationUs = 0;
+      try {
+        const ffprobePath = resolveFfmpegPathSync('ffprobe');
+        const probeResult = await execFileAsync(ffprobePath, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', srcPath]);
+        totalDurationUs = Math.round(parseFloat(probeResult.stdout.trim()) * 1_000_000);
+      } catch { /* duration unknown */ }
+
+      send({ progress: true, step: 'reencode', detail: `Starting ${p.label} export...`, percent: 0 });
+
+      const proc = spawn(ffmpegPath, [
+        '-nostdin',
+        '-i', srcPath,
+        '-vf', scaleFilter,
+        '-c:v', 'libx264', '-preset', p.preset, '-crf', p.crf,
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        '-y', outPath,
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      // Kill ffmpeg if client disconnects (taskkill on Windows)
+      let cancelled = false;
+      const killProc = () => {
+        if (proc.pid && !proc.killed) {
+          cancelled = true;
+          if (process.platform === 'win32') {
+            try { require('child_process').execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: 'ignore' }); } catch {}
+          } else {
+            proc.kill('SIGKILL');
+          }
+        }
+      };
+      req.on('close', () => { if (!finished) killProc(); });
+
+      // Parse stderr for progress (ffmpeg writes progress info to stderr by default)
+      let lastPercent = 0;
+      let stderrBuf = '';
+      proc.stderr.on('data', (chunk: Buffer) => {
+        const text = chunk.toString();
+        stderrBuf += text;
+        if (stderrBuf.length > 10000) stderrBuf = stderrBuf.slice(-5000);
+
+        // Parse "time=HH:MM:SS.xx" from ffmpeg stderr
+        if (totalDurationUs > 0) {
+          const timeMatch = text.match(/time=(\d+):(\d+):(\d+)\.(\d+)/);
+          if (timeMatch) {
+            const currentUs = (parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3])) * 1_000_000 + parseInt(timeMatch[4]) * 10_000;
+            const percent = Math.min(99, Math.round((currentUs / totalDurationUs) * 100));
+            if (percent > lastPercent) {
+              lastPercent = percent;
+              send({ progress: true, step: 'reencode', detail: `Encoding ${p.label}... ${percent}%`, percent });
+            }
+          }
+        }
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        proc.on('exit', (code) => {
+          if (cancelled) reject(new Error('Re-encode cancelled'));
+          else if (code === 0) resolve();
+          else reject(new Error(`FFmpeg exited with code ${code}: ${stderrBuf.slice(-500)}`));
+        });
+        proc.on('error', reject);
+      });
+
+      const stat = fs.statSync(outPath);
+      send({ ok: true, filename: outName, url: `/api/storyboard/video/${outName}`, sizeKB: Math.round(stat.size / 1024) });
+    } catch (err) {
+      if (fs.existsSync(outPath)) try { fs.unlinkSync(outPath); } catch {}
+      send({ error: (err as Error).message });
+    }
+    finished = true;
+    res.end();
+  });
+
   // ══════════════════════════════════════════
   // STORYBOARD SAVE / LOAD / LIST / DELETE
   // ══════════════════════════════════════════
@@ -3267,6 +3412,26 @@ ${script ? `Script snippet:\n${script.substring(0, 1000)}` : ''}`;
 
     try {
       const videos = await pexelsBatch(queries, (msg) => {
+        res.write(JSON.stringify(msg) + '\n');
+      });
+      res.write(JSON.stringify({ done: true, videos }) + '\n');
+    } catch (err) {
+      res.write(JSON.stringify({ error: (err as Error).message }) + '\n');
+    }
+    res.end();
+  });
+
+  // ── DVIDS batch video search ──
+  router.post('/dvids-batch', async (req: Request, res: Response) => {
+    const { queries } = req.body as { queries: Array<{ timestamp: string; query: string; side?: string }> };
+    if (!queries?.length) { res.status(400).json({ error: 'queries required' }); return; }
+
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.flushHeaders();
+
+    try {
+      const videos = await dvidsBatch(queries, (msg) => {
         res.write(JSON.stringify(msg) + '\n');
       });
       res.write(JSON.stringify({ done: true, videos }) + '\n');

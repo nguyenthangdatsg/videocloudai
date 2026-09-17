@@ -44,6 +44,14 @@ import { generateVideoClip } from '../services/image-providers';
 import { resolveImageCacheDir, downloadPexelsVideoById } from '../services/pexels.service';
 import { dbGet, dbRun } from '../db';
 import { isReachable as omnivoiceReachable, getBaseUrl as omnivoiceBaseUrl, listVoices as omnivoiceListVoices } from '../providers/omnivoice.provider';
+import { isAvailable as kokoroIsAvailable, synthesize as kokoroSynthesize, listVoices as kokoroListVoices } from '../providers/kokoro.provider';
+import { searchDvids, downloadDvidsVideo } from '../services/dvids.service';
+
+const KOKORO_VOICE_IDS = new Set(kokoroListVoices().map(v => v.voice_id));
+function resolveKokoroVoice(voiceId: string | undefined): string {
+  if (voiceId && KOKORO_VOICE_IDS.has(voiceId)) return voiceId;
+  return 'af_heart';
+}
 
 function setupNDJSON(res: Response) {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -259,20 +267,23 @@ export function createScriptStudioRouter(): Router {
       }
       
       // Self-heal: reset blocks whose rendered video files are missing on disk
-      let changed = false;
-      for (const block of blocks) {
-        if (block.status === 'rendered' && block.renderedClipPath && !fs.existsSync(block.renderedClipPath)) {
-          dbRun(
-            `UPDATE script_blocks SET rendered_clip_path = NULL, status = 'clip_ready', updated_at = ? WHERE id = ?`,
-            [new Date().toISOString(), block.id]
-          );
-          block.renderedClipPath = null;
-          block.status = 'clip_ready';
-          changed = true;
+      // Skip during production to avoid expensive fs checks while FFmpeg is running
+      if (doc.status !== 'producing') {
+        let changed = false;
+        for (const block of blocks) {
+          if (block.status === 'rendered' && block.renderedClipPath && !fs.existsSync(block.renderedClipPath)) {
+            dbRun(
+              `UPDATE script_blocks SET rendered_clip_path = NULL, status = 'clip_ready', updated_at = ? WHERE id = ?`,
+              [new Date().toISOString(), block.id]
+            );
+            block.renderedClipPath = null;
+            block.status = 'clip_ready';
+            changed = true;
+          }
         }
-      }
-      if (changed) {
-        blocks = listBlocks(docId);
+        if (changed) {
+          blocks = listBlocks(docId);
+        }
       }
 
       res.json({ blocks });
@@ -415,21 +426,69 @@ export function createScriptStudioRouter(): Router {
     }
   });
 
+  // Auto-fetch top DVIDS clip for a block and store it locally
+  router.post('/docs/:id/blocks/:blockIndex/fetch-dvids', async (req: Request, res: Response) => {
+    try {
+      const { id, blockIndex } = req.params;
+      const { orientation } = req.body;
+      const block = getBlock(id, Number(blockIndex));
+      if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
+
+      const query = block.pexelsQuery || block.narration?.slice(0, 60) || '';
+      if (!query) { res.status(400).json({ error: 'No query available' }); return; }
+
+      const { results } = await searchDvids(query, { maxResults: 1, aspectRatio: orientation === 'portrait' ? 'portrait' : '16:9', hd: true });
+      if (!results.length) { res.status(404).json({ error: 'No DVIDS results' }); return; }
+
+      const pick = results[0];
+      const docDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard', `doc_${id}`);
+      const { filename, duration, width, height } = await downloadDvidsVideo(pick.id, docDir);
+
+      res.json({ ok: true, filename, dvidsId: pick.id, duration, width, height });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Apply a specific DVIDS video (by ID) to a block
+  router.post('/docs/:id/blocks/:blockIndex/apply-dvids-id', async (req: Request, res: Response) => {
+    try {
+      const { id, blockIndex } = req.params;
+      const { dvidsId } = req.body;
+      if (!dvidsId) { res.status(400).json({ error: 'dvidsId required' }); return; }
+
+      const docDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard', `doc_${id}`);
+      const { filename, duration, width, height } = await downloadDvidsVideo(dvidsId, docDir);
+
+      res.json({ ok: true, filename, dvidsId, duration, width, height });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Apply a specific Pexels video (by ID) to a block
   router.post('/docs/:id/blocks/:blockIndex/apply-pexels-id', async (req: Request, res: Response) => {
     const docId = req.params.id as string;
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
 
-    const { pexelsId } = req.body as { pexelsId?: number };
-    if (!pexelsId) { res.status(400).json({ error: 'pexelsId is required' }); return; }
+    const { pexelsId, downloadUrl, duration: clientDuration } = req.body as { pexelsId?: number; downloadUrl?: string; duration?: number };
+    if (!pexelsId && !downloadUrl) { res.status(400).json({ error: 'pexelsId or downloadUrl is required' }); return; }
 
     try {
       const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
       const docDir = path.join(rendersDir, `doc_${docId}`);
       fs.mkdirSync(docDir, { recursive: true });
 
-      const result = await downloadPexelsVideoById(pexelsId, docDir);
+      let result: { filename: string; duration: number } | null = null;
+      if (downloadUrl) {
+        // Direct download from URL — skip extra Pexels API call
+        const { downloadPexelsVideoFromUrl } = await import('../services/pexels.service');
+        result = await downloadPexelsVideoFromUrl(downloadUrl, clientDuration ?? 0, docDir);
+      } else {
+        const dlResult = await downloadPexelsVideoById(pexelsId!, docDir);
+        result = dlResult ? { filename: dlResult.filename, duration: dlResult.duration } : null;
+      }
       if (!result) { res.status(422).json({ error: 'Video not found or no downloadable files' }); return; }
 
       const block = getBlock(docId, blockIndex);
@@ -571,6 +630,21 @@ export function createScriptStudioRouter(): Router {
         const { searchMixkitCandidates } = await import('../services/mixkit.service');
         const candidates = await searchMixkitCandidates(query, orientation, perPage);
         res.json({ candidates, service: 'mixkit' });
+      } else if (service === 'dvids') {
+        const { results } = await searchDvids(query, { maxResults: perPage, aspectRatio: orientation === 'portrait' ? 'portrait' : '16:9' });
+        const candidates = results.map(r => ({
+          id: r.id,
+          thumbnail: r.thumbnail,
+          previewUrl: r.thumbnail,
+          downloadUrl: r.url,
+          duration: r.duration,
+          width: r.width,
+          height: r.height,
+          pageUrl: r.url,
+          title: r.title,
+          source: 'dvids',
+        }));
+        res.json({ candidates, service: 'dvids' });
       } else {
         const candidates = await searchPexelsCandidates(query, orientation, perPage);
         res.json({ candidates, service: 'pexels' });
@@ -615,17 +689,16 @@ export function createScriptStudioRouter(): Router {
     }
   });
 
-  // Apply a stock image (Pexels photo or Pixabay image) to a block — downloads image, converts to video clip via FFmpeg
+  // Apply a stock image (Pexels photo or Pixabay image) to a block — downloads image, returns immediately (produce step handles image→video conversion)
   router.post('/docs/:id/blocks/:blockIndex/apply-stock-image', async (req: Request, res: Response) => {
     const docId = req.params.id as string;
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
 
-    const { downloadUrl, source, width, height, zoomEffect, orientation } = req.body as {
+    const { downloadUrl, source } = req.body as {
       downloadUrl?: string; source?: string; width?: number; height?: number; zoomEffect?: 'zoom-in' | 'zoom-out';
       orientation?: 'landscape' | 'portrait';
     };
-    const isPortrait = orientation === 'portrait';
     if (!downloadUrl) { res.status(400).json({ error: 'downloadUrl is required' }); return; }
 
     try {
@@ -633,7 +706,7 @@ export function createScriptStudioRouter(): Router {
       const docDir = path.join(rendersDir, `doc_${docId}`);
       fs.mkdirSync(docDir, { recursive: true });
 
-      // Download image
+      // Download image only — no FFmpeg conversion (produce step handles image→video)
       let imgResult: { filename: string; url: string };
       if (source === 'pixabay') {
         const { downloadPixabayImage } = await import('../services/pixabay.service');
@@ -643,52 +716,10 @@ export function createScriptStudioRouter(): Router {
         imgResult = await downloadPexelsPhoto(downloadUrl, docDir);
       }
 
-      // Get block audio duration for clip length
       const block = getBlock(docId, blockIndex);
       const durationSec = block?.audioDurationMs ? Math.ceil(block.audioDurationMs / 1000) : 5;
 
-      // Convert image to video with slow-zoom via FFmpeg
-      const { execFile } = await import('child_process');
-      const { promisify } = await import('util');
-      const execFileAsync = promisify(execFile);
-      const { resolveFfmpegPathSync } = await import('../services/import.service');
-      const ffmpegPath = resolveFfmpegPathSync('ffmpeg');
-
-      const imgPath = path.join(docDir, imgResult.filename);
-      const effectSuffix = (zoomEffect ?? 'zoom-in') === 'zoom-out' ? '_zout' : '_zin';
-      const videoFilename = imgResult.filename.replace(/\.(jpg|jpeg|png|webp)$/i, `${effectSuffix}_clip.mp4`);
-      const videoPath = path.join(docDir, videoFilename);
-
-      if (!fs.existsSync(videoPath)) {
-        const fps = 30;
-        const totalFrames = durationSec * fps;
-        const step = (0.05 / totalFrames).toFixed(8);
-        const zoomExpr = (zoomEffect ?? 'zoom-in') === 'zoom-out'
-          ? `'if(eq(on\\,1)\\,1.05\\,max(zoom-${step}\\,1.0))'`
-          : `'min(zoom+${step}\\,1.05)'`;
-        await execFileAsync(ffmpegPath, [
-          '-nostdin',
-          '-loop', '1',
-          '-i', imgPath,
-          '-vf', `scale=${isPortrait ? 1080 : 1920}:${isPortrait ? 1920 : 1080}:force_original_aspect_ratio=decrease,pad=${isPortrait ? 1080 : 1920}:${isPortrait ? 1920 : 1080}:(ow-iw)/2:(oh-ih)/2,zoompan=z=${zoomExpr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${isPortrait ? '1080x1920' : '1920x1080'}:fps=${fps}`,
-          '-c:v', 'libx264',
-          '-preset', process.env.FFMPEG_PRESET || 'superfast',
-          '-pix_fmt', 'yuv420p',
-          '-t', String(durationSec),
-          '-y', videoPath,
-        ], { timeout: 60000 });
-      }
-
-      // Apply to block
-      if (block?.chartSpec) {
-        const composited = await compositeChartOnBg(block, videoPath, docId, orientation ?? getDocOrientation(docId));
-        if (composited) {
-          res.json({ ok: true, filename: composited, duration: durationSec });
-          return;
-        }
-      }
-
-      res.json({ ok: true, filename: videoFilename, duration: durationSec });
+      res.json({ ok: true, filename: imgResult.filename, duration: durationSec });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -1118,18 +1149,19 @@ export function createScriptStudioRouter(): Router {
       const s = getSettings();
       const userVoice = (req.body as any)?.voice || undefined;
       const userRate = (req.body as any)?.rate || undefined;
-      const voice = (req.body as any)?.voice ?? s.get('default_voice') ?? 'en-US-GuyNeural';
+      const defaultEdgeVoice = s.get('default_voice') ?? 'en-US-GuyNeural';
+      const voice = (req.body as any)?.voice ?? defaultEdgeVoice;
       const rate = (req.body as any)?.rate ?? s.get('default_tts_rate') ?? '0';
-      const engineOverride = (req.body as any)?.engine as string | undefined; // 'omnivoice' | 'edge-tts'
+      const engineOverride = (req.body as any)?.engine as string | undefined; // 'kokoro' | 'omnivoice' | 'edge-tts'
 
       // Resolve per-block voice config (supports VOICE_GROUP references)
       const doc = getDoc(docId);
       const voiceGroups: VoiceGroup[] = doc?.parsed?.voiceGroups ?? [];
       const docVoiceConfig: string | null = doc?.parsed?.voiceConfig ?? null;
-      const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate });
+      const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate, userEngine: engineOverride });
 
       // Allow caller to override the engine
-      const targetEngine = (engineOverride === 'omnivoice' || engineOverride === 'edge-tts') ? engineOverride : resolved.engine;
+      const targetEngine = (engineOverride === 'kokoro' || engineOverride === 'omnivoice' || engineOverride === 'edge-tts') ? engineOverride : resolved.engine;
 
       const norm = normalizeTtsText(block.narration);
       const ttsText = norm.normalized;
@@ -1150,16 +1182,41 @@ export function createScriptStudioRouter(): Router {
       let wordCount = 0;
       let actualEngine = targetEngine;
 
-      if (targetEngine === 'omnivoice') {
+      if (targetEngine === 'kokoro') {
+        const available = await kokoroIsAvailable();
+        if (available) {
+          const speed = resolved.rate ? 1.0 + (parseFloat(resolved.rate) / 100) : 1.0;
+          await kokoroSynthesize({ text: ttsText, voice: resolveKokoroVoice(resolved.voiceId), speed }, audioPath);
+          wordCount = ttsText.split(/\s+/).filter(Boolean).length;
+          // Get duration via narration service
+          const { resolveFfmpegPathSync } = await import('../services/import.service');
+          const { execFile: execFileCb } = await import('child_process');
+          const { promisify } = await import('util');
+          const execFileA = promisify(execFileCb);
+          let dur = 0;
+          try {
+            const ffprobe = resolveFfmpegPathSync('ffprobe');
+            const { stdout: probeOut } = await execFileA(ffprobe, ['-v', 'quiet', '-print_format', 'json', '-show_format', audioPath], { timeout: 10_000 });
+            dur = parseFloat(JSON.parse(probeOut).format?.duration ?? '0');
+          } catch { /* ignore */ }
+          totalMs = Math.round(dur * 1000);
+        } else {
+          actualEngine = 'edge-tts';
+          const edgeVoice = resolved.fallbackVoice || defaultEdgeVoice;
+          const edgeRate = resolved.rate ?? rate;
+          const result = await runBlockTts(ttsText, edgeVoice, edgeRate, audioPath, wordsPath);
+          totalMs = result.totalMs;
+          wordCount = result.wordCount;
+        }
+      } else if (targetEngine === 'omnivoice') {
         const reachable = await omnivoiceReachable();
         if (reachable) {
           const result = await runOmnivoiceTts(ttsText, resolved, audioPath, wordsPath);
           totalMs = result.totalMs;
           wordCount = result.wordCount;
         } else {
-          // Fall back to edge-tts with fallbackVoice
           actualEngine = 'edge-tts';
-          const edgeVoice = resolved.fallbackVoice || voice;
+          const edgeVoice = resolved.fallbackVoice || defaultEdgeVoice;
           const edgeRate = resolved.rate ?? rate;
           const result = await runBlockTts(ttsText, edgeVoice, edgeRate, audioPath, wordsPath);
           totalMs = result.totalMs;
@@ -1207,7 +1264,8 @@ export function createScriptStudioRouter(): Router {
     const s = getSettings();
     const userVoice = (req.body as any)?.voice || undefined;
     const userRate = (req.body as any)?.rate || undefined;
-    const voice = (req.body as any)?.voice ?? s.get('default_voice') ?? 'en-US-GuyNeural';
+    const defaultEdgeVoice = s.get('default_voice') ?? 'en-US-GuyNeural';
+    const voice = (req.body as any)?.voice ?? defaultEdgeVoice;
     const rate = (req.body as any)?.rate ?? s.get('default_tts_rate') ?? '0';
     const voiceGroups: VoiceGroup[] = doc.parsed?.voiceGroups ?? [];
     const docVoiceConfig: string | null = doc.parsed?.voiceConfig ?? null;
@@ -1219,8 +1277,8 @@ export function createScriptStudioRouter(): Router {
     let errors = 0;
     for (const block of narrationBlocks) {
       try {
-        const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate });
-        const targetEngine = (engine === 'omnivoice' || engine === 'edge-tts') ? engine : resolved.engine;
+        const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate, userEngine: engine });
+        const targetEngine = (engine === 'kokoro' || engine === 'omnivoice' || engine === 'edge-tts') ? engine : resolved.engine;
 
         const norm = normalizeTtsText(block.narration);
         const ttsText = norm.normalized;
@@ -1241,14 +1299,27 @@ export function createScriptStudioRouter(): Router {
         let wordCount = 0;
         let actualEngine = targetEngine;
 
-        if (targetEngine === 'omnivoice') {
+        if (targetEngine === 'kokoro') {
+          const available = await kokoroIsAvailable();
+          if (available) {
+            const speed = resolved.rate ? 1.0 + (parseFloat(resolved.rate) / 100) : 1.0;
+            await kokoroSynthesize({ text: ttsText, voice: resolveKokoroVoice(resolved.voiceId), speed }, audioPath);
+            wordCount = ttsText.split(/\s+/).filter(Boolean).length;
+          } else {
+            actualEngine = 'edge-tts';
+            const edgeVoice = resolved.fallbackVoice || defaultEdgeVoice;
+            const edgeRate = resolved.rate ?? rate;
+            const result = await runBlockTts(ttsText, edgeVoice, edgeRate, audioPath, wordsPath);
+            totalMs = result.totalMs; wordCount = result.wordCount;
+          }
+        } else if (targetEngine === 'omnivoice') {
           const reachable = await omnivoiceReachable();
           if (reachable) {
             const result = await runOmnivoiceTts(ttsText, resolved, audioPath, wordsPath);
             totalMs = result.totalMs; wordCount = result.wordCount;
           } else {
             actualEngine = 'edge-tts';
-            const edgeVoice = resolved.fallbackVoice || voice;
+            const edgeVoice = resolved.fallbackVoice || defaultEdgeVoice;
             const edgeRate = resolved.rate ?? rate;
             const result = await runBlockTts(ttsText, edgeVoice, edgeRate, audioPath, wordsPath);
             totalMs = result.totalMs; wordCount = result.wordCount;
@@ -1692,12 +1763,17 @@ export function createScriptStudioRouter(): Router {
     // Switch to NDJSON streaming for progress
     res.setHeader('Content-Type', 'application/x-ndjson');
     res.setHeader('Cache-Control', 'no-cache');
-    const send = (obj: Record<string, unknown>) => { try { res.write(JSON.stringify(obj) + '\n'); } catch {} };
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    let finished = false;
+    const send = (obj: Record<string, unknown>) => { if (!finished) try { res.write(JSON.stringify(obj) + '\n'); } catch {} };
 
     // If already exported, return immediately
     if (fs.existsSync(exportPath)) {
       const stat = fs.statSync(exportPath);
       send({ ok: true, filename: exportFilename, url: `/api/storyboard/video/${exportFilename}`, sizeKB: Math.round(stat.size / 1024) });
+      finished = true;
       res.end();
       return;
     }
@@ -1720,61 +1796,114 @@ export function createScriptStudioRouter(): Router {
 
       send({ progress: true, step: 'export', detail: `Starting ${target.label} export...`, percent: 0 });
 
+      let lastPercent = 0;
       const proc = spawn(ffmpeg, [
+        '-nostdin',
         '-i', srcPath,
         '-vf', `scale=${target.w}:${target.h}:flags=lanczos`,
         '-c:v', 'libx264',
-        '-preset', process.env.FFMPEG_PRESET || 'medium',
-        '-crf', '18',
+        '-preset', 'ultrafast',
+        '-crf', '20',
         '-c:a', 'copy',
         '-movflags', '+faststart',
-        '-progress', 'pipe:1',
         '-y', exportPath,
-      ]);
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-      // Kill ffmpeg if client disconnects (abort)
+      // Kill ffmpeg if client disconnects (taskkill on Windows)
       let cancelled = false;
-      req.on('close', () => {
-        if (!proc.killed) {
+      const killProc = () => {
+        if (proc.pid && !proc.killed) {
           cancelled = true;
-          proc.kill('SIGKILL');
+          if (process.platform === 'win32') {
+            try { require('child_process').execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: 'ignore' }); } catch {}
+          } else {
+            proc.kill('SIGKILL');
+          }
         }
-      });
+      };
+      req.on('close', () => { if (!finished) killProc(); });
 
-      let lastPercent = 0;
       let stderrBuf = '';
-      proc.stdout.on('data', (chunk: Buffer) => {
+      // Parse stderr for progress (ffmpeg writes progress info to stderr by default)
+      proc.stderr.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
-        const timeMatch = text.match(/out_time_us=(\d+)/);
-        if (timeMatch && totalDurationUs > 0) {
-          const currentUs = parseInt(timeMatch[1], 10);
-          const percent = Math.min(99, Math.round((currentUs / totalDurationUs) * 100));
-          if (percent > lastPercent) {
-            lastPercent = percent;
-            send({ progress: true, step: 'export', detail: `Encoding ${target.label}... ${percent}%`, percent });
+        stderrBuf += text;
+        if (stderrBuf.length > 10000) stderrBuf = stderrBuf.slice(-5000);
+
+        if (totalDurationUs > 0) {
+          const timeMatch = text.match(/time=(\d+):(\d+):(\d+)\.(\d+)/);
+          if (timeMatch) {
+            const currentUs = (parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3])) * 1_000_000 + parseInt(timeMatch[4]) * 10_000;
+            const percent = Math.min(99, Math.round((currentUs / totalDurationUs) * 100));
+            if (percent > lastPercent) {
+              lastPercent = percent;
+              send({ progress: true, step: 'export', detail: `Encoding ${target.label}... ${percent}%`, percent });
+            }
           }
         }
       });
-      proc.stderr.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
+
+      // Heartbeat to keep the NDJSON connection alive during slow encoding phases
+      const heartbeat = setInterval(() => {
+        send({ progress: true, step: 'export', detail: `Encoding ${target.label}... ${lastPercent}%`, percent: lastPercent });
+      }, 15_000);
 
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => { proc.kill('SIGKILL'); reject(new Error('Export timed out (600s)')); }, 600000);
-        proc.on('close', (code) => {
-          clearTimeout(timeout);
+        proc.on('exit', (code) => {
+          clearInterval(heartbeat);
           if (cancelled) reject(new Error('Export cancelled'));
           else if (code === 0) resolve();
           else reject(new Error(`FFmpeg exited with code ${code}: ${stderrBuf.slice(-500)}`));
         });
-        proc.on('error', (err) => { clearTimeout(timeout); reject(err); });
+        proc.on('error', (err) => { clearInterval(heartbeat); reject(err); });
       });
 
       const stat = fs.statSync(exportPath);
       send({ ok: true, filename: exportFilename, url: `/api/storyboard/video/${exportFilename}`, sizeKB: Math.round(stat.size / 1024) });
     } catch (err) {
-      if (fs.existsSync(exportPath)) fs.unlinkSync(exportPath);
+      if (fs.existsSync(exportPath)) try { fs.unlinkSync(exportPath); } catch {}
       send({ error: (err as Error).message });
     }
+    finished = true;
     res.end();
+  });
+
+  // ── Delete exported upscale file ──
+  router.delete('/docs/:id/export-upscale/:preset', async (req: Request, res: Response) => {
+    const docId = req.params.id as string;
+    const doc = getDoc(docId);
+    if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
+
+    const preset = req.params.preset as string;
+    const orientation = (req.query.orientation as string) || 'landscape';
+    const isPortrait = orientation === 'portrait';
+    const presets = isPortrait ? EXPORT_PRESETS_PORTRAIT : EXPORT_PRESETS;
+    const target = presets[preset];
+    if (!target) { res.status(400).json({ error: `Unknown preset: ${preset}` }); return; }
+
+    const { dbGet } = await import('../db');
+    const job = dbGet<{ result: string }>(
+      `SELECT result FROM jobs WHERE type = 'script-studio-produce' AND payload LIKE ? AND status = 'completed' ORDER BY rowid DESC LIMIT 1`,
+      [`%${docId}%`],
+    );
+    if (!job?.result) { res.status(404).json({ error: 'No produced video found' }); return; }
+
+    let resultFilename: string;
+    try { resultFilename = JSON.parse(job.result).resultFilename; } catch { res.status(500).json({ error: 'Could not parse job result' }); return; }
+
+    const outDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
+    const ext = path.extname(resultFilename);
+    const base = path.basename(resultFilename, ext);
+    const orientSuffix = isPortrait ? '_portrait' : '';
+    const exportFilename = `${base}_${preset}${orientSuffix}${ext}`;
+    const exportPath = path.join(outDir, exportFilename);
+
+    if (fs.existsSync(exportPath)) {
+      fs.unlinkSync(exportPath);
+      res.json({ ok: true, deleted: exportFilename });
+    } else {
+      res.status(404).json({ error: 'Export file not found' });
+    }
   });
 
   // ── Watermark logo upload / status ──
