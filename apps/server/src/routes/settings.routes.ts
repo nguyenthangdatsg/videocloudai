@@ -153,6 +153,16 @@ async function testEdgeTts(): Promise<boolean> {
   }
 }
 
+async function testDvids(): Promise<boolean> {
+  try {
+    const res = await fetch('https://api.dvidshub.net/search?q=military&max_results=1');
+    const data = await res.json() as { results?: unknown[] };
+    return res.ok && Array.isArray(data.results);
+  } catch {
+    return false;
+  }
+}
+
 
 export function createSettingsRouter(): Router {
   const router = Router();
@@ -168,8 +178,8 @@ export function createSettingsRouter(): Router {
   });
 
   router.post('/test', async (_req, res) => {
-    const [gemini, groq, anthropic, openrouter, cerebras, jamendo, ffmpeg, edgeTts] = await Promise.all([
-      testGemini(), testGroq(), testAnthropic(), testOpenRouter(), testCerebras(), testJamendo(), testFfmpeg(), testEdgeTts(),
+    const [gemini, groq, anthropic, openrouter, cerebras, jamendo, ffmpeg, edgeTts, dvids] = await Promise.all([
+      testGemini(), testGroq(), testAnthropic(), testOpenRouter(), testCerebras(), testJamendo(), testFfmpeg(), testEdgeTts(), testDvids(),
     ]);
     res.json({
       gemini,
@@ -180,6 +190,7 @@ export function createSettingsRouter(): Router {
       jamendo,
       ffmpeg,
       'edge-tts': edgeTts,
+      dvids,
     });
   });
 
@@ -221,6 +232,10 @@ export function createSettingsRouter(): Router {
 
   router.post('/test/edge-tts', async (_req, res) => {
     res.json({ 'edge-tts': await testEdgeTts() });
+  });
+
+  router.post('/test/dvids', async (_req, res) => {
+    res.json({ dvids: await testDvids() });
   });
 
   router.get('/voices', (_req, res) => {

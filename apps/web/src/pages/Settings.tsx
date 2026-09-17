@@ -827,6 +827,46 @@ export function Settings() {
             {t('settings.imageProvidersFallback')}
           </div>
         </section>
+
+        {/* DVIDS */}
+        <section className="card p-5">
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-c-text">{t('settings.dvidsTitle')}</h3>
+            <p className="text-[10px] text-c-dim">{t('settings.dvidsDesc')}</p>
+            <label className="text-xs text-c-muted mb-1 block">{t('settings.dvidsApiKey')}</label>
+            <div className="relative">
+              <input
+                type={showKeys['dvids_api_key'] ? 'text' : 'password'}
+                className="input pr-10 font-mono text-sm"
+                placeholder="key-..."
+                value={form['dvids_api_key'] ?? ''}
+                onChange={(e) => set('dvids_api_key', e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowKeys((s) => ({ ...s, dvids_api_key: !s['dvids_api_key'] }))}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-c-dim hover:text-c-text"
+              >
+                {showKeys['dvids_api_key'] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            <p className="text-[9px] text-c-dim">{t('dvids.apiKeyOptional')}</p>
+            <div className="flex items-center gap-3">
+              <button onClick={() => testService('dvids')} disabled={testingService === 'dvids'} className="btn-secondary flex items-center gap-2 text-sm">
+                {testingService === 'dvids' ? <Spinner size="sm" /> : <Zap className="w-3.5 h-3.5" />}
+                {testingService === 'dvids' ? t('settings.testing') : t('settings.testDvids')}
+              </button>
+              {testResults['dvids'] !== undefined && (
+                <div className="flex items-center gap-1.5">
+                  {testResults['dvids'] ? <CheckCircle className="w-3.5 h-3.5 text-green-400" /> : <XCircle className="w-3.5 h-3.5 text-red-400" />}
+                  <span className={testResults['dvids'] ? 'text-green-400 text-xs' : 'text-red-400 text-xs'}>
+                    {testResults['dvids'] ? t('dvids.connectionOk') : t('dvids.connectionFailed')}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
         </>)}
 
         {/* ═══ VIDEO TAB ═══ */}
@@ -1027,6 +1067,19 @@ export function Settings() {
             <Mic className="w-4 h-4 text-blue-400" />
             {t('settings.narration')}
           </h2>
+
+          <div className="mb-4">
+            <label className="text-xs text-c-muted mb-1.5 block">{t('tts.engine')}</label>
+            <select
+              className="input"
+              value={form['default_tts_engine'] ?? 'kokoro'}
+              onChange={(e) => set('default_tts_engine', e.target.value)}
+            >
+              <option value="kokoro">Kokoro (Local AI)</option>
+              <option value="omnivoice">OmniVoice (Local AI)</option>
+              <option value="edge-tts">Edge TTS (Microsoft)</option>
+            </select>
+          </div>
 
           <div>
             <label className="text-xs text-c-muted mb-1.5 block">{t('settings.defaultVoice')}</label>
