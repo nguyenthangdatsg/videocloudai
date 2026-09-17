@@ -1304,13 +1304,13 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/fetch-pixabay`, { orientation });
     return res.data as { ok: boolean; filename: string; duration: number };
   },
-  getAlternatives: async (id: string, query: string, orientation: 'landscape' | 'portrait' = 'landscape', perPage = 12, service: 'pexels' | 'pixabay' | 'mixkit' | 'images' = 'pexels') => {
+  getAlternatives: async (id: string, query: string, orientation: 'landscape' | 'portrait' = 'landscape', perPage = 12, service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images' = 'pexels') => {
     const res = await api.get(`/script-studio/docs/${id}/blocks/alternatives`, {
       params: { query, orientation, perPage, service },
     });
     return res.data as {
-      service: 'pexels' | 'pixabay' | 'mixkit' | 'images';
-      candidates: Array<{ pexelsId?: number; pixabayId?: number; mixkitId?: number; imageId?: number; source?: string; thumbnail: string; previewUrl?: string | null; downloadUrl?: string; duration?: number; width: number; height: number; pexelsUrl?: string; pageURL?: string; pageUrl?: string; title?: string }>;
+      service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images';
+      candidates: Array<{ pexelsId?: number; pixabayId?: number; mixkitId?: number; dvidsId?: number; imageId?: number; source?: string; thumbnail: string; previewUrl?: string | null; downloadUrl?: string; duration?: number; width: number; height: number; pexelsUrl?: string; pageURL?: string; pageUrl?: string; title?: string }>;
     };
   },
   applyStockImage: async (id: string, blockIndex: number, downloadUrl: string, source: string, width: number, height: number, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in', orientation: string = 'landscape') => {
@@ -1381,6 +1381,10 @@ export const scriptStudioApi = {
   applyMixkitFromUrl: async (id: string, blockIndex: number, downloadUrl: string, duration: number, width: number, height: number) => {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-mixkit-url`, { downloadUrl, duration, width, height });
     return res.data as { ok: boolean; filename: string; duration: number };
+  },
+  applyDvidsById: async (id: string, blockIndex: number, dvidsId: number, downloadUrl?: string, duration?: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-dvids-id`, { dvidsId, downloadUrl, duration });
+    return res.data as { ok: boolean; filename: string; dvidsId: number; duration: number };
   },
   regenQuery: async (id: string, blockIndex: number) => {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/regen-query`);

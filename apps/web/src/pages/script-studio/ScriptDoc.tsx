@@ -6,7 +6,7 @@ import {
   ArrowLeft, ChevronDown, ChevronUp, AlertTriangle, Info, Check,
   Play, Loader2, BarChart2, Video, Mic, Settings, RefreshCw, X,
   Volume2, Film, Square, ChevronRight, ChevronLeft, Pencil, Music2,
-  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2, Merge, Type as TypeIcon, Copy,
+  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2, Merge, Type as TypeIcon, Copy, Wifi, WifiOff,
 } from 'lucide-react';
 import { scriptStudioApi, queueApi, ttsApi, musicApi, type SubtitleStyle } from '../../lib/api';
 import { useAppStore } from '../../store';
@@ -56,6 +56,12 @@ interface ScriptBlock {
 }
 
 interface LogEntry { ts: string; level: string; message: string; operation?: string; }
+
+interface DownloadTask {
+  blockIndex: number;
+  status: 'downloading' | 'done' | 'error';
+  label: string;
+}
 
 const STATUS_CLASSES: Record<string, string> = {
   draft: 'bg-gray-500/15 text-gray-400',
@@ -275,16 +281,18 @@ function autoFlowPrompt(block: ScriptBlock, orientation: 'landscape' | 'portrait
 
 // ── Block Step Editor (one-by-one preview + edit) ──
 
-function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0, ttsEngine, onTtsEngineChange, voice, rate }: {
+function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0, ttsEngine, onTtsEngineChange, voice, rate, downloadQueue, queueStockDownload }: {
   blocks: ScriptBlock[];
   docId: string;
   orientation: 'landscape' | 'portrait';
   onBlockUpdated: () => void;
   initialIdx?: number;
-  ttsEngine: 'omnivoice' | 'edge-tts';
-  onTtsEngineChange: (engine: 'omnivoice' | 'edge-tts') => void;
+  ttsEngine: 'kokoro' | 'omnivoice' | 'edge-tts';
+  onTtsEngineChange: (engine: 'kokoro' | 'omnivoice' | 'edge-tts') => void;
   voice?: string;
   rate?: string;
+  downloadQueue: Map<number, DownloadTask>;
+  queueStockDownload: (blockIndex: number, label: string, downloadFn: () => Promise<{ filename: string; duration: number }>, onSuccess?: (data: { filename: string; duration: number }) => void) => void;
 }) {
   const { t } = useTranslation();
   const [idx, setIdx] = useState(initialIdx);
@@ -302,7 +310,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   // Stock picker state
   const [showPexelsPicker, setShowPexelsPicker] = useState(false);
   const [remotionRendering, setRemotionRendering] = useState(false);
-  const [pickerService, setPickerService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'images'>('pexels');
+  const [pickerService, setPickerService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images'>('pexels');
   const [pickerOrientation, setPickerOrientation] = useState<'landscape' | 'portrait'>(orientation);
   const [pickerQuery, setPickerQuery] = useState('');
   const [pickerCandidates, setPickerCandidates] = useState<Array<{
@@ -693,7 +701,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     const start = clampedIdx + 1;
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[(start + i) % blocks.length];
-      if (b.status === 'error' || (!b.openingText && !b.clipAssetPath && b.narration)) {
+      if (b.status === 'error' || (!b.openingText && !b.clipAssetPath && !(b.clips?.length > 0) && b.narration)) {
         setIdx(blocks.indexOf(b));
         return;
       }
@@ -701,14 +709,14 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   };
 
   // Shared: fetch candidates for the given service + query + orientation
-  const fetchPickerCandidates = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'images', query: string, orient: 'landscape' | 'portrait') => {
+  const fetchPickerCandidates = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images', query: string, orient: 'landscape' | 'portrait') => {
     setLoadingPicker(true);
     setPickerCandidates([]);
     setPickerError(null);
     try {
       const data = await scriptStudioApi.getAlternatives(docId, query, orient, 12, service);
       setPickerCandidates((data.candidates ?? []).map((c: any) => ({
-        id: (c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? c.imageId ?? 0) as number,
+        id: (c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? c.dvidsId ?? c.imageId ?? 0) as number,
         thumbnail: c.thumbnail,
         previewUrl: c.previewUrl,
         downloadUrl: c.downloadUrl,
@@ -726,7 +734,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   };
 
   // Open stock picker for a given service
-  const openPicker = async (service: 'pexels' | 'pixabay' | 'mixkit') => {
+  const openPicker = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids') => {
     const query = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 5).join(' ');
     setPickerQuery(query);
     setPickerService(service);
@@ -734,7 +742,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     await fetchPickerCandidates(service, query, pickerOrientation);
   };
 
-  const switchPickerService = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'images') => {
+  const switchPickerService = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images') => {
     if (service === pickerService) return;
     setPickerService(service);
     await fetchPickerCandidates(service, pickerQuery, pickerOrientation);
@@ -765,35 +773,38 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   };
 
   const applyPexelsVideo = async (candidate: typeof pickerCandidates[0]) => {
-    setApplyingPexelsId(candidate.id);
-    try {
+    const bIdx = block.blockIndex;
+    const service = pickerService;
+    const currentClips = [...blockClips];
+    const isChart = !!block.chartSpec;
+
+    const downloadFn = async (): Promise<{ filename: string; duration: number }> => {
       let data: any;
-      if (pickerService === 'images') {
-        data = await scriptStudioApi.applyStockImage(docId, block.blockIndex, candidate.downloadUrl!, candidate.source || 'pexels', candidate.width, candidate.height, imageZoomEffect, orientation);
-      } else if (pickerService === 'pexels') {
-        data = await scriptStudioApi.applyPexelsById(docId, block.blockIndex, candidate.id);
-      } else if (pickerService === 'mixkit') {
-        data = await scriptStudioApi.applyMixkitFromUrl(docId, block.blockIndex, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
+      if (service === 'images') {
+        data = await scriptStudioApi.applyStockImage(docId, bIdx, candidate.downloadUrl!, candidate.source || 'pexels', candidate.width, candidate.height, imageZoomEffect, orientation);
+      } else if (service === 'pexels') {
+        data = await scriptStudioApi.applyPexelsById(docId, bIdx, candidate.id, candidate.downloadUrl, candidate.duration);
+      } else if (service === 'mixkit') {
+        data = await scriptStudioApi.applyMixkitFromUrl(docId, bIdx, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
+      } else if (service === 'dvids') {
+        data = await scriptStudioApi.applyDvidsById(docId, bIdx, candidate.id, candidate.downloadUrl, candidate.duration);
       } else {
-        data = await scriptStudioApi.applyPixabayFromUrl(docId, block.blockIndex, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
+        data = await scriptStudioApi.applyPixabayFromUrl(docId, bIdx, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
       }
-      const newAssetPath = data.filename ?? data.clipAssetPath ?? block.clipAssetPath;
+      const newAssetPath = data.filename ?? data.clipAssetPath;
       if (newAssetPath) {
         const srcDur = data.duration ?? candidate.duration ?? null;
-        const newClip = { assetPath: newAssetPath, startSec: 0, endSec: srcDur as number | null, sourceDurationSec: srcDur as number | undefined, label: `${pickerService}:${candidate.id}` };
-        // Chart blocks: replace all clips with the new composite; regular blocks: append
-        const updatedClips = block.chartSpec ? [newClip] : [...blockClips, newClip];
-        await scriptStudioApi.updateBlockClips(docId, block.blockIndex, updatedClips);
-        setActiveClipIdx(updatedClips.length - 1);
-        if (srcDur) setClipSourceDurations(prev => ({ ...prev, [newAssetPath]: srcDur }));
+        const newClip = { assetPath: newAssetPath, startSec: 0, endSec: srcDur as number | null, sourceDurationSec: srcDur as number | undefined, label: `${service}:${candidate.id}` };
+        const updatedClips = isChart ? [newClip] : [...currentClips, newClip];
+        await scriptStudioApi.updateBlockClips(docId, bIdx, updatedClips);
       }
-      setActionLog([{ level: 'success', msg: `Clip added (${data.duration ?? candidate.duration}s)` }]);
-      setShowPexelsPicker(false);
-      onBlockUpdated();
-    } catch (err: any) {
-      setActionLog([{ level: 'error', msg: err.response?.data?.error ?? err.message }]);
-    }
-    setApplyingPexelsId(null);
+      return { filename: data.filename, duration: data.duration ?? candidate.duration };
+    };
+
+    const label = `${service}:${candidate.id}`;
+    queueStockDownload(bIdx, label, downloadFn);
+    setActionLog([{ level: 'info', msg: `Downloading #${bIdx + 1} in background...` }]);
+    setShowPexelsPicker(false);
   };
 
   // Handle pasted/dropped image file in Image tab
@@ -1015,7 +1026,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   const audioTotalSec = audioDurSec ?? audioElDuration ?? 0;
   const audioBarPct = (audioTotalSec > 0 && playDurSec && playDurSec > 0) ? Math.min(100, (audioTotalSec / playDurSec) * 100) : 0;
 
-  const hasIssue = block.status === 'error' || (!block.clipAssetPath && !!block.narration);
+  const hasIssue = block.status === 'error' || (!block.clipAssetPath && !(block.clips?.length > 0) && !!block.narration);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -1037,8 +1048,13 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             const isChart = !!b.chartSpec;
             const isAi = b.visualType === 'ai';
             const isOpening = !!b.openingText;
-            const noClip = !isOpening && !b.clipAssetPath && !!b.narration;
-            const notRendered = !isOpening && b.status === 'clip_ready' && !!b.clipAssetPath && !b.renderedClipPath;
+            const hasClip = !isOpening && (!!b.clipAssetPath || (b.clips?.length ?? 0) > 0);
+            const noClip = !isOpening && !hasClip && !!b.narration;
+            const notRendered = !isOpening && hasClip && !b.renderedClipPath && b.status !== 'rendered' && b.status !== 'error';
+            const dlTask = downloadQueue.get(b.blockIndex);
+            const isDownloading = dlTask?.status === 'downloading';
+            const dlDone = dlTask?.status === 'done';
+            const dlError = dlTask?.status === 'error';
             // Check if video duration < audio duration (skip for opening blocks — fixed 3s, no audio)
             const audioDurSec = (b.audioDurationMs ?? 0) / 1000;
             let videoDurSec = 0;
@@ -1065,33 +1081,44 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                     {b.segmentName}
                   </span>
                 )}
-                <button
-                  onClick={() => setIdx(i)}
-                  className={`shrink-0 w-6 h-6 rounded-md text-xs font-mono font-bold transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-c-accent text-white'
-                      : hasErr
-                        ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                        : isOpening
-                          ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
-                          : noClip
-                            ? 'bg-amber-500/20 text-amber-400 border border-dashed border-amber-500/50'
-                            : notRendered
-                              ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-                              : videoShort
-                                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                                : isChart
-                                  ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
-                                  : isAi
-                                    ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
-                                    : b.status === 'rendered'
-                                      ? 'bg-green-500/15 text-green-400'
-                                      : 'bg-c-elevated text-c-dim hover:bg-c-hover hover:text-c-text'
-                  }`}
-                  title={`#${i + 1} · ${b.segmentName} · Sc ${b.sceneNumber}${isOpening ? ' [opening]' : isChart ? ' [chart]' : isAi ? ' [AI]' : ''}: ${b.status}${videoShort ? ` · video ${videoDurSec.toFixed(1)}s < audio ${audioDurSec.toFixed(1)}s` : ''}`}
-                >
-                  {isOpening ? <Film className="w-3 h-3" /> : isChart ? <BarChart2 className="w-3 h-3" /> : isAi ? <Wand2 className="w-3 h-3" /> : i + 1}
-                </button>
+                <div className="relative shrink-0">
+                  <button
+                    onClick={() => setIdx(i)}
+                    className={`shrink-0 w-6 h-6 rounded-md text-xs font-mono font-bold transition-all cursor-pointer ${
+                      isDownloading
+                        ? 'bg-cyan-500/25 text-cyan-400 border border-cyan-500/40 animate-pulse'
+                        : dlDone
+                          ? 'bg-green-500/25 text-green-400 border border-green-500/40'
+                          : dlError
+                            ? 'bg-red-500/25 text-red-400 border border-red-500/40'
+                            : isActive
+                              ? 'bg-c-accent text-white'
+                              : hasErr
+                                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                : isOpening
+                                  ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
+                                  : noClip
+                                    ? 'bg-amber-500/20 text-amber-400 border border-dashed border-amber-500/50'
+                                    : videoShort
+                                      ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                                      : notRendered
+                                        ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30'
+                                        : isChart
+                                          ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                                          : isAi
+                                            ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                                            : b.status === 'rendered'
+                                              ? 'bg-green-500/15 text-green-400'
+                                              : 'bg-c-elevated text-c-dim hover:bg-c-hover hover:text-c-text'
+                    }`}
+                    title={`#${i + 1} · ${b.segmentName} · Sc ${b.sceneNumber}${isOpening ? ' [opening]' : isChart ? ' [chart]' : isAi ? ' [AI]' : ''}: ${b.status}${isDownloading ? ' · downloading...' : dlDone ? ' · download done' : dlError ? ' · download failed' : ''}${videoShort ? ` · video ${videoDurSec.toFixed(1)}s < audio ${audioDurSec.toFixed(1)}s` : ''}`}
+                  >
+                    {isDownloading ? <Loader2 className="w-3 h-3 animate-spin" /> : isOpening ? <Film className="w-3 h-3" /> : isChart ? <BarChart2 className="w-3 h-3" /> : isAi ? <Wand2 className="w-3 h-3" /> : i + 1}
+                  </button>
+                  {isDownloading && (
+                    <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-cyan-500 text-white text-[7px] font-bold flex items-center justify-center">{i + 1}</span>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -1106,7 +1133,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
         </button>
 
         {/* Jump to issue */}
-        {blocks.some((b) => b.status === 'error' || (!b.openingText && !b.clipAssetPath && b.narration)) && (
+        {blocks.some((b) => b.status === 'error' || (!b.openingText && !b.clipAssetPath && !(b.clips?.length > 0) && b.narration)) && (
           <button
             className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors cursor-pointer shrink-0"
             onClick={jumpToIssue}
@@ -1127,10 +1154,18 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
         <span className="text-[10px] font-semibold text-c-accent/70 uppercase tracking-widest truncate">{block.segmentName}</span>
         <span className="text-[10px] text-c-dim/60 shrink-0">·</span>
         <span className="text-[10px] text-c-dim tabular-nums shrink-0">{clampedIdx + 1}/{blocks.length}</span>
+        {(() => {
+          const dlCount = Array.from(downloadQueue.values()).filter(t => t.status === 'downloading').length;
+          return dlCount > 0 ? (
+            <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-px rounded bg-cyan-500/10 text-cyan-400 shrink-0 animate-pulse">
+              <Loader2 className="w-2 h-2 animate-spin" />{dlCount} downloading
+            </span>
+          ) : null;
+        })()}
         <div className="flex-1" />
         {block.openingText
           ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-sky-500/10 text-sky-400 shrink-0"><Film className="w-2 h-2" />3s</span>
-          : block.clipAssetPath
+          : (block.clipAssetPath || (block.clips?.length ?? 0) > 0)
             ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-green-500/10 text-green-400 shrink-0"><Check className="w-2 h-2" />clip</span>
             : block.narration ? <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-amber-500/10 text-amber-400 shrink-0"><AlertTriangle className="w-2 h-2" />no clip</span> : null
         }
@@ -1168,8 +1203,8 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             <span className="inline-flex items-center gap-1 text-[10px] text-blue-400/70">
               <Mic className="w-2.5 h-2.5" />{(block.audioDurationMs / 1000).toFixed(1)}s
               {block.audioEngine && (
-                <span className={`px-1 py-px rounded text-[9px] font-mono ${block.audioEngine === 'omnivoice' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/20' : 'bg-sky-500/15 text-sky-400 border border-sky-500/20'}`}>
-                  {block.audioEngine === 'omnivoice' ? 'OmniVoice' : 'edge-tts'}
+                <span className={`px-1 py-px rounded text-[9px] font-mono ${block.audioEngine === 'kokoro' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : block.audioEngine === 'omnivoice' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/20' : 'bg-sky-500/15 text-sky-400 border border-sky-500/20'}`}>
+                  {block.audioEngine === 'kokoro' ? 'Kokoro' : block.audioEngine === 'omnivoice' ? 'OmniVoice' : 'edge-tts'}
                 </span>
               )}
             </span>
@@ -1209,9 +1244,10 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             <>
               <select
                 value={ttsEngine}
-                onChange={(e) => onTtsEngineChange(e.target.value as 'omnivoice' | 'edge-tts')}
+                onChange={(e) => onTtsEngineChange(e.target.value as 'kokoro' | 'omnivoice' | 'edge-tts')}
                 className="text-[10px] px-1 py-0.5 rounded bg-c-elevated border border-c-border text-c-text cursor-pointer focus:outline-none focus:border-c-accent/40"
               >
+                <option value="kokoro">Kokoro</option>
                 <option value="omnivoice">OmniVoice</option>
                 <option value="edge-tts">edge-tts</option>
               </select>
@@ -2133,15 +2169,15 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
           <div className="px-3 pt-2 pb-1.5 flex items-center gap-1.5 flex-wrap">
             {/* Service tabs */}
             <div className="flex rounded-md border border-c-border overflow-hidden shrink-0">
-              {(['pexels', 'pixabay', 'mixkit', 'images'] as const).map((svc) => (
+              {(['pexels', 'pixabay', 'mixkit', 'dvids', 'images'] as const).map((svc) => (
                 <button
                   key={svc}
                   onClick={() => switchPickerService(svc)}
                   className={`px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${svc !== 'pexels' ? 'border-l border-c-border' : ''} ${pickerService === svc
-                    ? svc === 'pexels' ? 'bg-c-accent text-white' : svc === 'pixabay' ? 'bg-emerald-600 text-white' : svc === 'mixkit' ? 'bg-orange-600 text-white' : 'bg-purple-600 text-white'
+                    ? svc === 'pexels' ? 'bg-c-accent text-white' : svc === 'pixabay' ? 'bg-emerald-600 text-white' : svc === 'mixkit' ? 'bg-orange-600 text-white' : svc === 'dvids' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
                     : 'bg-c-elevated text-c-muted hover:text-c-text'}`}
                 >
-                  {svc === 'images' ? 'Image' : svc.charAt(0).toUpperCase() + svc.slice(1)}
+                  {svc === 'images' ? 'Image' : svc === 'dvids' ? 'DVIDS' : svc.charAt(0).toUpperCase() + svc.slice(1)}
                 </button>
               ))}
             </div>
@@ -2377,6 +2413,8 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
               if (siblings.length <= 1) return String(dn);
               return `${dn}${String.fromCharCode(97 + siblings.indexOf(block))}`;
             })()}
+            downloadQueue={downloadQueue}
+            queueStockDownload={queueStockDownload}
           />
         </div>
       )}
@@ -2812,7 +2850,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
   const [showOverlay, setShowOverlay] = useState(false);
   const wordCount = block.narration?.split(/\s+/).filter(Boolean).length ?? 0;
   const durationSec = block.audioDurationMs ? (block.audioDurationMs / 1000) : (wordCount / 2.5);
-  const hasClip = !!block.clipAssetPath;
+  const hasClip = !!block.clipAssetPath || (block.clips?.length ?? 0) > 0;
   const hasAudio = !!block.audioPath;
   const isOpening = !!block.openingText;
   const isEmpty = !block.narration?.trim() && !isOpening;
@@ -3136,13 +3174,15 @@ function InsertBlockButton({ docId, blockIndex, isProducing, onInserted }: {
   );
 }
 
-function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, displayLabel }: {
+function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, displayLabel, downloadQueue, queueStockDownload }: {
   block: ScriptBlock;
   docId: string;
   orientation: 'landscape' | 'portrait';
   isProducing: boolean;
   onBlockUpdated: () => void;
   displayLabel: string;
+  downloadQueue?: Map<number, DownloadTask>;
+  queueStockDownload?: (blockIndex: number, label: string, downloadFn: () => Promise<{ filename: string; duration: number }>, onSuccess?: (data: { filename: string; duration: number }) => void) => void;
 }) {
   const { t } = useTranslation();
   const [editingQuery, setEditingQuery] = useState(false);
@@ -3233,16 +3273,31 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   };
 
   const fetchStock = async (source: 'pexels' | 'pixabay') => {
+    if (queueStockDownload) {
+      const existingClips = [...blockClips];
+      const bIdx = block.blockIndex;
+      queueStockDownload(bIdx, `${source} fetch`, async () => {
+        const data = source === 'pexels'
+          ? await scriptStudioApi.fetchBlockPexels(docId, bIdx, orientation)
+          : await scriptStudioApi.fetchBlockPixabay(docId, bIdx, orientation);
+        const srcDur = data.duration ?? null;
+        const newClip = { assetPath: data.filename, startSec: 0, endSec: srcDur, sourceDurationSec: srcDur ?? undefined };
+        const merged = [...existingClips, newClip];
+        await scriptStudioApi.updateBlockClips(docId, bIdx, merged);
+        return { filename: data.filename, duration: data.duration };
+      });
+      setFetchLog(`Downloading ${source} in background...`);
+      return;
+    }
     setFetchingStock(source);
     setFetchLog(null);
     try {
-      // Save existing clips before fetch (backend replaces single clip)
       const existingClips = [...blockClips];
       const data = source === 'pexels'
         ? await scriptStudioApi.fetchBlockPexels(docId, block.blockIndex, orientation)
         : await scriptStudioApi.fetchBlockPixabay(docId, block.blockIndex, orientation);
-      // Append new clip to existing clips (or create first clip)
-      const newClip = { assetPath: data.filename, startSec: 0, endSec: null };
+      const srcDur = data.duration ?? null;
+      const newClip = { assetPath: data.filename, startSec: 0, endSec: srcDur, sourceDurationSec: srcDur ?? undefined };
       const merged = [...existingClips, newClip];
       await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
       setFetchLog(`${source === 'pexels' ? 'Pexels' : 'Pixabay'} clip added (${data.duration}s)`);
@@ -3281,7 +3336,8 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     try {
       const result = await scriptStudioApi.renderRemotion(docId, block.blockIndex, compositionId, durationSec, orientation, props);
       // Append to existing clips
-      const newClip = { assetPath: result.filename, startSec: 0, endSec: null };
+      const srcDur = result.durationSec ?? durationSec ?? null;
+      const newClip = { assetPath: result.filename, startSec: 0, endSec: srcDur, sourceDurationSec: srcDur ?? undefined };
       const merged = blockClips.length > 0 ? [...blockClips, newClip] : [newClip];
       await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
       onBlockUpdated();
@@ -3294,11 +3350,36 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
 
   const selectAlt = async (alt: { pexelsId?: number; pixabayId?: number; mixkitId?: number; downloadUrl?: string; duration: number; width: number; height: number }) => {
     const altKey = alt.pexelsId ?? alt.pixabayId ?? alt.mixkitId ?? alt.downloadUrl ?? null;
+    if (queueStockDownload) {
+      const bIdx = block.blockIndex;
+      const existingClips = [...blockClips];
+      queueStockDownload(bIdx, `alt:${altKey}`, async () => {
+        let newFilename: string | null = null;
+        let duration = alt.duration;
+        if (alt.pexelsId) {
+          const result = await scriptStudioApi.applyPexelsById(docId, bIdx, alt.pexelsId, alt.downloadUrl, alt.duration);
+          newFilename = result.filename; duration = result.duration;
+        } else if (alt.pixabayId && alt.downloadUrl) {
+          const result = await scriptStudioApi.applyPixabayFromUrl(docId, bIdx, alt.downloadUrl, alt.duration, alt.width, alt.height);
+          newFilename = result.filename; duration = result.duration;
+        } else if (alt.mixkitId && alt.downloadUrl) {
+          const result = await scriptStudioApi.applyMixkitFromUrl(docId, bIdx, alt.downloadUrl, alt.duration, alt.width, alt.height);
+          newFilename = result.filename; duration = result.duration;
+        }
+        if (newFilename && existingClips.length > 0) {
+          const merged = [...existingClips, { assetPath: newFilename, startSec: 0, endSec: duration, sourceDurationSec: duration ?? undefined }];
+          await scriptStudioApi.updateBlockClips(docId, bIdx, merged);
+        }
+        return { filename: newFilename ?? '', duration };
+      });
+      setApplyingAltId(null);
+      return;
+    }
     setApplyingAltId(altKey);
     try {
       let newFilename: string | null = null;
       if (alt.pexelsId) {
-        const result = await scriptStudioApi.applyPexelsById(docId, block.blockIndex, alt.pexelsId);
+        const result = await scriptStudioApi.applyPexelsById(docId, block.blockIndex, alt.pexelsId, alt.downloadUrl, alt.duration);
         newFilename = result.filename;
       } else if (alt.pixabayId && alt.downloadUrl) {
         const result = await scriptStudioApi.applyPixabayFromUrl(docId, block.blockIndex, alt.downloadUrl, alt.duration, alt.width, alt.height);
@@ -3307,9 +3388,8 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
         const result = await scriptStudioApi.applyMixkitFromUrl(docId, block.blockIndex, alt.downloadUrl, alt.duration, alt.width, alt.height);
         newFilename = result.filename;
       }
-      // Append to existing clips instead of replacing
       if (newFilename && blockClips.length > 0) {
-        const merged = [...blockClips, { assetPath: newFilename, startSec: 0, endSec: null }];
+        const merged = [...blockClips, { assetPath: newFilename, startSec: 0, endSec: alt.duration, sourceDurationSec: alt.duration ?? undefined }];
         await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
       }
       onBlockUpdated();
@@ -3401,7 +3481,17 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
       {/* Header row */}
       <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
         {/* Block number badge */}
-        <span className="min-w-5 h-5 px-1 rounded bg-c-elevated border border-c-border text-xs font-mono font-bold text-c-muted flex items-center justify-center shrink-0">
+        <span className={`min-w-5 h-5 px-1 rounded text-xs font-mono font-bold flex items-center justify-center shrink-0 gap-1 ${
+          downloadQueue?.get(block.blockIndex)?.status === 'downloading'
+            ? 'bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 animate-pulse'
+            : downloadQueue?.get(block.blockIndex)?.status === 'done'
+              ? 'bg-green-500/15 border border-green-500/30 text-green-400'
+              : downloadQueue?.get(block.blockIndex)?.status === 'error'
+                ? 'bg-red-500/15 border border-red-500/30 text-red-400'
+                : 'bg-c-elevated border border-c-border text-c-muted'
+        }`}>
+          {downloadQueue?.get(block.blockIndex)?.status === 'downloading' && <Loader2 className="w-3 h-3 animate-spin" />}
+          {downloadQueue?.get(block.blockIndex)?.status === 'done' && <Check className="w-3 h-3" />}
           {displayLabel}
         </span>
         {/* Segment · Scene label */}
@@ -3483,8 +3573,8 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
             <Volume2 className="w-3 h-3" />
             {audioDurSec}s
             {block.audioEngine && (
-              <span className={`px-1 py-px rounded text-[9px] font-mono ${block.audioEngine === 'omnivoice' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/20' : 'bg-sky-500/15 text-sky-400 border border-sky-500/20'}`}>
-                {block.audioEngine === 'omnivoice' ? 'OmniVoice' : 'edge-tts'}
+              <span className={`px-1 py-px rounded text-[9px] font-mono ${block.audioEngine === 'kokoro' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : block.audioEngine === 'omnivoice' ? 'bg-purple-500/15 text-purple-400 border border-purple-500/20' : 'bg-sky-500/15 text-sky-400 border border-sky-500/20'}`}>
+                {block.audioEngine === 'kokoro' ? 'Kokoro' : block.audioEngine === 'omnivoice' ? 'OmniVoice' : 'edge-tts'}
               </span>
             )}
           </span>
@@ -4136,8 +4226,8 @@ const RATE_OPTIONS = [
 const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   enabled: false, fontFamily: 'Arial', fontSize: 48, fontColor: '#FFFFFF',
   fontWeight: 'bold', strokeColor: '#000000', strokeWidth: 2,
-  bgColor: '#000000', bgOpacity: 0.5, position: 'bottom', alignment: 'center',
-  marginX: 40, marginBottom: 60, uppercase: false, animation: 'none',
+  bgColor: '#000000', bgOpacity: 0.4, position: 'bottom', alignment: 'center',
+  marginX: 40, marginBottom: 110, uppercase: false, animation: 'none',
 };
 
 const WATERMARK_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
@@ -4234,22 +4324,41 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
   const { t } = useTranslation();
   const subtitleStyle = options.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
 
-  const { data: voiceData } = useQuery({ queryKey: ['tts-voices'], queryFn: ttsApi.voices });
+  const currentEngine = (options.ttsEngine ?? 'kokoro') as 'kokoro' | 'omnivoice' | 'edge-tts';
+  const { data: edgeVoiceData } = useQuery({ queryKey: ['tts-voices'], queryFn: ttsApi.voices });
+  const { data: kokoroVoiceData } = useQuery({ queryKey: ['kokoro-voices-formatted'], queryFn: ttsApi.kokoroVoicesFormatted, staleTime: Infinity });
   const { data: cachedTracks } = useQuery({ queryKey: ['music-cached'], queryFn: musicApi.cached });
 
+  // Health checks for engine status indicators
+  const { data: omnivoiceHealthData } = useQuery({ queryKey: ['omnivoice-health'], queryFn: ttsApi.omnivoiceHealth, refetchInterval: 30_000, staleTime: 15_000 });
+  const omnivoiceOnline = omnivoiceHealthData?.reachable ?? false;
+  const { data: kokoroHealthData } = useQuery({ queryKey: ['kokoro-health'], queryFn: ttsApi.kokoroHealth, refetchInterval: 30_000, staleTime: 15_000 });
+  const kokoroAvailable = kokoroHealthData?.available ?? false;
+
+  const voiceData = currentEngine === 'kokoro' ? kokoroVoiceData : edgeVoiceData;
   const allVoices = Object.entries(voiceData?.voices ?? {}) as [string, { lang: string; label: string; flag: string; gender: string }][];
   const langs = [...new Set(allVoices.map(([, v]) => v.lang))].sort();
 
   // Auto-detect language from saved voice
   const savedVoiceLang = allVoices.find(([name]) => name === options.voice)?.[1]?.lang;
-  const [langFilter, setLangFilter] = useState(savedVoiceLang ?? 'en');
+  const [langFilter, setLangFilter] = useState(savedVoiceLang ?? (currentEngine === 'kokoro' ? 'en-us' : 'en'));
   useEffect(() => { if (savedVoiceLang && savedVoiceLang !== langFilter) setLangFilter(savedVoiceLang); }, [savedVoiceLang]);
+
+  // Reset lang filter & voice when engine changes
+  const prevEngineRef = useRef(currentEngine);
+  useEffect(() => {
+    if (prevEngineRef.current !== currentEngine) {
+      prevEngineRef.current = currentEngine;
+      setLangFilter(currentEngine === 'kokoro' ? 'en-us' : 'en');
+      onChange('voice', currentEngine === 'kokoro' ? 'af_heart' : 'en-US-GuyNeural');
+    }
+  }, [currentEngine]);
 
   // Sort: US voices first, then by gender (female first), then alphabetical
   const filteredVoices = (langFilter ? allVoices.filter(([, v]) => v.lang === langFilter) : allVoices)
     .sort((a, b) => {
-      const aUS = a[0].startsWith('en-US') ? 0 : 1;
-      const bUS = b[0].startsWith('en-US') ? 0 : 1;
+      const aUS = a[0].startsWith('en-US') || a[0].startsWith('af_') || a[0].startsWith('am_') ? 0 : 1;
+      const bUS = b[0].startsWith('en-US') || b[0].startsWith('af_') || b[0].startsWith('am_') ? 0 : 1;
       if (aUS !== bUS) return aUS - bUS;
       const aG = a[1].gender === 'female' ? 0 : 1;
       const bG = b[1].gender === 'female' ? 0 : 1;
@@ -4265,7 +4374,7 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
     if (!voice || demoPlaying) return;
     setDemoPlaying(true);
     try {
-      const result = await ttsApi.generate({ text: 'Hello! This is a preview of my voice.', voice, rate: options.rate ?? '+0%' });
+      const result = await ttsApi.generate({ text: 'Hello! This is a preview of my voice.', voice, rate: options.rate ?? '+0%', engine: currentEngine });
       if (demoAudioRef.current) { demoAudioRef.current.pause(); demoAudioRef.current = null; }
       const audio = new Audio(`/api/tts/audio/${result.filename}`);
       demoAudioRef.current = audio;
@@ -4296,6 +4405,29 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
         </div>
 
         <div className="space-y-3">
+          {/* TTS Engine toggle */}
+          <div>
+            <label className="text-xs text-c-muted mb-1.5 block">{t('tts.engine')}</label>
+            <div className="flex items-center gap-2 flex-wrap">
+              {(['kokoro', 'omnivoice', 'edge-tts'] as const).map((eng) => (
+                <button key={eng} onClick={() => onChange('ttsEngine', eng)}
+                  className={`text-xs px-2.5 py-1 rounded-lg border transition-colors flex items-center gap-1 cursor-pointer ${
+                    currentEngine === eng ? 'bg-cyan-900/30 border-cyan-600/50 text-cyan-300' : 'border-c-border text-c-muted hover:border-c-border-hi'
+                  }`}
+                >
+                  {eng === 'kokoro' ? 'Kokoro' : eng === 'omnivoice' ? 'OmniVoice' : 'Edge TTS'}
+                  {eng === 'omnivoice' && (omnivoiceOnline ? <Wifi className="w-3 h-3 text-green-400" /> : <WifiOff className="w-3 h-3 text-red-400" />)}
+                  {eng === 'kokoro' && (kokoroAvailable ? <Wifi className="w-3 h-3 text-green-400" /> : <WifiOff className="w-3 h-3 text-red-400" />)}
+                </button>
+              ))}
+              {currentEngine === 'omnivoice' && !omnivoiceOnline && (
+                <span className="text-[10px] text-amber-400">{t('tts.omnivoiceOffline')}</span>
+              )}
+              {currentEngine === 'kokoro' && !kokoroAvailable && (
+                <span className="text-[10px] text-amber-400">{t('tts.kokoroOffline')}</span>
+              )}
+            </div>
+          </div>
           {/* Voice language + Voice + Rate + Speed + Orientation + Chart Color */}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {/* Voice language filter */}
@@ -4458,6 +4590,7 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
             }}
             saveProject={() => {/* no-op */}}
             t={t}
+            orientation={(options.orientation ?? 'landscape') as 'landscape' | 'portrait'}
           />
 
           {/* Row 4: AI fallback */}
@@ -4659,15 +4792,29 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
             const result = exportResults[preset];
             const isExporting = exporting === preset;
             return result ? (
-              <a
-                key={preset}
-                href={result.url}
-                download={result.filename}
-                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 transition-all"
-              >
-                <Check className="w-3 h-3" />
-                {preset.toUpperCase()} ({(result.sizeKB / 1024).toFixed(1)} MB)
-              </a>
+              <span key={preset} className="inline-flex items-center gap-0.5">
+                <a
+                  href={result.url}
+                  download={result.filename}
+                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-l-lg bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 transition-all"
+                >
+                  <Check className="w-3 h-3" />
+                  {preset.toUpperCase()} ({(result.sizeKB / 1024).toFixed(1)} MB)
+                </a>
+                <button
+                  className="inline-flex items-center text-xs px-1.5 py-1.5 rounded-r-lg bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-all cursor-pointer"
+                  title={`Delete ${preset.toUpperCase()} export`}
+                  onClick={async () => {
+                    if (!confirm(`Delete ${preset.toUpperCase()} export?`)) return;
+                    try {
+                      await scriptStudioApi.deleteExport(docId, preset, orientation);
+                      setExportResults(prev => { const n = { ...prev }; delete n[preset]; return n; });
+                    } catch (e: any) { setExportError(e.message); }
+                  }}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </span>
             ) : (
               <button
                 key={preset}
@@ -4939,7 +5086,44 @@ export default function ScriptDoc() {
   const [fetchAllProgress, setFetchAllProgress] = useState<string[]>([]);
   const prevResultUrlRef = useRef<string | null>(null);
 
-  // Queries
+  // Background download queue — allows user to continue editing while stock downloads
+  const [downloadQueue, setDownloadQueue] = useState<Map<number, DownloadTask>>(new Map());
+
+  const queueStockDownload = useCallback((
+    blockIndex: number,
+    label: string,
+    downloadFn: () => Promise<{ filename: string; duration: number }>,
+    onSuccess?: (data: { filename: string; duration: number }) => void,
+  ) => {
+    setDownloadQueue(prev => {
+      const next = new Map(prev);
+      next.set(blockIndex, { blockIndex, status: 'downloading', label });
+      return next;
+    });
+
+    downloadFn().then((data) => {
+      setDownloadQueue(prev => {
+        const next = new Map(prev);
+        next.set(blockIndex, { blockIndex, status: 'done', label });
+        // Auto-remove after 3s
+        setTimeout(() => setDownloadQueue(p => { const n = new Map(p); n.delete(blockIndex); return n; }), 3000);
+        return next;
+      });
+      onSuccess?.(data);
+      // Refresh blocks data
+      qc.invalidateQueries({ queryKey: ['script-studio-blocks', id] });
+    }).catch(() => {
+      setDownloadQueue(prev => {
+        const next = new Map(prev);
+        next.set(blockIndex, { blockIndex, status: 'error', label });
+        // Auto-remove errors after 5s
+        setTimeout(() => setDownloadQueue(p => { const n = new Map(p); n.delete(blockIndex); return n; }), 5000);
+        return next;
+      });
+    });
+  }, [id, qc]);
+
+  // Queries — use slower intervals during production to reduce server load
   const docQ = useQuery({
     queryKey: ['script-studio-doc', id],
     queryFn: () => scriptStudioApi.get(id!),
@@ -4947,25 +5131,27 @@ export default function ScriptDoc() {
     refetchInterval: 10_000,
   });
 
-  const blocksQ = useQuery({
-    queryKey: ['script-studio-blocks', id],
-    queryFn: () => scriptStudioApi.getBlocks(id!),
-    enabled: !!id,
-    refetchInterval: 3_000,
-  });
-
   const statusQ = useQuery({
     queryKey: ['script-studio-produce-status', id],
     queryFn: () => scriptStudioApi.getProduceStatus(id!),
     enabled: !!id,
-    refetchInterval: 2_000,
+    refetchInterval: 5_000,
+  });
+
+  const _isProducingForPolling = statusQ.data?.job?.status === 'running' || statusQ.data?.job?.status === 'queued';
+
+  const blocksQ = useQuery({
+    queryKey: ['script-studio-blocks', id],
+    queryFn: () => scriptStudioApi.getBlocks(id!),
+    enabled: !!id,
+    refetchInterval: _isProducingForPolling ? 10_000 : 3_000,
   });
 
   const logsQ = useQuery({
     queryKey: ['script-studio-logs', id],
     queryFn: () => scriptStudioApi.getLogs(id!, 300),
     enabled: !!id,
-    refetchInterval: 3_000,
+    refetchInterval: _isProducingForPolling ? 8_000 : 3_000,
   });
 
   const doc = docQ.data;
@@ -4980,7 +5166,7 @@ export default function ScriptDoc() {
     produceOptionsLoaded.current = true;
     const saved = doc.produceOptions ?? {};
     const subtitleStyle = doc.subtitleStyle ?? saved.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
-    setProduceOptions({ ...saved, subtitleStyle });
+    setProduceOptions({ ttsEngine: 'kokoro', ...saved, subtitleStyle });
   }, [doc]);
 
   // Persist produce options to backend (debounced)
@@ -4992,16 +5178,26 @@ export default function ScriptDoc() {
     return () => clearTimeout(timer);
   }, [id, produceOptions]);
 
-  // Only check OmniVoice health if the doc uses omnivoice voice groups
-  const docUsesOmnivoice = !!(doc?.parsed?.voiceGroups as any[])?.some((g: any) => g.engine === 'omnivoice');
-  const omnivoiceQ = useQuery({
+  // TTS engine health checks
+  const { data: omnivoiceHealthData } = useQuery({
     queryKey: ['omnivoice-health'],
-    queryFn: scriptStudioApi.omnivoiceHealth,
+    queryFn: ttsApi.omnivoiceHealth,
     refetchInterval: 30_000,
     staleTime: 15_000,
-    enabled: docUsesOmnivoice,
   });
-  const omnivoiceReachable = docUsesOmnivoice ? (omnivoiceQ.data?.reachable ?? null) : null;
+  const omnivoiceOnline = omnivoiceHealthData?.reachable ?? false;
+
+  const { data: kokoroHealthData } = useQuery({
+    queryKey: ['kokoro-health'],
+    queryFn: ttsApi.kokoroHealth,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+  const kokoroAvailable = kokoroHealthData?.available ?? false;
+
+  // Legacy: check if doc uses omnivoice voice groups
+  const docUsesOmnivoice = !!(doc?.parsed?.voiceGroups as any[])?.some((g: any) => g.engine === 'omnivoice');
+  const omnivoiceReachable = docUsesOmnivoice ? omnivoiceOnline : null;
   const blocks: ScriptBlock[] = blocksQ.data ?? [];
   const produceStatus = statusQ.data;
   const storedLogs: LogEntry[] = logsQ.data ?? [];
@@ -5067,7 +5263,7 @@ export default function ScriptDoc() {
 
   const handleFetchAllStock = async () => {
     if (!id || fetchingAllStock) return;
-    const missing = blocks.filter(b => b.narration && !b.clipAssetPath && !b.openingText && b.pexelsQuery);
+    const missing = blocks.filter(b => b.narration && !b.clipAssetPath && !(b.clips?.length > 0) && !b.openingText && b.pexelsQuery);
     if (!missing.length) return;
     setFetchingAllStock(true);
     setFetchAllProgress([`Fetching stock for ${missing.length} blocks...`]);
@@ -5090,7 +5286,7 @@ export default function ScriptDoc() {
   const totalBlocks = blocks.length;
   const audioReady = blocks.filter((b) => b.status !== 'pending' && b.status !== 'error').length;
   const rendered = blocks.filter((b) => b.status === 'rendered').length;
-  const missingClips = blocks.filter(b => b.narration && !b.clipAssetPath && !b.openingText).length;
+  const missingClips = blocks.filter(b => b.narration && !b.clipAssetPath && !(b.clips?.length > 0) && !b.openingText).length;
 
   const jobResult = activeProduceJob?.result;
   const hasResult = !!jobResult?.resultUrl;
@@ -5115,6 +5311,13 @@ export default function ScriptDoc() {
 
   const handleStepClick = (s: 1 | 2 | 3 | 4) => {
     if (s === 4 && !hasResult) return;
+    // Warn if going to Structure step while downloads are running — block index shifts could corrupt clips
+    if (s === 1 && downloadQueue.size > 0) {
+      const activeCount = Array.from(downloadQueue.values()).filter(t => t.status === 'downloading').length;
+      if (activeCount > 0 && !window.confirm(`${activeCount} download(s) still running. Editing structure while downloads are active may assign clips to wrong blocks. Continue?`)) {
+        return;
+      }
+    }
     setStep(s);
   };
 
@@ -5156,8 +5359,8 @@ export default function ScriptDoc() {
     }
   }
   const orientation = (produceOptions.orientation ?? 'landscape') as 'landscape' | 'portrait';
-  const ttsEngine = (produceOptions.ttsEngine ?? 'edge-tts') as 'omnivoice' | 'edge-tts';
-  const setTtsEngine = (engine: 'omnivoice' | 'edge-tts') => setProduceOptions(prev => ({ ...prev, ttsEngine: engine }));
+  const ttsEngine = (produceOptions.ttsEngine ?? 'kokoro') as 'kokoro' | 'omnivoice' | 'edge-tts';
+  const setTtsEngine = (engine: 'kokoro' | 'omnivoice' | 'edge-tts') => setProduceOptions(prev => ({ ...prev, ttsEngine: engine }));
 
   if (docQ.isLoading) {
     return (
@@ -5342,9 +5545,32 @@ export default function ScriptDoc() {
           {/* View-mode toggle (step 2 only) */}
           {step === 2 && !isProducing && (
             <div className="flex items-center justify-between px-4 py-1.5 border-b border-c-border bg-c-surface/50 shrink-0">
-              <span className="text-xs text-c-dim">
-                {viewMode === 'step' ? t('scriptStudio.studio.viewStep') : viewMode === 'markdown' ? t('scriptStudio.studio.viewMarkdown') : t('scriptStudio.studio.viewList')}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-c-dim">
+                  {viewMode === 'step' ? t('scriptStudio.studio.viewStep') : viewMode === 'markdown' ? t('scriptStudio.studio.viewMarkdown') : t('scriptStudio.studio.viewList')}
+                </span>
+                {/* TTS Engine toggle */}
+                <div className="flex items-center gap-1 ml-2">
+                  <span className="text-[10px] text-c-dim">{t('tts.engine')}:</span>
+                  {(['kokoro', 'omnivoice', 'edge-tts'] as const).map((eng) => (
+                    <button key={eng} onClick={() => setTtsEngine(eng)}
+                      className={`text-xs px-2.5 py-1 rounded-lg border transition-colors flex items-center gap-1 cursor-pointer ${
+                        ttsEngine === eng ? 'bg-cyan-900/30 border-cyan-600/50 text-cyan-300' : 'border-c-border text-c-muted hover:border-c-border-hi'
+                      }`}
+                    >
+                      {eng === 'kokoro' ? 'Kokoro' : eng === 'omnivoice' ? 'OmniVoice' : 'Edge TTS'}
+                      {eng === 'omnivoice' && (omnivoiceOnline ? <Wifi className="w-3 h-3 text-green-400" /> : <WifiOff className="w-3 h-3 text-red-400" />)}
+                      {eng === 'kokoro' && (kokoroAvailable ? <Wifi className="w-3 h-3 text-green-400" /> : <WifiOff className="w-3 h-3 text-red-400" />)}
+                    </button>
+                  ))}
+                  {ttsEngine === 'omnivoice' && !omnivoiceOnline && (
+                    <span className="text-[10px] text-amber-400">{t('tts.omnivoiceOffline')}</span>
+                  )}
+                  {ttsEngine === 'kokoro' && !kokoroAvailable && (
+                    <span className="text-[10px] text-amber-400">{t('tts.kokoroOffline')}</span>
+                  )}
+                </div>
+              </div>
               <div className="flex items-center gap-1">
                 <button
                   className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${viewMode === 'markdown' ? 'border-c-accent/40 bg-c-accent/10 text-c-accent' : 'border-c-border bg-c-elevated text-c-muted hover:text-c-text hover:border-c-border-hover'}`}
@@ -5386,6 +5612,8 @@ export default function ScriptDoc() {
                 onTtsEngineChange={setTtsEngine}
                 voice={produceOptions.voice}
                 rate={produceOptions.rate}
+                downloadQueue={downloadQueue}
+                queueStockDownload={queueStockDownload}
               />
             </div>
           ) : (
@@ -5394,7 +5622,7 @@ export default function ScriptDoc() {
               <div className="p-4 space-y-5">
                 {/* Fetch all stock bar */}
                 {(() => {
-                  const missingStockCount = blocks.filter(b => b.narration && !b.clipAssetPath && !b.openingText && b.pexelsQuery).length;
+                  const missingStockCount = blocks.filter(b => b.narration && !b.clipAssetPath && !(b.clips?.length > 0) && !b.openingText && b.pexelsQuery).length;
                   return (missingStockCount > 0 || fetchAllProgress.length > 0) ? (
                     <div className="border border-c-border rounded-lg p-2.5 bg-c-surface/50 space-y-2">
                       <div className="flex items-center gap-2">
@@ -5439,6 +5667,8 @@ export default function ScriptDoc() {
                             isProducing={isProducing}
                             onBlockUpdated={handleBlockUpdated}
                             displayLabel={blockDisplayLabels[block.blockIndex] ?? String(block.blockIndex + 1)}
+                            downloadQueue={downloadQueue}
+                            queueStockDownload={queueStockDownload}
                           />
                         </div>
                       ))}
