@@ -80,6 +80,15 @@ export function fmtTime(sec: number): string {
   return `${m}:${s < 10 ? '0' : ''}${s.toFixed(1)}`;
 }
 
+/** Format milliseconds as MM:SS.mmm */
+export function fmtTimeMs(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  const millis = ms % 1000;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+}
+
 /** Parse mm:ss.s or raw number to seconds */
 export function parseTimeInput(val: string): number {
   if (val.includes(':')) {

@@ -4,6 +4,7 @@ import { clsx } from 'clsx';
 import { Spinner } from '../../../components/ui/Spinner';
 import { imageApi } from '../../../lib/api';
 import { useStoryboard } from '../StoryboardContext';
+import { fmtTimeMs } from '../utils';
 
 export function ImagesStep() {
   const {
@@ -23,6 +24,7 @@ export function ImagesStep() {
     prompts, setPrompts, setStep, saveProject, setLightboxUrl,
     segments, setSegments, handleBuildTimeline,
     compMediaSource, handlePexelsBatch, cancelPexels, pexelsLoading, pexelsProgress, videoMode,
+    transcriptEntries,
   } = useStoryboard();
 
   const mixedVideoCount = generatedImages.filter((img) => img.mediaType === 'video').length;
@@ -820,7 +822,8 @@ export function ImagesStep() {
               {/* Footer: segment text + prompt edit */}
               <div className="px-2 py-1.5 bg-c-bg/50 space-y-1">
                 <div className="flex items-center gap-1">
-                  <span className="text-[9px] text-cyan-400 font-mono shrink-0">[{img.timestamp}]</span>
+                  <span className="text-[9px] text-cyan-400 font-mono shrink-0">[{transcriptEntries[i] ? fmtTimeMs(transcriptEntries[i].startMs) : img.timestamp}]</span>
+                  {transcriptEntries[i] && <span className="text-[9px] text-orange-400/80 font-mono shrink-0">{((transcriptEntries[i].endMs - transcriptEntries[i].startMs) / 1000).toFixed(1)}s</span>}
                   <span className="text-[9px] text-c-dim font-medium shrink-0">#{i + 1}</span>
                   {/* Image / Video type toggle — always visible */}
                   <div className="flex rounded border border-c-border overflow-hidden ml-1">

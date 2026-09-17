@@ -104,6 +104,85 @@ Templates drive generation at all stages. A template contains:
 4. Mix audio: voice + background music (looped, 3s fade-out) + SFX
 5. Mux final MP4 (H.264, AAC 192k, movflags +faststart)
 
+## Script Studio (Document-Based Video Production)
+
+Script Studio is a markdown-first video editor for creating structured, narration-driven content with AI-enhanced media, charts, and precise timeline control.
+
+### Workflow
+
+4-step editor:
+1. **Structure** — Write/paste markdown, parse into segments & blocks, organize narration
+2. **Review** — Fetch Pexels/Pixabay stock, generate AI images, assign clips, adjust motion
+3. **Produce** — TTS generation, block rendering, video assembly
+4. **Result** — Download MP4 or export to platform
+
+### Markdown Block Syntax
+
+```markdown
+# VIDEO TITLE
+
+[CHARACTER: narrator | description]
+[VOICE_GROUP: group-id | engine:kokoro | voice:af_heart | rate:-5%]
+[VOICE: en-US-GuyNeural | rate:-10%]
+
+## SEGMENT NAME
+
+### SCENE N
+[PEXELS: stock video query]
+[FLOW: auto] or [FLOW: cinematic prompt]
+[CHART: bars | USA:331, China:1412 | "Population" | Source]
+[TEXT ON SCREEN: overlay text]
+[VOICE: group:dramatic | emotion:serious]
+[PACE: slow|fast]
+Your narration text here.
+```
+
+### Routes
+
+All endpoints under `/api/script-studio/`:
+- **Docs:** `GET/POST/PUT/DELETE /docs`, `GET /docs/:id`, `PATCH /docs/:id/status`, `GET /docs/:id/narration`, `GET /docs/:id/logs`
+- **Blocks:** `GET/PATCH /docs/:id/blocks/:i`, `POST .../sync-blocks`, `POST .../split-block|split-at|merge-next|breakdown|insert-before|delete`
+- **Media:** `POST .../fetch-pexels|fetch-pixabay|apply-pexels-id|apply-pixabay-url|apply-stock-image|apply-mixkit-url|generate-ai|paste-image|regen-query`
+- **TTS:** `POST .../tts` (single block), `POST .../tts-all` (batch NDJSON stream)
+- **Produce:** `POST /docs/:id/produce`, `GET .../produce/status`, `DELETE .../produce`, `POST .../reproduce|render-remotion`, `POST .../export-upscale`
+- **Config:** `PUT .../subtitle-style|produce-options`, `POST .../youtube-metadata`
+- **Utilities:** `GET /omnivoice/health|voices`, `GET/POST/DELETE /watermark`
+
+### Services
+
+| Service | Purpose |
+|---------|---------|
+| `script-studio.service.ts` | Markdown parsing, block management, sync, status transitions, DB operations |
+| `video-producer.service.ts` | Production orchestrator: TTS → clip assign → render → assembly, Whisper word timing |
+| `chart-renderer.service.ts` | Render animated chart compositions (big-number, line, bars, vs) via Remotion, SHA-256 cached |
+
+### Frontend Pages
+
+| Route | Component | Purpose |
+|-------|-----------|---------|
+| `/script-studio` | `ScriptStudioDashboard` | List docs, paste/upload markdown, create new |
+| `/script-studio/:id` | `ScriptDoc` | 4-step editor (structure → review → produce → result) |
+
+Supporting components: `ProduceModal` (produce options), `FormatGuide` (markdown template help)
+
+### Tables
+
+| Table | Purpose |
+|-------|---------|
+| `script_docs` | Document metadata, raw markdown, parsed JSON, status, subtitle style, produce options |
+| `script_blocks` | Per-block: narration, pexels_query, chart_spec, audio_path, clips, motion, visual_type, rendered_clip_path, voice_config |
+| `script_doc_logs` | Operation audit trail (timestamp, level, operation, message) |
+| `production_checkpoints` | Restore points during produce job (alignment, clips, timeline stages) |
+
+### Key Features
+
+- **TTS Engines:** edge-tts (50+ voices, 18 languages), Kokoro (local), OmniVoice (premium)
+- **Media Sources:** Pexels stock videos, Pixabay images, AI generation (Flow/Pollinations), MixKit, custom upload
+- **Charts:** Animated big-number, line, bars, vs (comparison) composited onto background video
+- **Voice Groups:** Define voice personas with engine, voiceId, emotion, rate, pitch; reference via `[VOICE: group:name]`
+- **Characters:** Define `[CHARACTER: id | desc]` and reference as `@id` in FLOW prompts for consistent AI generation
+- **Status Flow:** draft → parsed → narration_copied → aligned → producing → ready → published
+
 ## Backend (apps/server)
 
 ### Key Patterns
@@ -115,7 +194,7 @@ Templates drive generation at all stages. A template contains:
 - **SSE events** emitted by queue, streamed at `GET /api/events`
 - **NDJSON streaming** for long operations (prompt gen, TTS, assembly) — frontend reads with `readNDJSON()`
 
-### Routes (20 route files)
+### Routes (21 route files)
 
 | Route File | Endpoints | Purpose |
 |------------|-----------|---------|
@@ -139,8 +218,9 @@ Templates drive generation at all stages. A template contains:
 | `settings.routes.ts` | `/api/settings/*` | Configuration, API key management, service testing |
 | `media-library.routes.ts` | `/api/media-library/*` | Stickers, icons, animations, SFX |
 | `frame-video-library.routes.ts` | `/api/frame-video-library/*` | Frame video templates (comparison layouts) |
+| `script-studio.routes.ts` | `/api/script-studio/*` | Script Studio: docs, blocks, media, TTS, produce, charts |
 
-### Services (17 core services)
+### Services (20 core services)
 
 | Service | Purpose |
 |---------|---------|
@@ -161,6 +241,9 @@ Templates drive generation at all stages. A template contains:
 | `distribution.service.ts` | Video distribution scheduling |
 | `platform-upload.service.ts` | YouTube/TikTok/Instagram uploads |
 | `drama.service.ts` | Drama series with characters, episodes, locations |
+| `script-studio.service.ts` | Script Studio: markdown parsing, block management, sync, status transitions |
+| `video-producer.service.ts` | Script Studio production: TTS → clip assignment → render → assembly pipeline |
+| `chart-renderer.service.ts` | Render animated chart compositions (big-number, line, bars, vs) via Remotion |
 
 ### Remotion Compositions
 
@@ -200,6 +283,8 @@ Key pool rotates keys per provider with status tracking: active, rate-limited (6
 | `/drama` | DramaList | Drama studio projects (video mode) |
 | `/drama/:id` | DramaProject | Drama editor with episodes, characters, scenes |
 | `/image-drama` | DramaList | Drama studio (image mode) |
+| `/script-studio` | ScriptStudioDashboard | List docs, paste/upload markdown, create new |
+| `/script-studio/:id` | ScriptDoc | 4-step editor (structure → review → produce → result) |
 | `/script` | ScriptEditor | Write/generate scripts |
 | `/library` | SceneLibrary | Browse reusable scenes |
 | `/media-library` | MediaLibrary | Stickers, icons, animations, SFX |
@@ -291,6 +376,10 @@ SQLite at `database/videocloudai.db`. Schema in `apps/server/src/db/schema.ts`, 
 | `batch_jobs` | Batch variation metadata |
 | `tags` | Global tag registry |
 | `settings` | Key-value config store |
+| `script_docs` | Script Studio documents (markdown, parsed JSON, status, subtitle style, produce options) |
+| `script_blocks` | Script Studio blocks (narration, audio, clips, motion, chart spec, visual type, voice config) |
+| `script_doc_logs` | Script Studio operation audit trail |
+| `production_checkpoints` | Script Studio restore points during produce job |
 
 Delete the `.db` file to reset; cached files in `assets/`, `cache/`, `renders/` are unaffected.
 
