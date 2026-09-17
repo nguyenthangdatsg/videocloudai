@@ -316,13 +316,15 @@ export interface VoiceInfo {
   styles?: string[];
 }
 
+export type TtsEngine = 'edge-tts' | 'omnivoice' | 'kokoro';
+
 export const ttsApi = {
   voices: () =>
     api.get<{ voices: Record<string, VoiceInfo>; languages: Record<string, string> }>('/tts/voices').then((r) => r.data),
-  generate: (data: { text: string; voice: string; rate?: string; pitch?: string; volume?: string; style?: string }) =>
+  generate: (data: { text: string; voice: string; rate?: string; pitch?: string; volume?: string; style?: string; engine?: TtsEngine }) =>
     api.post<{ filename: string; duration: number; url: string }>('/tts/generate', data).then((r) => r.data),
   generateStream: async (
-    data: { text: string; voice: string; rate?: string; pitch?: string; volume?: string; style?: string },
+    data: { text: string; voice: string; rate?: string; pitch?: string; volume?: string; style?: string; engine?: TtsEngine },
     onProgress: (step: string, detail?: string) => void,
   ): Promise<{ filename: string; duration: number; url: string }> => {
     const res = await fetch('/api/tts/generate', {
@@ -339,8 +341,20 @@ export const ttsApi = {
     if (!result) throw new Error('No result from TTS generation');
     return result;
   },
-  preview: (data: { voice: string; rate?: string; pitch?: string; volume?: string; style?: string; text?: string }) =>
+  preview: (data: { voice: string; rate?: string; pitch?: string; volume?: string; style?: string; text?: string; engine?: TtsEngine }) =>
     api.post('/tts/preview', data, { responseType: 'blob' }).then((r) => r.data as Blob),
+  omnivoiceHealth: () =>
+    api.get<{ reachable: boolean; baseUrl: string }>('/tts/omnivoice/health').then((r) => r.data),
+  omnivoiceVoices: () =>
+    api.get<{ voices: Array<{ voice_id: string; name: string; type: string }> }>('/tts/omnivoice/voices').then((r) => r.data),
+  kokoroHealth: () =>
+    api.get<{ available: boolean }>('/tts/kokoro/health').then((r) => r.data),
+  kokoroVoices: () =>
+    api.get<{ voices: Array<{ voice_id: string; name: string; lang: string; gender: string }> }>('/tts/kokoro/voices').then((r) => r.data),
+  kokoroVoicesFormatted: () =>
+    api.get<{ voices: Record<string, VoiceInfo>; languages: Record<string, string> }>('/tts/kokoro/voices/formatted').then((r) => r.data),
+  defaultEngine: () =>
+    api.get<{ engine: TtsEngine }>('/tts/engine').then((r) => r.data.engine),
   history: () =>
     api.get<{ files: Array<{ filename: string; url: string; sizeKB: number; duration: number; createdAt: string }> }>('/tts/history').then((r) => r.data.files),
   delete: (filename: string) =>
@@ -478,7 +492,7 @@ export const imageApi = {
 
 // ─── Storyboard API ──────────────────────────────────────────────────
 
-export type MotionEffect = 'static' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down';
+export type MotionEffect = 'static' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down' | 'fade-in' | 'fade-out';
 
 export type MediaType = 'image' | 'video';
 
@@ -538,7 +552,7 @@ export const storyboardApi = {
     api.post<{ script: string }>('/storyboard/generate-script', data).then((r) => r.data.script),
 
   generateTts: async (
-    data: { text: string; voice?: string; rate?: string; pitch?: string; volume?: string; style?: string },
+    data: { text: string; voice?: string; rate?: string; pitch?: string; volume?: string; style?: string; engine?: TtsEngine },
     onProgress: (step: string, detail?: string) => void,
   ): Promise<{
     audio: { filename: string; url: string; duration: number };
@@ -613,6 +627,23 @@ export const storyboardApi = {
   delete: (filename: string) =>
     api.delete(`/storyboard/video/${encodeURIComponent(filename)}`).then((r) => r.data),
 
+  reencode: async (filename: string, quality: 'hd' | '2k' | '4k', onProgress?: (percent: number, detail: string) => void, signal?: AbortSignal) => {
+    const res = await fetch(`${api.defaults.baseURL}/storyboard/video/reencode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, quality }),
+      signal,
+    });
+    let result: { ok: boolean; filename: string; url: string; sizeKB: number } | null = null;
+    await readNDJSON(res, (parsed) => {
+      if (parsed.error) throw new Error(parsed.error as string);
+      if (parsed.progress && onProgress) onProgress(parsed.percent as number, parsed.detail as string);
+      else if (parsed.ok) result = parsed as any;
+    });
+    if (!result) throw new Error('Re-encode failed: no result received');
+    return result;
+  },
+
   generateMetadata: (data: { projectId?: string; script: string; topic?: string; systemPrompt?: string; segments?: Array<{ startTime: string; text: string }> }) =>
     api.post<{ metadata: { title: string; description: string; tags: string[]; thumbnailPrompt: string } }>('/storyboard/generate-metadata', data).then((r) => r.data.metadata),
   generateThumbnailPrompt: (data: { projectId?: string; title?: string; script?: string; topic?: string }) =>
@@ -642,6 +673,26 @@ export const storyboardApi = {
       signal,
     });
     let result: Array<{ timestamp: string; filename: string; url: string; query: string; side?: string }> = [];
+    await readNDJSON(res, (parsed) => {
+      if (parsed.error) throw new Error(parsed.error as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+      if (parsed.done) result = (parsed as any).videos ?? [];
+    });
+    return result;
+  },
+
+  dvidsBatch: async (
+    queries: Array<{ timestamp: string; query: string; side?: string }>,
+    onProgress: (step: string, detail?: string) => void,
+    signal?: AbortSignal,
+  ): Promise<Array<{ timestamp: string; filename: string; url: string; query: string; dvidsId: string; side?: string }>> => {
+    const res = await fetch('/api/storyboard/dvids-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queries }),
+      signal,
+    });
+    let result: Array<{ timestamp: string; filename: string; url: string; query: string; dvidsId: string; side?: string }> = [];
     await readNDJSON(res, (parsed) => {
       if (parsed.error) throw new Error(parsed.error as string);
       if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
@@ -1199,6 +1250,12 @@ export const scriptStudioApi = {
       body: JSON.stringify({ preset, orientation }),
       signal,
     });
+    if (!res.ok) {
+      const text = await res.text();
+      let msg = `Export failed (${res.status})`;
+      try { const j = JSON.parse(text); if (j.error) msg = j.error; } catch {}
+      throw new Error(msg);
+    }
     let result: { ok: boolean; filename: string; url: string; sizeKB: number } | null = null;
     await readNDJSON(res, (parsed) => {
       if (parsed.error) throw new Error(parsed.error as string);
@@ -1207,6 +1264,10 @@ export const scriptStudioApi = {
     });
     if (!result) throw new Error('No result from export');
     return result as { ok: boolean; filename: string; url: string; sizeKB: number };
+  },
+  deleteExport: async (id: string, preset: '2k' | '3k' | '4k', orientation: string) => {
+    const res = await api.delete(`/script-studio/docs/${id}/export-upscale/${preset}?orientation=${orientation}`);
+    return res.data as { ok: boolean; deleted: string };
   },
   getNarration: async (id: string) => {
     const res = await api.get(`/script-studio/docs/${id}/narration`);
@@ -1309,8 +1370,8 @@ export const scriptStudioApi = {
     const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/render-remotion`, { compositionId, durationSec, orientation, props });
     return res.data as { ok: boolean; filename: string; durationSec: number };
   },
-  applyPexelsById: async (id: string, blockIndex: number, pexelsId: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-pexels-id`, { pexelsId });
+  applyPexelsById: async (id: string, blockIndex: number, pexelsId: number, downloadUrl?: string, duration?: number) => {
+    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-pexels-id`, { pexelsId, downloadUrl, duration });
     return res.data as { ok: boolean; filename: string; pexelsId: number; duration: number };
   },
   applyPixabayFromUrl: async (id: string, blockIndex: number, downloadUrl: string, duration: number, width: number, height: number) => {
@@ -1472,7 +1533,66 @@ export const transformApi = {
   deriveAnchor: (projectId: string) =>
     api.post<{ anchor: string }>(`/transform/projects/${projectId}/derive-anchor`).then((r) => r.data.anchor),
 
+  suggestTransformations: (projectId: string, description: string) =>
+    api.post<{
+      suggestions: Array<{
+        id: string;
+        title: string;
+        description: string;
+        segments: Array<{ prompt: string; lighting: string }>;
+      }>;
+    }>(`/transform/projects/${projectId}/suggest-transformations`, { description }).then((r) => r.data.suggestions),
+
   assemble: (projectId: string) =>
     api.post<{ project: any; outputPath: string; url: string }>(`/transform/projects/${projectId}/assemble`).then((r) => r.data),
+};
+
+// ── DVIDS ──────────────────────────────────────────────────────
+
+export const dvidsApi = {
+  search: (params: Record<string, string | number | boolean | undefined>) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== '') qs.set(k, String(v));
+    }
+    return fetch(`/api/dvids/search?${qs}`).then(r => r.json());
+  },
+  asset: (id: string) => fetch(`/api/dvids/asset/${id}`).then(r => r.json()),
+  suggestions: (category?: string) => {
+    const qs = category ? `?category=${category}` : '';
+    return fetch(`/api/dvids/suggestions${qs}`).then(r => r.json());
+  },
+  download: (dvidsId: string) =>
+    fetch('/api/dvids/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dvidsId }) }).then(r => r.json()),
+  downloadBatch: async (dvidsIds: string[], onProgress: (step: string, detail?: string) => void, signal?: AbortSignal) => {
+    const res = await fetch('/api/dvids/download-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dvidsIds }),
+      signal,
+    });
+    let result: any[] = [];
+    await readNDJSON(res, (parsed: any) => {
+      if (parsed.error) throw new Error(parsed.error);
+      if (parsed.progress) onProgress(parsed.step, parsed.detail);
+      if (parsed.done) result = parsed.assets ?? [];
+    });
+    return result;
+  },
+  imported: (params?: Record<string, string | number | boolean | undefined>) => {
+    const qs = new URLSearchParams();
+    if (params) for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== '') qs.set(k, String(v));
+    }
+    return fetch(`/api/dvids/imported?${qs}`).then(r => r.json());
+  },
+  importedById: (id: number) => fetch(`/api/dvids/imported/${id}`).then(r => r.json()),
+  updateImported: (id: number, data: any) =>
+    fetch(`/api/dvids/imported/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  deleteImported: (id: number) =>
+    fetch(`/api/dvids/imported/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  collections: () => fetch('/api/dvids/collections').then(r => r.json()),
+  autoTag: (id: number) =>
+    fetch(`/api/dvids/imported/${id}/auto-tag`, { method: 'POST' }).then(r => r.json()),
 };
 
