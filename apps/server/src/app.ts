@@ -26,6 +26,7 @@ import { createMediaLibraryRouter } from './routes/media-library.routes';
 import { createFrameVideoLibraryRouter } from './routes/frame-video-library.routes';
 import { createScriptStudioRouter } from './routes/script-studio.routes';
 import { createTransformRouter } from './routes/transform.routes';
+import { createDvidsRouter } from './routes/dvids.routes';
 import { DramaService } from './services/drama.service';
 import { ChannelService } from './services/channel.service';
 import { DistributionService } from './services/distribution.service';
@@ -108,6 +109,7 @@ export function createApp() {
   app.use('/api/frame-video-library', createFrameVideoLibraryRouter());
   app.use('/api/script-studio', createScriptStudioRouter());
   app.use('/api/transform', createTransformRouter(transformService));
+  app.use('/api/dvids', createDvidsRouter());
 
   // Health check — verifies server + DB are working
   app.get('/api/health', (_req, res) => {
