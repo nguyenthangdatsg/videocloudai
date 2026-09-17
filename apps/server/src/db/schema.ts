@@ -456,12 +456,49 @@ CREATE TABLE IF NOT EXISTS transform_segments (
   segment_order INTEGER NOT NULL DEFAULT 0,
   prompt TEXT NOT NULL DEFAULT '',
   lighting TEXT NOT NULL DEFAULT 'natural daylight',
+  style TEXT NOT NULL DEFAULT 'natural',
+  speed REAL NOT NULL DEFAULT 1.0,
+  duration INTEGER NOT NULL DEFAULT 6,
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'generating', 'done', 'failed')),
   asset_path TEXT,
+  preview_path TEXT,
   retries INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   FOREIGN KEY (project_id) REFERENCES transform_projects(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_transform_segments_project ON transform_segments(project_id);
+
+CREATE TABLE IF NOT EXISTS dvids_assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  dvids_id TEXT UNIQUE NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  short_description TEXT,
+  virin TEXT,
+  branch TEXT,
+  unit_name TEXT,
+  credit TEXT NOT NULL DEFAULT '[]',
+  category TEXT,
+  keywords TEXT NOT NULL DEFAULT '[]',
+  tags TEXT NOT NULL DEFAULT '[]',
+  date_published TEXT,
+  duration REAL,
+  aspect_ratio TEXT,
+  thumbnail_url TEXT,
+  local_filename TEXT,
+  local_path TEXT,
+  width INTEGER,
+  height INTEGER,
+  file_size INTEGER,
+  dvids_url TEXT,
+  is_favorite INTEGER NOT NULL DEFAULT 0,
+  collection TEXT,
+  imported_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_dvids_branch ON dvids_assets(branch);
+CREATE INDEX IF NOT EXISTS idx_dvids_category ON dvids_assets(category);
+CREATE INDEX IF NOT EXISTS idx_dvids_collection ON dvids_assets(collection);
+CREATE INDEX IF NOT EXISTS idx_dvids_favorite ON dvids_assets(is_favorite);
 `;
