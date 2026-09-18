@@ -8,7 +8,7 @@ import {
   Volume2, Film, Square, ChevronRight, ChevronLeft, Pencil, Music2,
   List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2, Merge, Type as TypeIcon, Copy, Wifi, WifiOff,
 } from 'lucide-react';
-import { scriptStudioApi, queueApi, ttsApi, musicApi, type SubtitleStyle } from '../../lib/api';
+import { scriptStudioApi, dvidsStudioApi, queueApi, ttsApi, musicApi, type SubtitleStyle } from '../../lib/api';
 import { useAppStore } from '../../store';
 import { SubtitlePanel } from '../storyboard/components/SubtitlePanel';
 
@@ -74,6 +74,29 @@ const STATUS_CLASSES: Record<string, string> = {
 };
 
 const MOTION_EFFECTS = ['static', 'slow-zoom', 'ken-burns-in', 'ken-burns-out', 'pan-left', 'pan-right', 'pan-up', 'pan-down'];
+
+// ── Studio Config ──
+
+export interface StudioConfig {
+  api: typeof scriptStudioApi;
+  queryKeyPrefix: string;
+  routePrefix: string;
+  defaultStockSource: 'pexels' | 'pixabay' | 'dvids';
+}
+
+export const SCRIPT_STUDIO_CONFIG: StudioConfig = {
+  api: scriptStudioApi,
+  queryKeyPrefix: 'script-studio',
+  routePrefix: '/script-studio',
+  defaultStockSource: 'pexels',
+};
+
+export const DVIDS_STUDIO_CONFIG: StudioConfig = {
+  api: dvidsStudioApi,
+  queryKeyPrefix: 'dvids-studio',
+  routePrefix: '/dvids-studio',
+  defaultStockSource: 'dvids',
+};
 
 // ── Step Indicator ──
 
@@ -281,7 +304,7 @@ function autoFlowPrompt(block: ScriptBlock, orientation: 'landscape' | 'portrait
 
 // ── Block Step Editor (one-by-one preview + edit) ──
 
-function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0, ttsEngine, onTtsEngineChange, voice, rate, downloadQueue, queueStockDownload }: {
+function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0, ttsEngine, onTtsEngineChange, voice, rate, downloadQueue, queueStockDownload, studioApi }: {
   blocks: ScriptBlock[];
   docId: string;
   orientation: 'landscape' | 'portrait';
@@ -293,6 +316,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   rate?: string;
   downloadQueue: Map<number, DownloadTask>;
   queueStockDownload: (blockIndex: number, label: string, downloadFn: () => Promise<{ filename: string; duration: number }>, onSuccess?: (data: { filename: string; duration: number }) => void) => void;
+  studioApi: typeof scriptStudioApi;
 }) {
   const { t } = useTranslation();
   const [idx, setIdx] = useState(initialIdx);
@@ -478,7 +502,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     if (!currentBlock || !currentBlock.narration?.trim()) return;
     let cancelled = false;
     setGeneratingTts(true);
-    scriptStudioApi.ttsBlock(docId, currentBlock.blockIndex, { engine: ttsEngine, voice, rate }).then((data: any) => {
+    studioApi.ttsBlock(docId, currentBlock.blockIndex, { engine: ttsEngine, voice, rate }).then((data: any) => {
       if (cancelled) return;
       if (!data.cached) {
         const eng = data.engine ? ` [${data.engine}]` : '';
@@ -644,7 +668,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
       const pending = trimPendingRef.current;
       if (pending && block) {
         const updated = blockClips.map((c, i) => i === pending.clipIdx ? { ...c, startSec: pending.startSec, endSec: pending.endSec } : c);
-        scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => onBlockUpdated());
+        studioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => onBlockUpdated());
       }
       trimPendingRef.current = null;
     };
@@ -665,7 +689,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     const leftClip = { ...clip, endSec: parseFloat(localTime.toFixed(2)) };
     const rightClip = { ...clip, startSec: parseFloat(localTime.toFixed(2)), endSec: end };
     const updated = [...blockClips.slice(0, clipIdx), leftClip, rightClip, ...blockClips.slice(clipIdx + 1)];
-    scriptStudioApi.updateBlockClips(docId, block!.blockIndex, updated).then(() => onBlockUpdated());
+    studioApi.updateBlockClips(docId, block!.blockIndex, updated).then(() => onBlockUpdated());
   }, [blockClips, playDurSec, currentTime, timelineToClip, clipSourceDurations, docId, block, onBlockUpdated]);
 
   const togglePlay = () => {
@@ -714,7 +738,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setPickerCandidates([]);
     setPickerError(null);
     try {
-      const data = await scriptStudioApi.getAlternatives(docId, query, orient, 12, service);
+      const data = await studioApi.getAlternatives(docId, query, orient, 12, service);
       setPickerCandidates((data.candidates ?? []).map((c: any) => ({
         id: (c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? c.dvidsId ?? c.imageId ?? 0) as number,
         thumbnail: c.thumbnail,
@@ -763,7 +787,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   const regenPickerQuery = async () => {
     setRegenningQuery(true);
     try {
-      const data = await scriptStudioApi.regenQuery(docId, block.blockIndex);
+      const data = await studioApi.regenQuery(docId, block.blockIndex);
       setPickerQuery(data.query);
       await fetchPickerCandidates(pickerService, data.query, pickerOrientation);
     } catch (err: any) {
@@ -781,22 +805,22 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     const downloadFn = async (): Promise<{ filename: string; duration: number }> => {
       let data: any;
       if (service === 'images') {
-        data = await scriptStudioApi.applyStockImage(docId, bIdx, candidate.downloadUrl!, candidate.source || 'pexels', candidate.width, candidate.height, imageZoomEffect, orientation);
+        data = await studioApi.applyStockImage(docId, bIdx, candidate.downloadUrl!, candidate.source || 'pexels', candidate.width, candidate.height, imageZoomEffect, orientation);
       } else if (service === 'pexels') {
-        data = await scriptStudioApi.applyPexelsById(docId, bIdx, candidate.id, candidate.downloadUrl, candidate.duration);
+        data = await studioApi.applyPexelsById(docId, bIdx, candidate.id, candidate.downloadUrl, candidate.duration);
       } else if (service === 'mixkit') {
-        data = await scriptStudioApi.applyMixkitFromUrl(docId, bIdx, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
+        data = await studioApi.applyMixkitFromUrl(docId, bIdx, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
       } else if (service === 'dvids') {
-        data = await scriptStudioApi.applyDvidsById(docId, bIdx, candidate.id, candidate.downloadUrl, candidate.duration);
+        data = await studioApi.applyDvidsById(docId, bIdx, candidate.id, candidate.downloadUrl, candidate.duration);
       } else {
-        data = await scriptStudioApi.applyPixabayFromUrl(docId, bIdx, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
+        data = await studioApi.applyPixabayFromUrl(docId, bIdx, candidate.downloadUrl!, candidate.duration, candidate.width, candidate.height);
       }
       const newAssetPath = data.filename ?? data.clipAssetPath;
       if (newAssetPath) {
         const srcDur = data.duration ?? candidate.duration ?? null;
         const newClip = { assetPath: newAssetPath, startSec: 0, endSec: srcDur as number | null, sourceDurationSec: srcDur as number | undefined, label: `${service}:${candidate.id}` };
         const updatedClips = isChart ? [newClip] : [...currentClips, newClip];
-        await scriptStudioApi.updateBlockClips(docId, bIdx, updatedClips);
+        await studioApi.updateBlockClips(docId, bIdx, updatedClips);
       }
       return { filename: data.filename, duration: data.duration ?? candidate.duration };
     };
@@ -813,10 +837,10 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setPastingImage(true);
     setActionLog([{ level: 'info', msg: 'Converting image to clip...' }]);
     try {
-      const data = await scriptStudioApi.pasteImage(docId, block.blockIndex, file, imageZoomEffect, orientation);
+      const data = await studioApi.pasteImage(docId, block.blockIndex, file, imageZoomEffect, orientation);
       const newClip = { assetPath: data.filename, startSec: 0, endSec: null as number | null };
       const merged = blockClips.length > 0 ? [...blockClips, newClip] : [newClip];
-      await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
+      await studioApi.updateBlockClips(docId, block.blockIndex, merged);
       setActiveClipIdx(merged.length - 1);
       onBlockUpdated();
       setActionLog([{ level: 'success', msg: `Image clip added (${data.duration}s)` }]);
@@ -832,7 +856,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setSplitRendering(true);
     setActionLog([{ level: 'info', msg: 'Rendering split screen...' }]);
     try {
-      const data = await scriptStudioApi.splitScreen(docId, block.blockIndex, splitLeftClip, splitRightClip, {
+      const data = await studioApi.splitScreen(docId, block.blockIndex, splitLeftClip, splitRightClip, {
         middleText: splitMiddleText,
         middleStyle: splitMiddleStyle,
         accentColor: splitAccentColor,
@@ -861,7 +885,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
       };
       // Split clip must be the FIRST clip so clip_asset_path points to it for production
       const merged = [newClip];
-      await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
+      await studioApi.updateBlockClips(docId, block.blockIndex, merged);
       setActiveClipIdx(merged.length - 1);
       onBlockUpdated();
       setActionLog([{ level: 'success', msg: `Split screen rendered (${data.duration}s)` }]);
@@ -909,7 +933,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setSplitSearchLoading(true);
     setSplitSearchResults([]);
     try {
-      const data = await scriptStudioApi.getAlternatives(docId, query.trim(), splitSearchOrientation, 12, svc);
+      const data = await studioApi.getAlternatives(docId, query.trim(), splitSearchOrientation, 12, svc);
       setSplitSearchResults((data.candidates ?? []).map((c: any) => ({
         id: c.pexelsId ?? c.pixabayId ?? c.mixkitId ?? 0,
         thumbnail: c.thumbnail,
@@ -931,7 +955,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setSplitDownloading(candidate.id);
     setSplitSearchSide(side);
     try {
-      const data = await scriptStudioApi.downloadStock(docId, splitSearchService, candidate);
+      const data = await studioApi.downloadStock(docId, splitSearchService, candidate);
       if (side === 'left') setSplitLeftClip(data.filename);
       else setSplitRightClip(data.filename);
       const sideLabel = isPortrait ? (side === 'left' ? 'top' : 'bottom') : side;
@@ -947,7 +971,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setFetchingPexels(true);
     setActionLog([]);
     try {
-      const data = await scriptStudioApi.fetchBlockPexels(docId, block.blockIndex, orientation);
+      const data = await studioApi.fetchBlockPexels(docId, block.blockIndex, orientation);
       setActionLog([{ level: 'success', msg: `Fetched Pexels clip (${data.duration}s) → ${data.filename}` }]);
       onBlockUpdated();
     } catch (err: any) {
@@ -962,7 +986,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     setFetchingPixabay(true);
     setActionLog([]);
     try {
-      const data = await scriptStudioApi.fetchBlockPixabay(docId, block.blockIndex, orientation);
+      const data = await studioApi.fetchBlockPixabay(docId, block.blockIndex, orientation);
       setActionLog([{ level: 'success', msg: `Fetched Pixabay clip (${data.duration}s) → ${data.filename}` }]);
       onBlockUpdated();
     } catch (err: any) {
@@ -1256,7 +1280,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 title={t('scriptStudio.studio.regenVoice')}
                 onClick={() => {
                   setGeneratingTts(true);
-                  scriptStudioApi.ttsBlock(docId, block.blockIndex, { force: true, engine: ttsEngine, voice, rate }).then((data: any) => {
+                  studioApi.ttsBlock(docId, block.blockIndex, { force: true, engine: ttsEngine, voice, rate }).then((data: any) => {
                     const eng = data.engine ? ` [${data.engine}]` : '';
                     setActionLog([{ level: 'success', msg: `TTS regenerated (${(data.audioDurationMs / 1000).toFixed(1)}s)${eng}` }]);
                     onBlockUpdated();
@@ -1275,7 +1299,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                   setTtsAllRunning(true);
                   setTtsAllProgress({ done: 0, total: blocks.length });
                   setActionLog([{ level: 'info', msg: `Regenerating TTS for all blocks [${ttsEngine}]...` }]);
-                  scriptStudioApi.ttsAll(docId, ttsEngine, voice, rate, (data) => {
+                  studioApi.ttsAll(docId, ttsEngine, voice, rate, (data) => {
                     if (data.total) setTtsAllProgress({ done: data.done, total: data.total });
                     if (data.error) setActionLog(prev => [...prev, { level: 'error', msg: `Block ${data.blockIndex}: ${data.error}` }]);
                   }).then(() => {
@@ -1337,7 +1361,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 const updated = blockClips.length > 1
                   ? blockClips.filter((_, i) => i !== safeClipIdx)
                   : [];
-                scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => {
+                studioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => {
                   setActiveClipIdx(Math.max(0, safeClipIdx - 1));
                   setVideoDuration(null);
                   setCurrentTime(0);
@@ -1506,7 +1530,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
               if (!activeClip) return;
               const ne = parseFloat((ns + aDur).toFixed(2));
               const updated = blockClips.map((c, i) => i === safeClipIdx ? { ...c, startSec: ns, endSec: ne } : c);
-              scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => onBlockUpdated());
+              studioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => onBlockUpdated());
             };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
@@ -1541,7 +1565,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
               if (!activeClip) return;
               const ne = parseFloat((ns + aDur).toFixed(2));
               const updated = blockClips.map((c, i) => i === safeClipIdx ? { ...c, startSec: ns, endSec: ne } : c);
-              scriptStudioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => onBlockUpdated());
+              studioApi.updateBlockClips(docId, block.blockIndex, updated).then(() => onBlockUpdated());
             };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
@@ -2415,6 +2439,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             })()}
             downloadQueue={downloadQueue}
             queueStockDownload={queueStockDownload}
+            studioApi={studioApi}
           />
         </div>
       )}
@@ -2559,7 +2584,7 @@ function PickerVideo({ previewUrl, downloadUrl, duration, className }: { preview
 
 // ── Block Card Player (mini video player with draggable audio range) ──
 
-function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, blockIndex, onClipsUpdated, orientation = 'landscape' }: {
+function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, blockIndex, onClipsUpdated, orientation = 'landscape', studioApi }: {
   audioSrc: string;
   durationMs: number | null;
   clips: Array<{ assetPath: string; startSec: number; endSec: number | null; sourceDurationSec?: number; label?: string }>;
@@ -2568,6 +2593,7 @@ function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, block
   blockIndex: number;
   onClipsUpdated: () => void;
   orientation?: 'landscape' | 'portrait';
+  studioApi: typeof scriptStudioApi;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -2681,7 +2707,7 @@ function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, block
       const newEnd = parseFloat((newStart + audioDur).toFixed(2));
       setDragStartSec(null);
       const updated = clips.map((c, i) => i === 0 ? { ...c, startSec: newStart, endSec: newEnd } : c);
-      scriptStudioApi.updateBlockClips(docId, blockIndex, updated).then(() => onClipsUpdated());
+      studioApi.updateBlockClips(docId, blockIndex, updated).then(() => onClipsUpdated());
     };
 
     window.addEventListener('mousemove', onMove);
@@ -2841,8 +2867,8 @@ function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, block
 
 // ── Block Structure Row (Step 1 — compact transcript-like) ──
 
-function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel, onBlockUpdated, orientation }: {
-  block: ScriptBlock; idx: number; total: number; docId: string; isProducing: boolean; displayLabel: string; onBlockUpdated: () => void; orientation: 'landscape' | 'portrait';
+function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel, onBlockUpdated, orientation, studioApi }: {
+  block: ScriptBlock; idx: number; total: number; docId: string; isProducing: boolean; displayLabel: string; onBlockUpdated: () => void; orientation: 'landscape' | 'portrait'; studioApi: typeof scriptStudioApi;
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState<string | null>(null);
@@ -2898,7 +2924,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
                 onBlur={(e) => {
                   const val = Math.max(0.5, parseFloat(e.target.value) || defaultAnim);
                   if (val !== animSec) {
-                    scriptStudioApi.updateBlock(docId, block.blockIndex, {
+                    studioApi.updateBlock(docId, block.blockIndex, {
                       chartSpec: { ...block.chartSpec, chartAnimSec: val },
                     } as any).then(() => onBlockUpdated()).catch(() => {});
                   }
@@ -2924,7 +2950,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
           onBlur={(ev) => {
             const val = ev.target.value.trim();
             if (val !== (block.narration ?? '')) {
-              handleAction('save', () => scriptStudioApi.updateBlock(docId, block.blockIndex, { narration: val }));
+              handleAction('save', () => studioApi.updateBlock(docId, block.blockIndex, { narration: val }));
             }
           }}
           onKeyDown={(ev) => {
@@ -2934,14 +2960,14 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
               ev.preventDefault();
               const text = ev.currentTarget.value;
               if (pos > 0 && pos < len) {
-                handleAction('split', () => scriptStudioApi.splitBlockAtText(docId, block.blockIndex, text.slice(0, pos), text.slice(pos)));
+                handleAction('split', () => studioApi.splitBlockAtText(docId, block.blockIndex, text.slice(0, pos), text.slice(pos)));
               } else {
                 ev.currentTarget.blur();
               }
             }
             if (ev.key === 'Backspace' && pos === 0 && ev.currentTarget.selectionEnd === 0 && idx > 0) {
               ev.preventDefault();
-              handleAction('merge', () => scriptStudioApi.mergeBlockWithNext(docId, block.blockIndex - 1));
+              handleAction('merge', () => studioApi.mergeBlockWithNext(docId, block.blockIndex - 1));
             }
           }}
           className="flex-1 text-xs text-c-muted bg-transparent border-none outline-none focus:text-c-text px-1 py-1 rounded hover:bg-c-elevated/50 focus:bg-c-elevated focus:ring-1 focus:ring-c-accent/30 transition-all"
@@ -2968,7 +2994,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
       {/* Actions — visible on hover */}
       <div className={`shrink-0 flex items-center gap-0.5 transition-opacity ${busy ? 'opacity-30 pointer-events-none' : 'opacity-0 group-hover:opacity-100'}`}>
         <button
-          onClick={() => handleAction('insert', () => scriptStudioApi.insertBlockBefore(docId, block.blockIndex))}
+          onClick={() => handleAction('insert', () => studioApi.insertBlockBefore(docId, block.blockIndex))}
           className="p-1.5 rounded-md text-c-dim hover:text-c-accent hover:bg-c-accent/10 transition-colors cursor-pointer"
           title={t('scriptStudio.studio.insertBlock')}
         >
@@ -2976,7 +3002,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
         </button>
         {idx > 0 && (
           <button
-            onClick={() => handleAction('merge', () => scriptStudioApi.mergeBlockWithNext(docId, block.blockIndex - 1))}
+            onClick={() => handleAction('merge', () => studioApi.mergeBlockWithNext(docId, block.blockIndex - 1))}
             className="p-1.5 rounded-md text-c-dim hover:text-amber-400 hover:bg-amber-900/20 transition-colors cursor-pointer"
             title={t('scriptStudio.studio.mergeWithPrev')}
           >
@@ -2985,7 +3011,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
         )}
         {idx < total - 1 && (
           <button
-            onClick={() => handleAction('merge', () => scriptStudioApi.mergeBlockWithNext(docId, block.blockIndex))}
+            onClick={() => handleAction('merge', () => studioApi.mergeBlockWithNext(docId, block.blockIndex))}
             className="p-1.5 rounded-md text-c-dim hover:text-amber-400 hover:bg-amber-900/20 transition-colors cursor-pointer"
             title={t('scriptStudio.studio.mergeWithNext')}
           >
@@ -2994,7 +3020,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
         )}
         {wordCount > 10 && (
           <button
-            onClick={() => handleAction('breakdown', () => scriptStudioApi.breakdownBlock(docId, block.blockIndex))}
+            onClick={() => handleAction('breakdown', () => studioApi.breakdownBlock(docId, block.blockIndex))}
             className="p-1.5 rounded-md text-c-dim hover:text-cyan-400 hover:bg-cyan-900/20 transition-colors cursor-pointer"
             title={t('scriptStudio.studio.breakdownBlock')}
           >
@@ -3002,7 +3028,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
           </button>
         )}
         <button
-          onClick={() => { if (window.confirm(t('scriptStudio.studio.confirmDeleteBlock'))) handleAction('delete', () => scriptStudioApi.deleteBlock(docId, block.blockIndex)); }}
+          onClick={() => { if (window.confirm(t('scriptStudio.studio.confirmDeleteBlock'))) handleAction('delete', () => studioApi.deleteBlock(docId, block.blockIndex)); }}
           className="p-1.5 rounded-md text-c-dim hover:text-red-400 hover:bg-red-900/20 transition-colors cursor-pointer"
           title={t('scriptStudio.studio.deleteBlock')}
         >
@@ -3011,7 +3037,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
         {hasClip && (
           <button
             onClick={() => handleAction('reproduce', async () => {
-              await scriptStudioApi.reproduceBlock(docId, block.blockIndex, orientation, 0.85, undefined, () => {}, '#7c6af5');
+              await studioApi.reproduceBlock(docId, block.blockIndex, orientation, 0.85, undefined, () => {}, '#7c6af5');
             })}
             className="p-1.5 rounded-md text-c-dim hover:text-green-400 hover:bg-green-900/20 transition-colors cursor-pointer"
             title={t('scriptStudio.studio.reproduce')}
@@ -3056,7 +3082,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
               const newOverlays = val ? val.split('|').map(s => s.trim()).filter(Boolean) : [];
               const oldOverlays = block.overlays ?? [];
               if (JSON.stringify(newOverlays) !== JSON.stringify(oldOverlays)) {
-                handleAction('overlay', () => scriptStudioApi.updateBlock(docId, block.blockIndex, { overlays: newOverlays }));
+                handleAction('overlay', () => studioApi.updateBlock(docId, block.blockIndex, { overlays: newOverlays }));
               }
             }}
             onKeyDown={(ev) => { if (ev.key === 'Enter') ev.currentTarget.blur(); if (ev.key === 'Escape') { setShowOverlay(false); } }}
@@ -3067,7 +3093,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
           />
           {hasOverlay && (
             <button
-              onClick={() => handleAction('overlay', () => scriptStudioApi.updateBlock(docId, block.blockIndex, { overlays: [], overlayStyle: null }))}
+              onClick={() => handleAction('overlay', () => studioApi.updateBlock(docId, block.blockIndex, { overlays: [], overlayStyle: null }))}
               className="p-1 rounded text-c-dim hover:text-red-400 hover:bg-red-900/20 transition-colors cursor-pointer shrink-0"
               title={t('scriptStudio.studio.removeOverlay')}
             >
@@ -3080,7 +3106,7 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
           const st = block.overlayStyle ?? {};
           const saveStyle = (patch: Record<string, unknown>) => {
             const merged = { ...st, ...patch };
-            handleAction('overlayStyle', () => scriptStudioApi.updateBlock(docId, block.blockIndex, { overlayStyle: merged }));
+            handleAction('overlayStyle', () => studioApi.updateBlock(docId, block.blockIndex, { overlayStyle: merged }));
           };
           return (
             <div className="flex items-center gap-2 flex-wrap pl-5">
@@ -3142,8 +3168,8 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
 
 // ── Block Card ──
 
-function InsertBlockButton({ docId, blockIndex, isProducing, onInserted }: {
-  docId: string; blockIndex: number; isProducing: boolean; onInserted: () => void;
+function InsertBlockButton({ docId, blockIndex, isProducing, onInserted, studioApi }: {
+  docId: string; blockIndex: number; isProducing: boolean; onInserted: () => void; studioApi: typeof scriptStudioApi;
 }) {
   const { t } = useTranslation();
   const [inserting, setInserting] = useState(false);
@@ -3152,7 +3178,7 @@ function InsertBlockButton({ docId, blockIndex, isProducing, onInserted }: {
     if (inserting || isProducing) return;
     setInserting(true);
     try {
-      await scriptStudioApi.insertBlockBefore(docId, blockIndex);
+      await studioApi.insertBlockBefore(docId, blockIndex);
       onInserted();
     } catch { /* ignore */ }
     setInserting(false);
@@ -3174,7 +3200,7 @@ function InsertBlockButton({ docId, blockIndex, isProducing, onInserted }: {
   );
 }
 
-function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, displayLabel, downloadQueue, queueStockDownload }: {
+function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, displayLabel, downloadQueue, queueStockDownload, studioApi }: {
   block: ScriptBlock;
   docId: string;
   orientation: 'landscape' | 'portrait';
@@ -3183,6 +3209,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   displayLabel: string;
   downloadQueue?: Map<number, DownloadTask>;
   queueStockDownload?: (blockIndex: number, label: string, downloadFn: () => Promise<{ filename: string; duration: number }>, onSuccess?: (data: { filename: string; duration: number }) => void) => void;
+  studioApi: typeof scriptStudioApi;
 }) {
   const { t } = useTranslation();
   const [editingQuery, setEditingQuery] = useState(false);
@@ -3195,7 +3222,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   const [remotionRendering, setRemotionRendering] = useState(false);
   const [saving, setSaving] = useState(false);
   const [applyingAltId, setApplyingAltId] = useState<number | string | null>(null);
-  const [fetchingStock, setFetchingStock] = useState<'pexels' | 'pixabay' | null>(null);
+  const [fetchingStock, setFetchingStock] = useState<'pexels' | 'pixabay' | 'dvids' | null>(null);
   const [fetchLog, setFetchLog] = useState<string | null>(null);
   const [editingAiPrompt, setEditingAiPrompt] = useState(false);
   const [aiPromptValue, setAiPromptValue] = useState(block.aiPrompt ?? '');
@@ -3219,7 +3246,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     setReproducing(true);
     setReproduceLog([]);
     try {
-      const result = await scriptStudioApi.reproduceBlock(
+      const result = await studioApi.reproduceBlock(
         docId, block.blockIndex, orientation, chartOpacity,
         block.chartSpec ? animationSec : undefined,
         (msg) => setReproduceLog(prev => [...prev, msg]),
@@ -3241,7 +3268,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     if (splittingBlock) return;
     setSplittingBlock(true);
     try {
-      await scriptStudioApi.splitBlock(docId, block.blockIndex);
+      await studioApi.splitBlock(docId, block.blockIndex);
       onBlockUpdated();
     } catch (err: any) {
       setFetchLog(`Split failed: ${err.response?.data?.error ?? err.message}`);
@@ -3253,7 +3280,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     if (breakingDown) return;
     setBreakingDown(true);
     try {
-      const result = await scriptStudioApi.breakdownBlock(docId, block.blockIndex);
+      const result = await studioApi.breakdownBlock(docId, block.blockIndex);
       setFetchLog(`Block broken down into ${result.count} blocks`);
       onBlockUpdated();
     } catch (err: any) {
@@ -3265,25 +3292,27 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   const saveQuery = async () => {
     setSaving(true);
     try {
-      await scriptStudioApi.updateBlock(docId, block.blockIndex, { pexelsQuery: queryValue || null });
+      await studioApi.updateBlock(docId, block.blockIndex, { pexelsQuery: queryValue || null });
       onBlockUpdated();
     } catch { /* ignore */ }
     setSaving(false);
     setEditingQuery(false);
   };
 
-  const fetchStock = async (source: 'pexels' | 'pixabay') => {
+  const fetchStock = async (source: 'pexels' | 'pixabay' | 'dvids') => {
+    const fetchBySource = (src: typeof source, docId: string, bIdx: number, orient: 'landscape' | 'portrait') =>
+      src === 'pexels' ? studioApi.fetchBlockPexels(docId, bIdx, orient)
+        : src === 'dvids' ? studioApi.fetchBlockDvids(docId, bIdx, orient)
+        : studioApi.fetchBlockPixabay(docId, bIdx, orient);
     if (queueStockDownload) {
       const existingClips = [...blockClips];
       const bIdx = block.blockIndex;
       queueStockDownload(bIdx, `${source} fetch`, async () => {
-        const data = source === 'pexels'
-          ? await scriptStudioApi.fetchBlockPexels(docId, bIdx, orientation)
-          : await scriptStudioApi.fetchBlockPixabay(docId, bIdx, orientation);
+        const data = await fetchBySource(source, docId, bIdx, orientation);
         const srcDur = data.duration ?? null;
         const newClip = { assetPath: data.filename, startSec: 0, endSec: srcDur, sourceDurationSec: srcDur ?? undefined };
         const merged = [...existingClips, newClip];
-        await scriptStudioApi.updateBlockClips(docId, bIdx, merged);
+        await studioApi.updateBlockClips(docId, bIdx, merged);
         return { filename: data.filename, duration: data.duration };
       });
       setFetchLog(`Downloading ${source} in background...`);
@@ -3293,14 +3322,12 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     setFetchLog(null);
     try {
       const existingClips = [...blockClips];
-      const data = source === 'pexels'
-        ? await scriptStudioApi.fetchBlockPexels(docId, block.blockIndex, orientation)
-        : await scriptStudioApi.fetchBlockPixabay(docId, block.blockIndex, orientation);
+      const data = await fetchBySource(source, docId, block.blockIndex, orientation);
       const srcDur = data.duration ?? null;
       const newClip = { assetPath: data.filename, startSec: 0, endSec: srcDur, sourceDurationSec: srcDur ?? undefined };
       const merged = [...existingClips, newClip];
-      await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
-      setFetchLog(`${source === 'pexels' ? 'Pexels' : 'Pixabay'} clip added (${data.duration}s)`);
+      await studioApi.updateBlockClips(docId, block.blockIndex, merged);
+      setFetchLog(`${source.toUpperCase()} clip added (${data.duration}s)`);
       onBlockUpdated();
     } catch (err: any) {
       setFetchLog(`Error: ${err.response?.data?.error ?? err.message}`);
@@ -3310,7 +3337,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
 
   const saveMotion = async (motion: string) => {
     try {
-      await scriptStudioApi.updateBlock(docId, block.blockIndex, { motion });
+      await studioApi.updateBlock(docId, block.blockIndex, { motion });
       onBlockUpdated();
     } catch { /* ignore */ }
     setEditingMotion(false);
@@ -3324,7 +3351,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     setLoadingAlts(true);
     try {
       const query = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 4).join(' ');
-      const data = await scriptStudioApi.getAlternatives(docId, query, orientation, 15, service);
+      const data = await studioApi.getAlternatives(docId, query, orientation, 15, service);
       setAlts(data.candidates ?? []);
     } catch { setAlts([]); }
     setLoadingAlts(false);
@@ -3334,12 +3361,12 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     if (remotionRendering) return;
     setRemotionRendering(true);
     try {
-      const result = await scriptStudioApi.renderRemotion(docId, block.blockIndex, compositionId, durationSec, orientation, props);
+      const result = await studioApi.renderRemotion(docId, block.blockIndex, compositionId, durationSec, orientation, props);
       // Append to existing clips
       const srcDur = result.durationSec ?? durationSec ?? null;
       const newClip = { assetPath: result.filename, startSec: 0, endSec: srcDur, sourceDurationSec: srcDur ?? undefined };
       const merged = blockClips.length > 0 ? [...blockClips, newClip] : [newClip];
-      await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
+      await studioApi.updateBlockClips(docId, block.blockIndex, merged);
       onBlockUpdated();
       setFetchLog(`Remotion ${compositionId} rendered (${result.durationSec}s)`);
     } catch (err: any) {
@@ -3357,18 +3384,18 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
         let newFilename: string | null = null;
         let duration = alt.duration;
         if (alt.pexelsId) {
-          const result = await scriptStudioApi.applyPexelsById(docId, bIdx, alt.pexelsId, alt.downloadUrl, alt.duration);
+          const result = await studioApi.applyPexelsById(docId, bIdx, alt.pexelsId, alt.downloadUrl, alt.duration);
           newFilename = result.filename; duration = result.duration;
         } else if (alt.pixabayId && alt.downloadUrl) {
-          const result = await scriptStudioApi.applyPixabayFromUrl(docId, bIdx, alt.downloadUrl, alt.duration, alt.width, alt.height);
+          const result = await studioApi.applyPixabayFromUrl(docId, bIdx, alt.downloadUrl, alt.duration, alt.width, alt.height);
           newFilename = result.filename; duration = result.duration;
         } else if (alt.mixkitId && alt.downloadUrl) {
-          const result = await scriptStudioApi.applyMixkitFromUrl(docId, bIdx, alt.downloadUrl, alt.duration, alt.width, alt.height);
+          const result = await studioApi.applyMixkitFromUrl(docId, bIdx, alt.downloadUrl, alt.duration, alt.width, alt.height);
           newFilename = result.filename; duration = result.duration;
         }
         if (newFilename && existingClips.length > 0) {
           const merged = [...existingClips, { assetPath: newFilename, startSec: 0, endSec: duration, sourceDurationSec: duration ?? undefined }];
-          await scriptStudioApi.updateBlockClips(docId, bIdx, merged);
+          await studioApi.updateBlockClips(docId, bIdx, merged);
         }
         return { filename: newFilename ?? '', duration };
       });
@@ -3379,18 +3406,18 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     try {
       let newFilename: string | null = null;
       if (alt.pexelsId) {
-        const result = await scriptStudioApi.applyPexelsById(docId, block.blockIndex, alt.pexelsId, alt.downloadUrl, alt.duration);
+        const result = await studioApi.applyPexelsById(docId, block.blockIndex, alt.pexelsId, alt.downloadUrl, alt.duration);
         newFilename = result.filename;
       } else if (alt.pixabayId && alt.downloadUrl) {
-        const result = await scriptStudioApi.applyPixabayFromUrl(docId, block.blockIndex, alt.downloadUrl, alt.duration, alt.width, alt.height);
+        const result = await studioApi.applyPixabayFromUrl(docId, block.blockIndex, alt.downloadUrl, alt.duration, alt.width, alt.height);
         newFilename = result.filename;
       } else if (alt.mixkitId && alt.downloadUrl) {
-        const result = await scriptStudioApi.applyMixkitFromUrl(docId, block.blockIndex, alt.downloadUrl, alt.duration, alt.width, alt.height);
+        const result = await studioApi.applyMixkitFromUrl(docId, block.blockIndex, alt.downloadUrl, alt.duration, alt.width, alt.height);
         newFilename = result.filename;
       }
       if (newFilename && blockClips.length > 0) {
         const merged = [...blockClips, { assetPath: newFilename, startSec: 0, endSec: alt.duration, sourceDurationSec: alt.duration ?? undefined }];
-        await scriptStudioApi.updateBlockClips(docId, block.blockIndex, merged);
+        await studioApi.updateBlockClips(docId, block.blockIndex, merged);
       }
       onBlockUpdated();
     } catch { /* ignore */ }
@@ -3400,7 +3427,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   const saveAiPrompt = async () => {
     setSaving(true);
     try {
-      await scriptStudioApi.updateBlock(docId, block.blockIndex, {
+      await studioApi.updateBlock(docId, block.blockIndex, {
         visualType: 'ai',
         aiPrompt: aiPromptValue.trim() || '__auto__',
       });
@@ -3416,12 +3443,12 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     setVisualTypeError(null);
     try {
       if (vtype === 'ai') {
-        await scriptStudioApi.updateBlock(docId, block.blockIndex, {
+        await studioApi.updateBlock(docId, block.blockIndex, {
           visualType: 'ai',
           aiPrompt: block.aiPrompt ?? '__auto__',
         });
       } else {
-        await scriptStudioApi.updateBlock(docId, block.blockIndex, { visualType: 'pexels' });
+        await studioApi.updateBlock(docId, block.blockIndex, { visualType: 'pexels' });
       }
       onBlockUpdated();
     } catch (err: any) {
@@ -3435,7 +3462,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     setAiGenLog([]);
     try {
       const prompt = aiPromptValue.trim() || block.aiPrompt || null;
-      const result = await scriptStudioApi.generateBlockAi(docId, block.blockIndex, prompt, orientation);
+      const result = await studioApi.generateBlockAi(docId, block.blockIndex, prompt, orientation);
       if (result?.log) {
         setAiGenLog(result.log.map((l: any) => `${l.level.toUpperCase()}: ${l.message}`));
       }
@@ -3613,6 +3640,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
             blockIndex={block.blockIndex}
             onClipsUpdated={onBlockUpdated}
             orientation={orientation}
+            studioApi={studioApi}
           />
           {/* Live overlay text preview */}
           {block.overlays?.length > 0 && block.clipAssetPath && !block.renderedClipPath && (() => {
@@ -3712,7 +3740,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
                   onChange={(e) => setAnimationSec(Math.max(0.5, parseFloat(e.target.value) || 1))}
                   onBlur={() => {
                     if (block.chartSpec && animationSec !== (block.chartSpec.chartAnimSec ?? defaultAnimSec)) {
-                      scriptStudioApi.updateBlock(docId, block.blockIndex, {
+                      studioApi.updateBlock(docId, block.blockIndex, {
                         chartSpec: { ...block.chartSpec, chartAnimSec: animationSec },
                       } as any).then(() => onBlockUpdated()).catch(() => {});
                     }
@@ -3937,6 +3965,15 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
               >
                 {fetchingStock === 'pixabay' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Video className="w-3 h-3" />}
                 Pixabay
+              </button>
+              <button
+                className="inline-flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg text-c-dim hover:text-cyan-400 hover:bg-cyan-500/10 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => fetchStock('dvids')}
+                disabled={!!fetchingStock}
+                title="Fetch DVIDS military video"
+              >
+                {fetchingStock === 'dvids' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Video className="w-3 h-3" />}
+                DVIDS
               </button>
             </>
           )}
@@ -4232,23 +4269,23 @@ const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
 
 const WATERMARK_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
 
-function WatermarkPanel({ options, onChange }: { options: Record<string, any>; onChange: (k: string, v: any) => void }) {
+function WatermarkPanel({ options, onChange, studioApi }: { options: Record<string, any>; onChange: (k: string, v: any) => void; studioApi: typeof scriptStudioApi }) {
   const { t } = useTranslation();
   const wm = options.watermark ?? { enabled: false, position: 'bottom-right', opacity: 0.8, scale: 0.08, margin: 20 };
   const setWm = (patch: Record<string, unknown>) => onChange('watermark', { ...wm, ...patch });
   const fileRef = useRef<HTMLInputElement>(null);
-  const { data: wmStatus, refetch } = useQuery({ queryKey: ['watermark-status'], queryFn: scriptStudioApi.getWatermark });
+  const { data: wmStatus, refetch } = useQuery({ queryKey: ['watermark-status'], queryFn: studioApi.getWatermark });
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    await scriptStudioApi.uploadWatermark(file);
+    await studioApi.uploadWatermark(file);
     refetch();
     setWm({ enabled: true });
   };
 
   const handleDelete = async () => {
-    await scriptStudioApi.deleteWatermark();
+    await studioApi.deleteWatermark();
     refetch();
     setWm({ enabled: false });
   };
@@ -4315,11 +4352,12 @@ function WatermarkPanel({ options, onChange }: { options: Record<string, any>; o
   );
 }
 
-function SettingsPanel({ docId, options, onChange, onClose }: {
+function SettingsPanel({ docId, options, onChange, onClose, studioApi }: {
   docId?: string;
   options: Record<string, any>;
   onChange: (k: string, v: any) => void;
   onClose: () => void;
+  studioApi: typeof scriptStudioApi;
 }) {
   const { t } = useTranslation();
   const subtitleStyle = options.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
@@ -4586,7 +4624,7 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
             setSubtitleStyle={(updater) => {
               const next = typeof updater === 'function' ? updater(subtitleStyle) : updater;
               onChange('subtitleStyle', next);
-              scriptStudioApi.updateSubtitleStyle(docId!, next).catch(console.error);
+              studioApi.updateSubtitleStyle(docId!, next).catch(console.error);
             }}
             saveProject={() => {/* no-op */}}
             t={t}
@@ -4621,7 +4659,7 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
           </div>
 
           {/* Row 6: Watermark / Logo */}
-          <WatermarkPanel options={options} onChange={onChange} />
+          <WatermarkPanel options={options} onChange={onChange} studioApi={studioApi} />
         </div>
       </div>
     </div>
@@ -4630,11 +4668,12 @@ function SettingsPanel({ docId, options, onChange, onClose }: {
 
 // ── Result View (Step 4) ──
 
-function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
+function ResultView({ jobResult, orientation, onRerun, onRemove, docId, studioApi }: {
   jobResult: any;
   orientation: 'landscape' | 'portrait';
   onRerun: () => void;
   onRemove: () => void;
+  studioApi: typeof scriptStudioApi;
   docId: string;
 }) {
   const { t } = useTranslation();
@@ -4662,7 +4701,7 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
     setExportLogs([]);
     setExportError(null);
     try {
-      const result = await scriptStudioApi.exportUpscale(docId, preset, orientation, (percent, detail) => {
+      const result = await studioApi.exportUpscale(docId, preset, orientation, (percent, detail) => {
         setExportProgress({ percent, detail });
         setExportLogs(prev => [...prev, detail]);
       }, ac.signal);
@@ -4692,7 +4731,7 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
   const generateYt = async () => {
     setGenYt(true);
     try {
-      const data = await scriptStudioApi.generateYouTubeMetadata(docId);
+      const data = await studioApi.generateYouTubeMetadata(docId);
       setYtDesc(data.description);
       setYtTags(data.tags);
     } catch { /* ignore */ }
@@ -4807,7 +4846,7 @@ function ResultView({ jobResult, orientation, onRerun, onRemove, docId }: {
                   onClick={async () => {
                     if (!confirm(`Delete ${preset.toUpperCase()} export?`)) return;
                     try {
-                      await scriptStudioApi.deleteExport(docId, preset, orientation);
+                      await studioApi.deleteExport(docId, preset, orientation);
                       setExportResults(prev => { const n = { ...prev }; delete n[preset]; return n; });
                     } catch (e: any) { setExportError(e.message); }
                   }}
@@ -5063,7 +5102,8 @@ function ProducePanel({
 
 // ── Main Page ──
 
-export default function ScriptDoc() {
+export default function ScriptDoc({ studioConfig = SCRIPT_STUDIO_CONFIG }: { studioConfig?: StudioConfig }) {
+  const studioApi = studioConfig.api;
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -5084,6 +5124,7 @@ export default function ScriptDoc() {
   const [resyncing, setResyncing] = useState(false);
   const [fetchingAllStock, setFetchingAllStock] = useState(false);
   const [fetchAllProgress, setFetchAllProgress] = useState<string[]>([]);
+  const [fetchAllSource, setFetchAllSource] = useState<'pexels' | 'pixabay' | 'dvids'>(studioConfig.defaultStockSource);
   const prevResultUrlRef = useRef<string | null>(null);
 
   // Background download queue — allows user to continue editing while stock downloads
@@ -5111,7 +5152,7 @@ export default function ScriptDoc() {
       });
       onSuccess?.(data);
       // Refresh blocks data
-      qc.invalidateQueries({ queryKey: ['script-studio-blocks', id] });
+      qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-blocks`, id] });
     }).catch(() => {
       setDownloadQueue(prev => {
         const next = new Map(prev);
@@ -5125,15 +5166,15 @@ export default function ScriptDoc() {
 
   // Queries — use slower intervals during production to reduce server load
   const docQ = useQuery({
-    queryKey: ['script-studio-doc', id],
-    queryFn: () => scriptStudioApi.get(id!),
+    queryKey: [`${studioConfig.queryKeyPrefix}-doc`, id],
+    queryFn: () => studioApi.get(id!),
     enabled: !!id,
     refetchInterval: 10_000,
   });
 
   const statusQ = useQuery({
-    queryKey: ['script-studio-produce-status', id],
-    queryFn: () => scriptStudioApi.getProduceStatus(id!),
+    queryKey: [`${studioConfig.queryKeyPrefix}-produce-status`, id],
+    queryFn: () => studioApi.getProduceStatus(id!),
     enabled: !!id,
     refetchInterval: 5_000,
   });
@@ -5141,15 +5182,15 @@ export default function ScriptDoc() {
   const _isProducingForPolling = statusQ.data?.job?.status === 'running' || statusQ.data?.job?.status === 'queued';
 
   const blocksQ = useQuery({
-    queryKey: ['script-studio-blocks', id],
-    queryFn: () => scriptStudioApi.getBlocks(id!),
+    queryKey: [`${studioConfig.queryKeyPrefix}-blocks`, id],
+    queryFn: () => studioApi.getBlocks(id!),
     enabled: !!id,
     refetchInterval: _isProducingForPolling ? 10_000 : 3_000,
   });
 
   const logsQ = useQuery({
-    queryKey: ['script-studio-logs', id],
-    queryFn: () => scriptStudioApi.getLogs(id!, 300),
+    queryKey: [`${studioConfig.queryKeyPrefix}-logs`, id],
+    queryFn: () => studioApi.getLogs(id!, 300),
     enabled: !!id,
     refetchInterval: _isProducingForPolling ? 8_000 : 3_000,
   });
@@ -5173,7 +5214,7 @@ export default function ScriptDoc() {
   useEffect(() => {
     if (!id || !produceOptionsLoaded.current) return;
     const timer = setTimeout(() => {
-      scriptStudioApi.updateProduceOptions(id, produceOptions).catch(console.error);
+      studioApi.updateProduceOptions(id, produceOptions).catch(console.error);
     }, 500);
     return () => clearTimeout(timer);
   }, [id, produceOptions]);
@@ -5214,9 +5255,9 @@ export default function ScriptDoc() {
     setProducing(true);
     setStep(3);
     try {
-      await scriptStudioApi.produce(id, produceOptions);
-      qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
-      qc.invalidateQueries({ queryKey: ['script-studio-doc', id] });
+      await studioApi.produce(id, produceOptions);
+      qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-produce-status`, id] });
+      qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-doc`, id] });
     } catch (err) {
       console.error(err);
     }
@@ -5227,8 +5268,8 @@ export default function ScriptDoc() {
     if (!activeProduceJob) return;
     try {
       await queueApi.cancel(activeProduceJob.id);
-      qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
-      qc.invalidateQueries({ queryKey: ['script-studio-doc', id] });
+      qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-produce-status`, id] });
+      qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-doc`, id] });
     } catch { /* ignore */ }
   };
 
@@ -5236,9 +5277,9 @@ export default function ScriptDoc() {
     if (!id) return;
     if (!window.confirm(t('scriptStudio.studio.confirmRemoveProduce'))) return;
     try {
-      await scriptStudioApi.deleteProduce(id);
-      qc.invalidateQueries({ queryKey: ['script-studio-produce-status', id] });
-      qc.invalidateQueries({ queryKey: ['script-studio-doc', id] });
+      await studioApi.deleteProduce(id);
+      qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-produce-status`, id] });
+      qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-doc`, id] });
       setStep(3);
     } catch (err) {
       console.error(err);
@@ -5246,15 +5287,15 @@ export default function ScriptDoc() {
   };
 
   const handleBlockUpdated = useCallback(() => {
-    qc.invalidateQueries({ queryKey: ['script-studio-blocks', id] });
+    qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-blocks`, id] });
   }, [qc, id]);
 
   const handleResyncBlocks = async () => {
     if (!id || resyncing) return;
     setResyncing(true);
     try {
-      await scriptStudioApi.syncBlocks(id);
-      qc.invalidateQueries({ queryKey: ['script-studio-blocks', id] });
+      await studioApi.syncBlocks(id);
+      qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-blocks`, id] });
     } catch (err: any) {
       pushNotification({ id: `resync-err-${Date.now()}`, type: 'error', title: err.message ?? 'Sync failed' });
     }
@@ -5266,20 +5307,24 @@ export default function ScriptDoc() {
     const missing = blocks.filter(b => b.narration && !b.clipAssetPath && !(b.clips?.length > 0) && !b.openingText && b.pexelsQuery);
     if (!missing.length) return;
     setFetchingAllStock(true);
-    setFetchAllProgress([`Fetching stock for ${missing.length} blocks...`]);
+    const src = fetchAllSource;
+    const fetchFn = src === 'pexels' ? studioApi.fetchBlockPexels
+      : src === 'dvids' ? studioApi.fetchBlockDvids
+      : studioApi.fetchBlockPixabay;
+    setFetchAllProgress([`Fetching ${src.toUpperCase()} for ${missing.length} blocks...`]);
     for (let i = 0; i < missing.length; i++) {
       const b = missing[i];
       const label = `[${i + 1}/${missing.length}] #${b.blockIndex + 1} "${(b.pexelsQuery || '').substring(0, 40)}"`;
       try {
         setFetchAllProgress(prev => [...prev, `${label} — fetching...`]);
-        await scriptStudioApi.fetchBlockPexels(id, b.blockIndex, orientation);
+        await fetchFn(id, b.blockIndex, orientation);
         setFetchAllProgress(prev => [...prev.slice(0, -1), `${label} — done ✓`]);
       } catch (err: any) {
         setFetchAllProgress(prev => [...prev.slice(0, -1), `${label} — failed: ${err.response?.data?.error ?? err.message}`]);
       }
     }
     setFetchAllProgress(prev => [...prev, `Done — ${missing.length} blocks processed`]);
-    qc.invalidateQueries({ queryKey: ['script-studio-blocks', id] });
+    qc.invalidateQueries({ queryKey: [`${studioConfig.queryKeyPrefix}-blocks`, id] });
     setFetchingAllStock(false);
   };
 
@@ -5384,7 +5429,7 @@ export default function ScriptDoc() {
       <div className="flex items-center gap-3 px-4 py-3 border-b border-c-border bg-c-surface shrink-0">
         <button
           className="text-c-muted hover:text-c-text transition-colors cursor-pointer p-1 -ml-1 rounded-lg hover:bg-c-elevated"
-          onClick={() => navigate('/script-studio')}
+          onClick={() => navigate(studioConfig.routePrefix)}
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
@@ -5463,6 +5508,7 @@ export default function ScriptDoc() {
             onRerun={() => setStep(3)}
             onRemove={handleRemoveProduce}
             docId={id!}
+            studioApi={studioApi}
           />
         </div>
       ) : blocks.length === 0 ? (
@@ -5532,6 +5578,7 @@ export default function ScriptDoc() {
                         displayLabel={blockDisplayLabels[block.blockIndex] ?? String(block.blockIndex + 1)}
                         onBlockUpdated={handleBlockUpdated}
                         orientation={orientation}
+                        studioApi={studioApi}
                       />
                     ))}
                   </div>
@@ -5614,6 +5661,7 @@ export default function ScriptDoc() {
                 rate={produceOptions.rate}
                 downloadQueue={downloadQueue}
                 queueStockDownload={queueStockDownload}
+                studioApi={studioApi}
               />
             </div>
           ) : (
@@ -5626,6 +5674,16 @@ export default function ScriptDoc() {
                   return (missingStockCount > 0 || fetchAllProgress.length > 0) ? (
                     <div className="border border-c-border rounded-lg p-2.5 bg-c-surface/50 space-y-2">
                       <div className="flex items-center gap-2">
+                        <select
+                          value={fetchAllSource}
+                          onChange={(e) => setFetchAllSource(e.target.value as 'pexels' | 'pixabay' | 'dvids')}
+                          disabled={fetchingAllStock}
+                          className="input text-xs py-1.5 h-auto"
+                        >
+                          <option value="pexels">Pexels</option>
+                          <option value="pixabay">Pixabay</option>
+                          <option value="dvids">DVIDS</option>
+                        </select>
                         <button
                           onClick={handleFetchAllStock}
                           disabled={fetchingAllStock || isProducing || missingStockCount === 0}
@@ -5659,7 +5717,7 @@ export default function ScriptDoc() {
                     <div className="space-y-2 ml-1">
                       {group.blocks.map((block) => (
                         <div key={block.id}>
-                          <InsertBlockButton docId={id!} blockIndex={block.blockIndex} isProducing={isProducing} onInserted={handleBlockUpdated} />
+                          <InsertBlockButton docId={id!} blockIndex={block.blockIndex} isProducing={isProducing} onInserted={handleBlockUpdated} studioApi={studioApi} />
                           <BlockCard
                             block={block}
                             docId={id!}
@@ -5669,6 +5727,7 @@ export default function ScriptDoc() {
                             displayLabel={blockDisplayLabels[block.blockIndex] ?? String(block.blockIndex + 1)}
                             downloadQueue={downloadQueue}
                             queueStockDownload={queueStockDownload}
+                            studioApi={studioApi}
                           />
                         </div>
                       ))}
@@ -5726,6 +5785,7 @@ export default function ScriptDoc() {
               options={produceOptions}
               onChange={(k, v) => setProduceOptions((prev) => ({ ...prev, [k]: v }))}
               onClose={() => setSettingsOpen(false)}
+              studioApi={studioApi}
             />
           </div>
         </div>
