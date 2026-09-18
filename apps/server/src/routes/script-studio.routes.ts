@@ -35,6 +35,8 @@ import {
   deleteDocProduceJob,
   resolveBlockVoice,
   type VoiceGroup,
+  type StudioTableConfig,
+  SCRIPT_STUDIO_TABLES,
 } from '../services/script-studio.service';
 import { getJobQueue } from '../queue/queue';
 import type { ProduceOptions } from '../services/video-producer.service';
@@ -133,8 +135,8 @@ async function compositeChartOnBg(
   }
 }
 
-function getDocOrientation(docId: string): 'landscape' | 'portrait' {
-  const doc = getDoc(docId);
+function getDocOrientation(docId: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): 'landscape' | 'portrait' {
+  const doc = getDoc(docId, tables);
   if (!doc?.produceOptions) return 'landscape';
   try {
     const opts = JSON.parse(doc.produceOptions);
@@ -142,14 +144,14 @@ function getDocOrientation(docId: string): 'landscape' | 'portrait' {
   } catch { return 'landscape'; }
 }
 
-export function createScriptStudioRouter(): Router {
+export function createStudioRouter(tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): Router {
   ensureScriptStudioTables();
   const router = Router();
 
   // ── Docs CRUD ──
 
   router.get('/docs', (_req: Request, res: Response) => {
-    const docs = listDocs();
+    const docs = listDocs(tables);
     const enriched = docs.map((doc) => {
       let linkedStoryboardName: string | null = null;
       if (doc.linkedStoryboardId) {
@@ -162,7 +164,7 @@ export function createScriptStudioRouter(): Router {
   });
 
   router.get('/docs/:id', (req: Request, res: Response) => {
-    const doc = getDoc(req.params.id as string);
+    const doc = getDoc(req.params.id as string, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
     res.json({ doc });
   });
@@ -177,7 +179,7 @@ export function createScriptStudioRouter(): Router {
     try {
       const result = createDoc(raw_markdown, title, undefined, (level, message) => {
         ndLine(res, { type: 'log', level, message, ts: new Date().toISOString() });
-      });
+      }, tables);
       ndLine(res, { type: 'result', doc: { id: result.id, title: result.title, parsed: result.parsed } });
     } catch (err) {
       ndLine(res, { type: 'error', error: err instanceof Error ? err.message : String(err) });
@@ -186,7 +188,7 @@ export function createScriptStudioRouter(): Router {
   });
 
   router.put('/docs/:id', (req: Request, res: Response) => {
-    const existing = getDoc(req.params.id as string);
+    const existing = getDoc(req.params.id as string, tables);
     if (!existing) { res.status(404).json({ error: 'Script doc not found' }); return; }
     const body2 = (req.body ?? {}) as { raw_markdown?: string; title?: string };
     const raw_markdown = body2.raw_markdown;
@@ -197,7 +199,7 @@ export function createScriptStudioRouter(): Router {
     try {
       const result = updateDoc(req.params.id as string, raw_markdown, title, (level, message) => {
         ndLine(res, { type: 'log', level, message, ts: new Date().toISOString() });
-      });
+      }, tables);
       ndLine(res, { type: 'result', doc: { id: result.id, title: result.title, parsed: result.parsed } });
     } catch (err) {
       ndLine(res, { type: 'error', error: err instanceof Error ? err.message : String(err) });
@@ -207,40 +209,40 @@ export function createScriptStudioRouter(): Router {
 
   router.put('/docs/:id/subtitle-style', (req: Request, res: Response) => {
     const docId = req.params.id as string;
-    const doc = getDoc(docId);
+    const doc = getDoc(docId, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
 
     const { subtitleStyle } = req.body;
     if (!subtitleStyle) { res.status(400).json({ error: 'subtitleStyle is required' }); return; }
 
-    updateDocSubtitleStyle(docId, subtitleStyle);
+    updateDocSubtitleStyle(docId, subtitleStyle, tables);
     res.json({ ok: true });
   });
 
   router.put('/docs/:id/produce-options', (req: Request, res: Response) => {
     const docId = req.params.id as string;
-    const doc = getDoc(docId);
+    const doc = getDoc(docId, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
-    updateDocProduceOptions(docId, req.body);
+    updateDocProduceOptions(docId, req.body, tables);
     res.json({ ok: true });
   });
 
   router.delete('/docs/:id', (req: Request, res: Response) => {
-    deleteDoc(req.params.id as string);
+    deleteDoc(req.params.id as string, tables);
     res.json({ ok: true });
   });
 
   router.patch('/docs/:id/status', (req: Request, res: Response) => {
     const { status } = req.body as { status?: DocStatus };
     if (!status) { res.status(400).json({ error: 'status is required' }); return; }
-    const doc = getDoc(req.params.id as string);
+    const doc = getDoc(req.params.id as string, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
-    setDocStatus(req.params.id as string, status);
+    setDocStatus(req.params.id as string, status, tables);
     res.json({ ok: true, status });
   });
 
   router.get('/docs/:id/narration', (req: Request, res: Response) => {
-    const doc = getDoc(req.params.id as string);
+    const doc = getDoc(req.params.id as string, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
     const narration = getCleanNarration(doc.parsed);
     res.json({ narration });
@@ -248,7 +250,7 @@ export function createScriptStudioRouter(): Router {
 
   router.get('/docs/:id/logs', (req: Request, res: Response) => {
     const limit = parseInt(req.query.limit as string) || 200;
-    const logs = getLogs(req.params.id as string, limit);
+    const logs = getLogs(req.params.id as string, limit, tables);
     res.json({ logs });
   });
 
@@ -257,15 +259,15 @@ export function createScriptStudioRouter(): Router {
   router.get('/docs/:id/blocks', (req: Request, res: Response) => {
     const docId = req.params.id as string;
     try {
-      const doc = getDoc(docId);
+      const doc = getDoc(docId, tables);
       if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
-      let blocks = listBlocks(docId);
+      let blocks = listBlocks(docId, tables);
       // Lazy migration: sync blocks if none exist but doc has parsed content
       if (blocks.length === 0 && doc.parsed?.segments?.length) {
-        syncBlocksFromParsed(docId, doc.parsed as ParsedScript);
-        blocks = listBlocks(docId);
+        syncBlocksFromParsed(docId, doc.parsed as ParsedScript, tables);
+        blocks = listBlocks(docId, tables);
       }
-      
+
       // Self-heal: reset blocks whose rendered video files are missing on disk
       // Skip during production to avoid expensive fs checks while FFmpeg is running
       if (doc.status !== 'producing') {
@@ -273,7 +275,7 @@ export function createScriptStudioRouter(): Router {
         for (const block of blocks) {
           if (block.status === 'rendered' && block.renderedClipPath && !fs.existsSync(block.renderedClipPath)) {
             dbRun(
-              `UPDATE script_blocks SET rendered_clip_path = NULL, status = 'clip_ready', updated_at = ? WHERE id = ?`,
+              `UPDATE ${tables.blocks} SET rendered_clip_path = NULL, status = 'clip_ready', updated_at = ? WHERE id = ?`,
               [new Date().toISOString(), block.id]
             );
             block.renderedClipPath = null;
@@ -282,7 +284,7 @@ export function createScriptStudioRouter(): Router {
           }
         }
         if (changed) {
-          blocks = listBlocks(docId);
+          blocks = listBlocks(docId, tables);
         }
       }
 
@@ -296,12 +298,12 @@ export function createScriptStudioRouter(): Router {
   router.post('/docs/:id/sync-blocks', (req: Request, res: Response) => {
     const docId = req.params.id as string;
     try {
-      const doc = getDoc(docId);
+      const doc = getDoc(docId, tables);
       if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
       if (!doc.rawMarkdown) { res.status(422).json({ error: 'No raw markdown to re-parse' }); return; }
       // Re-parse from source so blocks reflect current parser behavior
-      updateDoc(docId, doc.rawMarkdown);
-      const blocks = listBlocks(docId);
+      updateDoc(docId, doc.rawMarkdown, undefined, undefined, tables);
+      const blocks = listBlocks(docId, tables);
       res.json({ ok: true, blocks });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -327,7 +329,7 @@ export function createScriptStudioRouter(): Router {
     if ('aiPrompt' in body) fields.aiPrompt = (body.aiPrompt ?? null) as string | null;
     if ('chartSpec' in body) fields.chartSpec = body.chartSpec as any;
 
-    updateBlockVisual(docId, blockIndex, fields);
+    updateBlockVisual(docId, blockIndex, fields, tables);
     res.json({ ok: true });
   });
 
@@ -337,10 +339,10 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
 
-    const block = getBlock(docId, blockIndex);
+    const block = getBlock(docId, blockIndex, tables);
     if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
 
-    const orient = ((req.body?.orientation as string) === 'portrait' ? 'portrait' : null) ?? getDocOrientation(docId);
+    const orient = ((req.body?.orientation as string) === 'portrait' ? 'portrait' : null) ?? getDocOrientation(docId, tables);
     const query = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 5).join(' ');
 
     const rendersDir = path.resolve(process.env.RENDERS_DIR ?? './renders', 'storyboard');
@@ -373,10 +375,10 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
 
-    const block = getBlock(docId, blockIndex);
+    const block = getBlock(docId, blockIndex, tables);
     if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
 
-    const orient = ((req.body?.orientation as string) === 'portrait' ? 'portrait' : null) ?? getDocOrientation(docId);
+    const orient = ((req.body?.orientation as string) === 'portrait' ? 'portrait' : null) ?? getDocOrientation(docId, tables);
     const query = block.pexelsQuery || block.narration.split(/\s+/).slice(0, 5).join(' ');
 
     const { searchPexelsVideos } = await import('../services/pexels.service');
@@ -432,7 +434,7 @@ export function createScriptStudioRouter(): Router {
       const id = req.params.id as string;
       const blockIndex = req.params.blockIndex as string;
       const { orientation } = req.body;
-      const block = getBlock(id, Number(blockIndex));
+      const block = getBlock(id, Number(blockIndex), tables);
       if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
 
       const query = block.pexelsQuery || block.narration?.slice(0, 60) || '';
@@ -492,10 +494,10 @@ export function createScriptStudioRouter(): Router {
       }
       if (!result) { res.status(422).json({ error: 'Video not found or no downloadable files' }); return; }
 
-      const block = getBlock(docId, blockIndex);
+      const block = getBlock(docId, blockIndex, tables);
       if (block?.chartSpec) {
         const bgPath = path.join(docDir, result.filename);
-        const composited = await compositeChartOnBg(block, bgPath, docId, getDocOrientation(docId));
+        const composited = await compositeChartOnBg(block, bgPath, docId, getDocOrientation(docId, tables));
         if (composited) {
           res.json({ ok: true, filename: composited, pexelsId, duration: result.duration });
           return;
@@ -514,11 +516,11 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
 
-    const block = getBlock(docId, blockIndex);
+    const block = getBlock(docId, blockIndex, tables);
     if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
 
     const { aiPrompt: requestPrompt } = req.body as { aiPrompt?: string; orientation?: string };
-    const orientation = (req.body?.orientation as string) || getDocOrientation(docId);
+    const orientation = (req.body?.orientation as string) || getDocOrientation(docId, tables);
     const isPortrait = orientation === 'portrait';
 
     setupNDJSON(res);
@@ -550,7 +552,7 @@ export function createScriptStudioRouter(): Router {
         await generateVideoClip(prompt, ar, aiDestPath, clipDur);
       }
 
-      updateBlockAi(docId, blockIndex, prompt, aiFilename, { promptHash, generatedAt: new Date().toISOString() });
+      updateBlockAi(docId, blockIndex, prompt, aiFilename, { promptHash, generatedAt: new Date().toISOString() }, tables);
 
       ndLine(res, { type: 'log', level: 'success', message: `AI clip ready: ${aiFilename}`, ts: new Date().toISOString() });
       ndLine(res, { type: 'result', blockIndex, aiFilename, promptHash });
@@ -565,7 +567,7 @@ export function createScriptStudioRouter(): Router {
   router.get('/docs/:id/blocks/alternatives', async (req: Request, res: Response) => {
     const docId = req.params.id as string;
     const query = (req.query.query as string) ?? '';
-    const orientation = ((req.query.orientation as string) || getDocOrientation(docId)) as 'landscape' | 'portrait';
+    const orientation = ((req.query.orientation as string) || getDocOrientation(docId, tables)) as 'landscape' | 'portrait';
     const perPage = Math.min(parseInt((req.query.perPage as string) ?? '12') || 12, 30);
     const service = (req.query.service as string) ?? 'pexels';
     if (!query) { res.status(400).json({ error: 'query is required' }); return; }
@@ -674,10 +676,10 @@ export function createScriptStudioRouter(): Router {
       const { downloadPixabayVideoFromUrl } = await import('../services/pixabay.service');
       const result = await downloadPixabayVideoFromUrl(downloadUrl, duration ?? 0, width ?? 0, height ?? 0, docDir);
 
-      const block = getBlock(docId, blockIndex);
+      const block = getBlock(docId, blockIndex, tables);
       if (block?.chartSpec) {
         const bgPath = path.join(docDir, result.filename);
-        const composited = await compositeChartOnBg(block, bgPath, docId, getDocOrientation(docId));
+        const composited = await compositeChartOnBg(block, bgPath, docId, getDocOrientation(docId, tables));
         if (composited) {
           res.json({ ok: true, filename: composited, duration: result.duration });
           return;
@@ -717,7 +719,7 @@ export function createScriptStudioRouter(): Router {
         imgResult = await downloadPexelsPhoto(downloadUrl, docDir);
       }
 
-      const block = getBlock(docId, blockIndex);
+      const block = getBlock(docId, blockIndex, tables);
       const durationSec = block?.audioDurationMs ? Math.ceil(block.audioDurationMs / 1000) : 5;
 
       res.json({ ok: true, filename: imgResult.filename, duration: durationSec });
@@ -801,7 +803,7 @@ export function createScriptStudioRouter(): Router {
       if (!fs.existsSync(rightPath)) { res.status(400).json({ error: `Right clip not found: ${rightClip}` }); return; }
 
       // Get block audio duration for target length
-      const block = getBlock(docId, blockIndex);
+      const block = getBlock(docId, blockIndex, tables);
       const durationSec = block?.audioDurationMs ? Math.ceil(block.audioDurationMs / 1000) : 5;
 
       const isPortrait = orientation === 'portrait';
@@ -988,7 +990,7 @@ export function createScriptStudioRouter(): Router {
       ], { timeout: 120000 });
 
       // Mark block as 'split' visual type and sync clip_asset_path so the producer uses it as-is
-      updateBlockVisual(docId, blockIndex, { visualType: 'split', clipAssetPath: splitFilename });
+      updateBlockVisual(docId, blockIndex, { visualType: 'split', clipAssetPath: splitFilename }, tables);
 
       res.json({ ok: true, filename: splitFilename, duration: durationSec });
     } catch (err) {
@@ -1004,7 +1006,7 @@ export function createScriptStudioRouter(): Router {
     if (isNaN(blockIndex) || !req.file) { res.status(400).json({ error: 'Invalid blockIndex or no file' }); return; }
 
     const zoomEffect = (req.body?.zoomEffect as string) || 'zoom-in';
-    const orientation: 'landscape' | 'portrait' = (req.body?.orientation as string) === 'portrait' ? 'portrait' : getDocOrientation(docId);
+    const orientation: 'landscape' | 'portrait' = (req.body?.orientation as string) === 'portrait' ? 'portrait' : getDocOrientation(docId, tables);
     const isPortrait = orientation === 'portrait';
 
     try {
@@ -1019,7 +1021,7 @@ export function createScriptStudioRouter(): Router {
       fs.renameSync(req.file.path, imgPath);
 
       // Get block audio duration for clip length
-      const block = getBlock(docId, blockIndex);
+      const block = getBlock(docId, blockIndex, tables);
       const durationSec = block?.audioDurationMs ? Math.ceil(block.audioDurationMs / 1000) : 5;
 
       // Convert image to video with zoom effect via FFmpeg
@@ -1086,10 +1088,10 @@ export function createScriptStudioRouter(): Router {
       const { downloadMixkitVideo } = await import('../services/mixkit.service');
       const result = await downloadMixkitVideo(downloadUrl, duration ?? 0, width ?? 0, height ?? 0, docDir);
 
-      const block = getBlock(docId, blockIndex);
+      const block = getBlock(docId, blockIndex, tables);
       if (block?.chartSpec) {
         const bgPath = path.join(docDir, result.filename);
-        const composited = await compositeChartOnBg(block, bgPath, docId, getDocOrientation(docId));
+        const composited = await compositeChartOnBg(block, bgPath, docId, getDocOrientation(docId, tables));
         if (composited) {
           res.json({ ok: true, filename: composited, duration: result.duration });
           return;
@@ -1108,7 +1110,7 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
 
-    const block = getBlock(docId, blockIndex);
+    const block = getBlock(docId, blockIndex, tables);
     if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
 
     const narration = block.narration?.trim();
@@ -1124,7 +1126,7 @@ export function createScriptStudioRouter(): Router {
       });
       const cleanQuery = query.replace(/["'.]/g, '').trim();
       // Persist the new query to the block
-      updateBlockVisual(docId, blockIndex, { pexelsQuery: cleanQuery });
+      updateBlockVisual(docId, blockIndex, { pexelsQuery: cleanQuery }, tables);
       res.json({ query: cleanQuery });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -1137,7 +1139,7 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
 
-    const block = getBlock(docId, blockIndex);
+    const block = getBlock(docId, blockIndex, tables);
     if (!block) { res.status(404).json({ error: 'Block not found' }); return; }
     if (!block.narration?.trim()) { res.status(400).json({ error: 'Block has no narration' }); return; }
 
@@ -1156,7 +1158,7 @@ export function createScriptStudioRouter(): Router {
       const engineOverride = (req.body as any)?.engine as string | undefined; // 'kokoro' | 'omnivoice' | 'edge-tts'
 
       // Resolve per-block voice config (supports VOICE_GROUP references)
-      const doc = getDoc(docId);
+      const doc = getDoc(docId, tables);
       const voiceGroups: VoiceGroup[] = doc?.parsed?.voiceGroups ?? [];
       const docVoiceConfig: string | null = doc?.parsed?.voiceConfig ?? null;
       const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate, userEngine: engineOverride });
@@ -1240,7 +1242,7 @@ export function createScriptStudioRouter(): Router {
         audioDurationMs: totalMs,
         wordsJson,
         audioEngine: actualEngine,
-      });
+      }, tables);
 
       res.json({ cached: false, audioDurationMs: totalMs, wordCount, engine: actualEngine });
     } catch (err) {
@@ -1251,12 +1253,12 @@ export function createScriptStudioRouter(): Router {
   // Regenerate TTS for all blocks (batch)
   router.post('/docs/:id/tts-all', async (req: Request, res: Response) => {
     const docId = req.params.id as string;
-    const doc = getDoc(docId);
+    const doc = getDoc(docId, tables);
     if (!doc) { res.status(404).json({ error: 'Doc not found' }); return; }
 
     const engine = (req.body as any)?.engine as string | undefined;
     const force = true; // Always force re-gen when applying to all
-    const blocks = listBlocks(docId);
+    const blocks = listBlocks(docId, tables);
     const narrationBlocks = blocks.filter(b => b.narration?.trim());
 
     setupNDJSON(res);
@@ -1335,7 +1337,7 @@ export function createScriptStudioRouter(): Router {
         const wordsJson = fs.existsSync(wordsPath) ? fs.readFileSync(wordsPath, 'utf-8') : '[]';
         updateBlockAudio(docId, block.blockIndex, {
           contentHash, audioPath: audioFilename, audioDurationMs: totalMs, wordsJson, audioEngine: actualEngine,
-        });
+        }, tables);
 
         done++;
         ndLine(res, { type: 'progress', done, total: narrationBlocks.length, blockIndex: block.blockIndex, audioDurationMs: totalMs, engine: actualEngine });
@@ -1361,7 +1363,7 @@ export function createScriptStudioRouter(): Router {
     updateBlockVisual(docId, blockIndex, {
       clipStartSec: startSec ?? null,
       clipEndSec: endSec ?? null,
-    });
+    }, tables);
     res.json({ ok: true });
   });
 
@@ -1374,7 +1376,7 @@ export function createScriptStudioRouter(): Router {
     const clips = (req.body as any)?.clips as BlockClip[] | undefined;
     if (!Array.isArray(clips)) { res.status(400).json({ error: 'clips must be an array' }); return; }
 
-    updateBlockClips(docId, blockIndex, clips);
+    updateBlockClips(docId, blockIndex, clips, tables);
     res.json({ ok: true, clips });
   });
 
@@ -1384,7 +1386,7 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
     try {
-      const result = splitBlock(docId, blockIndex);
+      const result = splitBlock(docId, blockIndex, tables);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1397,7 +1399,7 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
     try {
-      const result = insertBlockBefore(docId, blockIndex);
+      const result = insertBlockBefore(docId, blockIndex, tables);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1410,7 +1412,7 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
     try {
-      const result = mergeBlockWithNext(docId, blockIndex);
+      const result = mergeBlockWithNext(docId, blockIndex, tables);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1425,7 +1427,7 @@ export function createScriptStudioRouter(): Router {
     const { leftText, rightText } = (req.body ?? {}) as { leftText?: string; rightText?: string };
     if (!leftText?.trim() || !rightText?.trim()) { res.status(400).json({ error: 'leftText and rightText required' }); return; }
     try {
-      const result = splitBlockAtText(docId, blockIndex, leftText, rightText);
+      const result = splitBlockAtText(docId, blockIndex, leftText, rightText, tables);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1438,7 +1440,7 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
     try {
-      const result = deleteBlock(docId, blockIndex);
+      const result = deleteBlock(docId, blockIndex, tables);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1451,7 +1453,7 @@ export function createScriptStudioRouter(): Router {
     const blockIndex = parseInt(req.params.blockIndex as string);
     if (isNaN(blockIndex)) { res.status(400).json({ error: 'Invalid blockIndex' }); return; }
     try {
-      const result = breakdownBlock(docId, blockIndex);
+      const result = breakdownBlock(docId, blockIndex, tables);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1481,11 +1483,11 @@ export function createScriptStudioRouter(): Router {
   // ── Produce ──
 
   router.post('/docs/:id/produce', (req: Request, res: Response) => {
-    const doc = getDoc(req.params.id as string);
+    const doc = getDoc(req.params.id as string, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
 
     const options = (req.body || {}) as ProduceOptions;
-    setDocStatus(req.params.id as string, 'producing');
+    setDocStatus(req.params.id as string, 'producing', tables);
 
     const queue = getJobQueue();
     const job = queue.enqueue('script-studio-produce', {
@@ -1500,9 +1502,9 @@ export function createScriptStudioRouter(): Router {
   router.post('/docs/:id/blocks/:blockIndex/reproduce', async (req: Request, res: Response) => {
     const docId = req.params.id as string;
     const blockIndex = parseInt(req.params.blockIndex as string, 10);
-    const doc = getDoc(docId);
+    const doc = getDoc(docId, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
-    const orientation = (req.body?.orientation as 'landscape' | 'portrait') || getDocOrientation(docId);
+    const orientation = (req.body?.orientation as 'landscape' | 'portrait') || getDocOrientation(docId, tables);
     const chartOpacity = Math.min(1, Math.max(0, parseFloat(req.body?.chartOpacity) || 0.5));
     const animationDurationSec = req.body?.animationDurationSec != null
       ? Math.max(0.5, parseFloat(req.body.animationDurationSec))
@@ -1530,7 +1532,7 @@ export function createScriptStudioRouter(): Router {
   router.post('/docs/:id/blocks/:blockIndex/render-remotion', async (req: Request, res: Response) => {
     const docId = req.params.id as string;
     const blockIndex = parseInt(req.params.blockIndex as string, 10);
-    const doc = getDoc(docId);
+    const doc = getDoc(docId, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
 
     const {
@@ -1611,7 +1613,7 @@ export function createScriptStudioRouter(): Router {
         });
 
         // Mark block as split visual type
-        updateBlockVisual(docId, blockIndex, { visualType: 'split', clipAssetPath: filename });
+        updateBlockVisual(docId, blockIndex, { visualType: 'split', clipAssetPath: filename }, tables);
 
         res.json({ ok: true, filename, durationSec });
       } else if (compositionId.startsWith('Chart')) {
@@ -1670,7 +1672,7 @@ export function createScriptStudioRouter(): Router {
   });
 
   router.get('/docs/:id/produce/status', (req: Request, res: Response) => {
-    const doc = getDoc(req.params.id as string);
+    const doc = getDoc(req.params.id as string, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
 
     const row = dbGet<Record<string, unknown>>(
@@ -1692,11 +1694,11 @@ export function createScriptStudioRouter(): Router {
   // Generate YouTube description + tags on demand
   router.post('/docs/:id/youtube-metadata', async (req: Request, res: Response) => {
     const docId = req.params.id as string;
-    const doc = getDoc(docId);
+    const doc = getDoc(docId, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
 
     try {
-      const blocks = listBlocks(docId);
+      const blocks = listBlocks(docId, tables);
       const totalDurationSec = blocks.reduce((s, b) => s + (b.audioDurationMs ?? 0) / 1000, 0);
       const { generateYouTubeMetadata } = await import('../services/video-producer.service');
       const result = await generateYouTubeMetadata(doc.title, blocks, totalDurationSec);
@@ -1708,10 +1710,10 @@ export function createScriptStudioRouter(): Router {
 
   router.delete('/docs/:id/produce', (req: Request, res: Response) => {
     const docId = req.params.id as string;
-    const doc = getDoc(docId);
+    const doc = getDoc(docId, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
 
-    deleteDocProduceJob(docId);
+    deleteDocProduceJob(docId, tables);
     res.json({ ok: true });
   });
 
@@ -1729,7 +1731,7 @@ export function createScriptStudioRouter(): Router {
 
   router.post('/docs/:id/export-upscale', async (req: Request, res: Response) => {
     const docId = req.params.id as string;
-    const doc = getDoc(docId);
+    const doc = getDoc(docId, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
 
     const { preset, orientation } = req.body as { preset: string; orientation?: string };
@@ -1872,7 +1874,7 @@ export function createScriptStudioRouter(): Router {
   // ── Delete exported upscale file ──
   router.delete('/docs/:id/export-upscale/:preset', async (req: Request, res: Response) => {
     const docId = req.params.id as string;
-    const doc = getDoc(docId);
+    const doc = getDoc(docId, tables);
     if (!doc) { res.status(404).json({ error: 'Script doc not found' }); return; }
 
     const preset = req.params.preset as string;
@@ -1942,4 +1944,8 @@ export function createScriptStudioRouter(): Router {
   });
 
   return router;
+}
+
+export function createScriptStudioRouter(): Router {
+  return createStudioRouter(SCRIPT_STUDIO_TABLES);
 }
