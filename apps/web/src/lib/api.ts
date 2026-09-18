@@ -1208,288 +1208,297 @@ async function ndjsonFetch(url: string, method: 'POST' | 'PUT', body: unknown): 
   return result;
 }
 
-export const scriptStudioApi = {
-  list: async () => {
-    const res = await api.get('/script-studio/docs');
-    return (res.data as { docs: any[] }).docs;
-  },
-  get: async (id: string) => {
-    const res = await api.get(`/script-studio/docs/${id}`);
-    return (res.data as { doc: any }).doc;
-  },
-  create: async (rawMarkdown: string, title?: string) => {
-    return ndjsonFetch('/api/script-studio/docs', 'POST', { raw_markdown: rawMarkdown, title });
-  },
-  update: async (id: string, rawMarkdown: string, title?: string) => {
-    const result = await ndjsonFetch(`/api/script-studio/docs/${id}`, 'PUT', { raw_markdown: rawMarkdown, title });
-    return result.doc;
-  },
-  delete: async (id: string) => {
-    await api.delete(`/script-studio/docs/${id}`);
-  },
-  updateSubtitleStyle: async (id: string, subtitleStyle: any) => {
-    const res = await api.put(`/script-studio/docs/${id}/subtitle-style`, { subtitleStyle });
-    return res.data as { ok: boolean };
-  },
-  updateProduceOptions: async (id: string, options: Record<string, any>) => {
-    const res = await api.put(`/script-studio/docs/${id}/produce-options`, options);
-    return res.data as { ok: boolean };
-  },
-  deleteProduce: async (id: string) => {
-    const res = await api.delete(`/script-studio/docs/${id}/produce`);
-    return res.data as { ok: boolean };
-  },
-  generateYouTubeMetadata: async (id: string) => {
-    const res = await api.post(`/script-studio/docs/${id}/youtube-metadata`);
-    return res.data as { description: string; tags: string[] };
-  },
-  exportUpscale: async (id: string, preset: '2k' | '3k' | '4k', orientation: string, onProgress?: (percent: number, detail: string) => void, signal?: AbortSignal) => {
-    const res = await fetch(`/api/script-studio/docs/${id}/export-upscale`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preset, orientation }),
-      signal,
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      let msg = `Export failed (${res.status})`;
-      try { const j = JSON.parse(text); if (j.error) msg = j.error; } catch {}
-      throw new Error(msg);
-    }
-    let result: { ok: boolean; filename: string; url: string; sizeKB: number } | null = null;
-    await readNDJSON(res, (parsed) => {
-      if (parsed.error) throw new Error(parsed.error as string);
-      if (parsed.progress && onProgress) onProgress(parsed.percent as number, parsed.detail as string);
-      else if (parsed.ok) result = parsed as any;
-    });
-    if (!result) throw new Error('No result from export');
-    return result as { ok: boolean; filename: string; url: string; sizeKB: number };
-  },
-  deleteExport: async (id: string, preset: '2k' | '3k' | '4k', orientation: string) => {
-    const res = await api.delete(`/script-studio/docs/${id}/export-upscale/${preset}?orientation=${orientation}`);
-    return res.data as { ok: boolean; deleted: string };
-  },
-  getNarration: async (id: string) => {
-    const res = await api.get(`/script-studio/docs/${id}/narration`);
-    return (res.data as { narration: string }).narration;
-  },
-  setStatus: async (id: string, status: string) => {
-    const res = await api.patch(`/script-studio/docs/${id}/status`, { status });
-    return res.data;
-  },
-  getLogs: async (id: string, limit = 200) => {
-    const res = await api.get(`/script-studio/docs/${id}/logs?limit=${limit}`);
-    return (res.data as { logs: any[] }).logs;
-  },
-  getBlocks: async (id: string) => {
-    const res = await api.get(`/script-studio/docs/${id}/blocks`);
-    return (res.data as { blocks: any[] }).blocks;
-  },
-  syncBlocks: async (id: string) => {
-    const res = await api.post(`/script-studio/docs/${id}/sync-blocks`);
-    return res.data as { ok: boolean; blocks: any[] };
-  },
-  updateBlock: async (id: string, blockIndex: number, fields: { narration?: string; openingText?: string | null; overlays?: string[]; overlayStyle?: { color?: string; bgEnabled?: boolean; bgColor?: string; bgOpacity?: number; fontSize?: string; position?: string } | null; pexelsQuery?: string | null; motion?: string; clipAssetPath?: string | null; visualType?: string; aiPrompt?: string | null; chartSpec?: Record<string, unknown> }) => {
-    const res = await api.patch(`/script-studio/docs/${id}/blocks/${blockIndex}`, fields);
-    return res.data;
-  },
-  generateBlockAi: async (id: string, blockIndex: number, aiPrompt: string | null, orientation: 'landscape' | 'portrait' = 'landscape') => {
-    return ndjsonFetch(`/api/script-studio/docs/${id}/blocks/${blockIndex}/generate-ai`, 'POST', { aiPrompt, orientation });
-  },
-  fetchBlockPexels: async (id: string, blockIndex: number, orientation: 'landscape' | 'portrait' = 'landscape') => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/fetch-pexels`, { orientation });
-    return res.data as { ok: boolean; filename: string; pexelsId: number; duration: number };
-  },
-  fetchBlockPixabay: async (id: string, blockIndex: number, orientation: 'landscape' | 'portrait' = 'landscape') => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/fetch-pixabay`, { orientation });
-    return res.data as { ok: boolean; filename: string; duration: number };
-  },
-  getAlternatives: async (id: string, query: string, orientation: 'landscape' | 'portrait' = 'landscape', perPage = 12, service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images' = 'pexels') => {
-    const res = await api.get(`/script-studio/docs/${id}/blocks/alternatives`, {
-      params: { query, orientation, perPage, service },
-    });
-    return res.data as {
-      service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images';
-      candidates: Array<{ pexelsId?: number; pixabayId?: number; mixkitId?: number; dvidsId?: number; imageId?: number; source?: string; thumbnail: string; previewUrl?: string | null; downloadUrl?: string; duration?: number; width: number; height: number; pexelsUrl?: string; pageURL?: string; pageUrl?: string; title?: string }>;
-    };
-  },
-  applyStockImage: async (id: string, blockIndex: number, downloadUrl: string, source: string, width: number, height: number, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in', orientation: string = 'landscape') => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-stock-image`, { downloadUrl, source, width, height, zoomEffect, orientation });
-    return res.data as { ok: boolean; filename: string; duration: number };
-  },
-  downloadStock: async (id: string, service: string, candidate: { id?: number; downloadUrl?: string; duration?: number; width?: number; height?: number }) => {
-    const res = await api.post(`/script-studio/docs/${id}/download-stock`, {
-      service,
-      pexelsId: service === 'pexels' ? candidate.id : undefined,
-      downloadUrl: candidate.downloadUrl,
-      duration: candidate.duration,
-      width: candidate.width,
-      height: candidate.height,
-    });
-    return res.data as { ok: boolean; filename: string; duration: number };
-  },
-  splitBlock: async (id: string, blockIndex: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-block`);
-    return res.data as { ok: boolean; newBlockIndex: number; leftNarration: string; rightNarration: string };
-  },
-  breakdownBlock: async (id: string, blockIndex: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/breakdown`);
-    return res.data as { ok: boolean; count: number; sentences: string[] };
-  },
-  insertBlockBefore: async (id: string, blockIndex: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/insert-before`);
-    return res.data as { ok: boolean; newBlockIndex: number };
-  },
-  mergeBlockWithNext: async (id: string, blockIndex: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/merge-next`);
-    return res.data as { ok: boolean; mergedNarration: string };
-  },
-  splitBlockAtText: async (id: string, blockIndex: number, leftText: string, rightText: string) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-at`, { leftText, rightText });
-    return res.data as { ok: boolean; newBlockIndex: number };
-  },
-  deleteBlock: async (id: string, blockIndex: number) => {
-    const res = await api.delete(`/script-studio/docs/${id}/blocks/${blockIndex}`);
-    return res.data as { ok: boolean };
-  },
-  splitScreen: async (id: string, blockIndex: number, leftClip: string, rightClip: string, opts?: { middleText?: string; middleStyle?: string; accentColor?: string; leftLabel?: string; rightLabel?: string; labelPosition?: string; rightLabelPosition?: string; labelStyle?: string; labelFontSize?: number; orientation?: string }) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/split-screen`, { leftClip, rightClip, ...opts });
-    return res.data as { ok: boolean; filename: string; duration: number };
-  },
-  pasteImage: async (id: string, blockIndex: number, file: File, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in', orientation: string = 'landscape') => {
-    const form = new FormData();
-    form.append('image', file);
-    form.append('zoomEffect', zoomEffect);
-    form.append('orientation', orientation);
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/paste-image`, form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return res.data as { ok: boolean; filename: string; duration: number };
-  },
-  renderRemotion: async (id: string, blockIndex: number, compositionId: string, durationSec: number, orientation: string, props: Record<string, unknown> = {}) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/render-remotion`, { compositionId, durationSec, orientation, props });
-    return res.data as { ok: boolean; filename: string; durationSec: number };
-  },
-  applyPexelsById: async (id: string, blockIndex: number, pexelsId: number, downloadUrl?: string, duration?: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-pexels-id`, { pexelsId, downloadUrl, duration });
-    return res.data as { ok: boolean; filename: string; pexelsId: number; duration: number };
-  },
-  applyPixabayFromUrl: async (id: string, blockIndex: number, downloadUrl: string, duration: number, width: number, height: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-pixabay-url`, { downloadUrl, duration, width, height });
-    return res.data as { ok: boolean; filename: string; duration: number };
-  },
-  applyMixkitFromUrl: async (id: string, blockIndex: number, downloadUrl: string, duration: number, width: number, height: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-mixkit-url`, { downloadUrl, duration, width, height });
-    return res.data as { ok: boolean; filename: string; duration: number };
-  },
-  applyDvidsById: async (id: string, blockIndex: number, dvidsId: number, downloadUrl?: string, duration?: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/apply-dvids-id`, { dvidsId, downloadUrl, duration });
-    return res.data as { ok: boolean; filename: string; dvidsId: number; duration: number };
-  },
-  regenQuery: async (id: string, blockIndex: number) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/regen-query`);
-    return res.data as { query: string };
-  },
-  setClipTrim: async (id: string, blockIndex: number, startSec: number | null, endSec: number | null) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/trim`, { startSec, endSec });
-    return res.data as { ok: boolean };
-  },
-  updateBlockClips: async (id: string, blockIndex: number, clips: Array<{ assetPath: string; startSec: number; endSec: number | null; label?: string }>) => {
-    const res = await api.put(`/script-studio/docs/${id}/blocks/${blockIndex}/clips`, { clips });
-    return res.data as { ok: boolean; clips: typeof clips };
-  },
-  ttsBlock: async (id: string, blockIndex: number, opts?: { voice?: string; rate?: string; force?: boolean; engine?: string }) => {
-    const res = await api.post(`/script-studio/docs/${id}/blocks/${blockIndex}/tts`, opts ?? {});
-    return res.data as { cached: boolean; audioDurationMs: number; wordCount?: number; engine?: string };
-  },
-  ttsAll: async (id: string, engine: string, voice?: string, rate?: string, onProgress?: (data: { done: number; total: number; blockIndex?: number; error?: string }) => void) => {
-    const res = await fetch(`${api.defaults.baseURL}/script-studio/docs/${id}/tts-all`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ engine, voice, rate }),
-    });
-    if (!res.ok) throw new Error(`TTS all failed: ${res.status}`);
-    await readNDJSON(res, (parsed) => {
-      if (onProgress) onProgress(parsed as any);
-    });
-  },
-  reproduceBlock: async (
-    id: string,
-    blockIndex: number,
-    orientation: 'landscape' | 'portrait' = 'landscape',
-    chartOpacity = 0.5,
-    animationDurationSec?: number,
-    onLog?: (msg: string) => void,
-    accentColor?: string,
-  ) => {
-    const res = await fetch(`/api/script-studio/docs/${id}/blocks/${blockIndex}/reproduce`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orientation, chartOpacity, animationDurationSec, accentColor }),
-    });
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error((errBody as any).error ?? `HTTP ${res.status}`);
-    }
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let result: any = null;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const parsed = JSON.parse(line);
+function createStudioApi(basePath: string) {
+  return {
+    list: async () => {
+      const res = await api.get(`${basePath}/docs`);
+      return (res.data as { docs: any[] }).docs;
+    },
+    get: async (id: string) => {
+      const res = await api.get(`${basePath}/docs/${id}`);
+      return (res.data as { doc: any }).doc;
+    },
+    create: async (rawMarkdown: string, title?: string) => {
+      return ndjsonFetch(`/api${basePath}/docs`, 'POST', { raw_markdown: rawMarkdown, title });
+    },
+    update: async (id: string, rawMarkdown: string, title?: string) => {
+      const result = await ndjsonFetch(`/api${basePath}/docs/${id}`, 'PUT', { raw_markdown: rawMarkdown, title });
+      return result.doc;
+    },
+    delete: async (id: string) => {
+      await api.delete(`${basePath}/docs/${id}`);
+    },
+    updateSubtitleStyle: async (id: string, subtitleStyle: any) => {
+      const res = await api.put(`${basePath}/docs/${id}/subtitle-style`, { subtitleStyle });
+      return res.data as { ok: boolean };
+    },
+    updateProduceOptions: async (id: string, options: Record<string, any>) => {
+      const res = await api.put(`${basePath}/docs/${id}/produce-options`, options);
+      return res.data as { ok: boolean };
+    },
+    deleteProduce: async (id: string) => {
+      const res = await api.delete(`${basePath}/docs/${id}/produce`);
+      return res.data as { ok: boolean };
+    },
+    generateYouTubeMetadata: async (id: string) => {
+      const res = await api.post(`${basePath}/docs/${id}/youtube-metadata`);
+      return res.data as { description: string; tags: string[] };
+    },
+    exportUpscale: async (id: string, preset: '2k' | '3k' | '4k', orientation: string, onProgress?: (percent: number, detail: string) => void, signal?: AbortSignal) => {
+      const res = await fetch(`/api${basePath}/docs/${id}/export-upscale`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preset, orientation }),
+        signal,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = `Export failed (${res.status})`;
+        try { const j = JSON.parse(text); if (j.error) msg = j.error; } catch {}
+        throw new Error(msg);
+      }
+      let result: { ok: boolean; filename: string; url: string; sizeKB: number } | null = null;
+      await readNDJSON(res, (parsed) => {
+        if (parsed.error) throw new Error(parsed.error as string);
+        if (parsed.progress && onProgress) onProgress(parsed.percent as number, parsed.detail as string);
+        else if (parsed.ok) result = parsed as any;
+      });
+      if (!result) throw new Error('No result from export');
+      return result as { ok: boolean; filename: string; url: string; sizeKB: number };
+    },
+    deleteExport: async (id: string, preset: '2k' | '3k' | '4k', orientation: string) => {
+      const res = await api.delete(`${basePath}/docs/${id}/export-upscale/${preset}?orientation=${orientation}`);
+      return res.data as { ok: boolean; deleted: string };
+    },
+    getNarration: async (id: string) => {
+      const res = await api.get(`${basePath}/docs/${id}/narration`);
+      return (res.data as { narration: string }).narration;
+    },
+    setStatus: async (id: string, status: string) => {
+      const res = await api.patch(`${basePath}/docs/${id}/status`, { status });
+      return res.data;
+    },
+    getLogs: async (id: string, limit = 200) => {
+      const res = await api.get(`${basePath}/docs/${id}/logs?limit=${limit}`);
+      return (res.data as { logs: any[] }).logs;
+    },
+    getBlocks: async (id: string) => {
+      const res = await api.get(`${basePath}/docs/${id}/blocks`);
+      return (res.data as { blocks: any[] }).blocks;
+    },
+    syncBlocks: async (id: string) => {
+      const res = await api.post(`${basePath}/docs/${id}/sync-blocks`);
+      return res.data as { ok: boolean; blocks: any[] };
+    },
+    updateBlock: async (id: string, blockIndex: number, fields: { narration?: string; openingText?: string | null; overlays?: string[]; overlayStyle?: { color?: string; bgEnabled?: boolean; bgColor?: string; bgOpacity?: number; fontSize?: string; position?: string } | null; pexelsQuery?: string | null; motion?: string; clipAssetPath?: string | null; visualType?: string; aiPrompt?: string | null; chartSpec?: Record<string, unknown> }) => {
+      const res = await api.patch(`${basePath}/docs/${id}/blocks/${blockIndex}`, fields);
+      return res.data;
+    },
+    generateBlockAi: async (id: string, blockIndex: number, aiPrompt: string | null, orientation: 'landscape' | 'portrait' = 'landscape') => {
+      return ndjsonFetch(`/api${basePath}/docs/${id}/blocks/${blockIndex}/generate-ai`, 'POST', { aiPrompt, orientation });
+    },
+    fetchBlockPexels: async (id: string, blockIndex: number, orientation: 'landscape' | 'portrait' = 'landscape') => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/fetch-pexels`, { orientation });
+      return res.data as { ok: boolean; filename: string; pexelsId: number; duration: number };
+    },
+    fetchBlockPixabay: async (id: string, blockIndex: number, orientation: 'landscape' | 'portrait' = 'landscape') => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/fetch-pixabay`, { orientation });
+      return res.data as { ok: boolean; filename: string; duration: number };
+    },
+    fetchBlockDvids: async (id: string, blockIndex: number, orientation: 'landscape' | 'portrait' = 'landscape') => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/fetch-dvids`, { orientation });
+      return res.data as { ok: boolean; filename: string; dvidsId: string; duration: number };
+    },
+    getAlternatives: async (id: string, query: string, orientation: 'landscape' | 'portrait' = 'landscape', perPage = 12, service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images' = 'pexels') => {
+      const res = await api.get(`${basePath}/docs/${id}/blocks/alternatives`, {
+        params: { query, orientation, perPage, service },
+      });
+      return res.data as {
+        service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images';
+        candidates: Array<{ pexelsId?: number; pixabayId?: number; mixkitId?: number; dvidsId?: number; imageId?: number; source?: string; thumbnail: string; previewUrl?: string | null; downloadUrl?: string; duration?: number; width: number; height: number; pexelsUrl?: string; pageURL?: string; pageUrl?: string; title?: string }>;
+      };
+    },
+    applyStockImage: async (id: string, blockIndex: number, downloadUrl: string, source: string, width: number, height: number, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in', orientation: string = 'landscape') => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/apply-stock-image`, { downloadUrl, source, width, height, zoomEffect, orientation });
+      return res.data as { ok: boolean; filename: string; duration: number };
+    },
+    downloadStock: async (id: string, service: string, candidate: { id?: number; downloadUrl?: string; duration?: number; width?: number; height?: number }) => {
+      const res = await api.post(`${basePath}/docs/${id}/download-stock`, {
+        service,
+        pexelsId: service === 'pexels' ? candidate.id : undefined,
+        downloadUrl: candidate.downloadUrl,
+        duration: candidate.duration,
+        width: candidate.width,
+        height: candidate.height,
+      });
+      return res.data as { ok: boolean; filename: string; duration: number };
+    },
+    splitBlock: async (id: string, blockIndex: number) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/split-block`);
+      return res.data as { ok: boolean; newBlockIndex: number; leftNarration: string; rightNarration: string };
+    },
+    breakdownBlock: async (id: string, blockIndex: number) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/breakdown`);
+      return res.data as { ok: boolean; count: number; sentences: string[] };
+    },
+    insertBlockBefore: async (id: string, blockIndex: number) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/insert-before`);
+      return res.data as { ok: boolean; newBlockIndex: number };
+    },
+    mergeBlockWithNext: async (id: string, blockIndex: number) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/merge-next`);
+      return res.data as { ok: boolean; mergedNarration: string };
+    },
+    splitBlockAtText: async (id: string, blockIndex: number, leftText: string, rightText: string) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/split-at`, { leftText, rightText });
+      return res.data as { ok: boolean; newBlockIndex: number };
+    },
+    deleteBlock: async (id: string, blockIndex: number) => {
+      const res = await api.delete(`${basePath}/docs/${id}/blocks/${blockIndex}`);
+      return res.data as { ok: boolean };
+    },
+    splitScreen: async (id: string, blockIndex: number, leftClip: string, rightClip: string, opts?: { middleText?: string; middleStyle?: string; accentColor?: string; leftLabel?: string; rightLabel?: string; labelPosition?: string; rightLabelPosition?: string; labelStyle?: string; labelFontSize?: number; orientation?: string }) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/split-screen`, { leftClip, rightClip, ...opts });
+      return res.data as { ok: boolean; filename: string; duration: number };
+    },
+    pasteImage: async (id: string, blockIndex: number, file: File, zoomEffect: 'zoom-in' | 'zoom-out' = 'zoom-in', orientation: string = 'landscape') => {
+      const form = new FormData();
+      form.append('image', file);
+      form.append('zoomEffect', zoomEffect);
+      form.append('orientation', orientation);
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/paste-image`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data as { ok: boolean; filename: string; duration: number };
+    },
+    renderRemotion: async (id: string, blockIndex: number, compositionId: string, durationSec: number, orientation: string, props: Record<string, unknown> = {}) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/render-remotion`, { compositionId, durationSec, orientation, props });
+      return res.data as { ok: boolean; filename: string; durationSec: number };
+    },
+    applyPexelsById: async (id: string, blockIndex: number, pexelsId: number, downloadUrl?: string, duration?: number) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/apply-pexels-id`, { pexelsId, downloadUrl, duration });
+      return res.data as { ok: boolean; filename: string; pexelsId: number; duration: number };
+    },
+    applyPixabayFromUrl: async (id: string, blockIndex: number, downloadUrl: string, duration: number, width: number, height: number) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/apply-pixabay-url`, { downloadUrl, duration, width, height });
+      return res.data as { ok: boolean; filename: string; duration: number };
+    },
+    applyMixkitFromUrl: async (id: string, blockIndex: number, downloadUrl: string, duration: number, width: number, height: number) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/apply-mixkit-url`, { downloadUrl, duration, width, height });
+      return res.data as { ok: boolean; filename: string; duration: number };
+    },
+    applyDvidsById: async (id: string, blockIndex: number, dvidsId: number, downloadUrl?: string, duration?: number) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/apply-dvids-id`, { dvidsId, downloadUrl, duration });
+      return res.data as { ok: boolean; filename: string; dvidsId: number; duration: number };
+    },
+    regenQuery: async (id: string, blockIndex: number) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/regen-query`);
+      return res.data as { query: string };
+    },
+    setClipTrim: async (id: string, blockIndex: number, startSec: number | null, endSec: number | null) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/trim`, { startSec, endSec });
+      return res.data as { ok: boolean };
+    },
+    updateBlockClips: async (id: string, blockIndex: number, clips: Array<{ assetPath: string; startSec: number; endSec: number | null; label?: string }>) => {
+      const res = await api.put(`${basePath}/docs/${id}/blocks/${blockIndex}/clips`, { clips });
+      return res.data as { ok: boolean; clips: typeof clips };
+    },
+    ttsBlock: async (id: string, blockIndex: number, opts?: { voice?: string; rate?: string; force?: boolean; engine?: string }) => {
+      const res = await api.post(`${basePath}/docs/${id}/blocks/${blockIndex}/tts`, opts ?? {});
+      return res.data as { cached: boolean; audioDurationMs: number; wordCount?: number; engine?: string };
+    },
+    ttsAll: async (id: string, engine: string, voice?: string, rate?: string, onProgress?: (data: { done: number; total: number; blockIndex?: number; error?: string }) => void) => {
+      const res = await fetch(`${api.defaults.baseURL}${basePath}/docs/${id}/tts-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine, voice, rate }),
+      });
+      if (!res.ok) throw new Error(`TTS all failed: ${res.status}`);
+      await readNDJSON(res, (parsed) => {
+        if (onProgress) onProgress(parsed as any);
+      });
+    },
+    reproduceBlock: async (
+      id: string,
+      blockIndex: number,
+      orientation: 'landscape' | 'portrait' = 'landscape',
+      chartOpacity = 0.5,
+      animationDurationSec?: number,
+      onLog?: (msg: string) => void,
+      accentColor?: string,
+    ) => {
+      const res = await fetch(`/api${basePath}/docs/${id}/blocks/${blockIndex}/reproduce`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orientation, chartOpacity, animationDurationSec, accentColor }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error((errBody as any).error ?? `HTTP ${res.status}`);
+      }
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let result: any = null;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const parsed = JSON.parse(line);
+          if (parsed.type === 'log' && onLog) onLog(parsed.message);
+          if (parsed.type === 'result') result = parsed;
+          if (parsed.type === 'error') throw new Error(parsed.error);
+        }
+      }
+      if (buffer.trim()) {
+        const parsed = JSON.parse(buffer);
         if (parsed.type === 'log' && onLog) onLog(parsed.message);
         if (parsed.type === 'result') result = parsed;
         if (parsed.type === 'error') throw new Error(parsed.error);
       }
-    }
-    if (buffer.trim()) {
-      const parsed = JSON.parse(buffer);
-      if (parsed.type === 'log' && onLog) onLog(parsed.message);
-      if (parsed.type === 'result') result = parsed;
-      if (parsed.type === 'error') throw new Error(parsed.error);
-    }
-    return result;
-  },
-  produce: async (id: string, options: Record<string, unknown> = {}) => {
-    const res = await api.post(`/script-studio/docs/${id}/produce`, options);
-    return res.data as { jobId: string; status: string };
-  },
-  getProduceStatus: async (id: string) => {
-    const res = await api.get(`/script-studio/docs/${id}/produce/status`);
-    return res.data as { job: any; docStatus: string };
-  },
-  omnivoiceHealth: async () => {
-    const res = await api.get('/script-studio/omnivoice/health');
-    return res.data as { reachable: boolean; baseUrl: string };
-  },
-  omnivoiceVoices: async () => {
-    const res = await api.get('/script-studio/omnivoice/voices');
-    return res.data as { voices: Array<{ voice_id: string; name: string; type: string; engine?: string }> };
-  },
-  getWatermark: async () => {
-    const res = await api.get('/script-studio/watermark');
-    return res.data as { exists: boolean; size?: number; url?: string };
-  },
-  uploadWatermark: async (file: File) => {
-    const form = new FormData();
-    form.append('file', file);
-    const res = await api.post('/script-studio/watermark', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return res.data as { ok: boolean; url: string };
-  },
-  deleteWatermark: async () => {
-    const res = await api.delete('/script-studio/watermark');
-    return res.data as { ok: boolean };
-  },
-};
+      return result;
+    },
+    produce: async (id: string, options: Record<string, unknown> = {}) => {
+      const res = await api.post(`${basePath}/docs/${id}/produce`, options);
+      return res.data as { jobId: string; status: string };
+    },
+    getProduceStatus: async (id: string) => {
+      const res = await api.get(`${basePath}/docs/${id}/produce/status`);
+      return res.data as { job: any; docStatus: string };
+    },
+    omnivoiceHealth: async () => {
+      const res = await api.get(`${basePath}/omnivoice/health`);
+      return res.data as { reachable: boolean; baseUrl: string };
+    },
+    omnivoiceVoices: async () => {
+      const res = await api.get(`${basePath}/omnivoice/voices`);
+      return res.data as { voices: Array<{ voice_id: string; name: string; type: string; engine?: string }> };
+    },
+    getWatermark: async () => {
+      const res = await api.get(`${basePath}/watermark`);
+      return res.data as { exists: boolean; size?: number; url?: string };
+    },
+    uploadWatermark: async (file: File) => {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await api.post(`${basePath}/watermark`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data as { ok: boolean; url: string };
+    },
+    deleteWatermark: async () => {
+      const res = await api.delete(`${basePath}/watermark`);
+      return res.data as { ok: boolean };
+    },
+  };
+}
+
+export const scriptStudioApi = createStudioApi('/script-studio');
+export const dvidsStudioApi = createStudioApi('/dvids-studio');
 
 // ── Transform Studio ──
 
