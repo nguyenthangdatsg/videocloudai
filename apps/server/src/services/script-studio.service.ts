@@ -64,7 +64,7 @@ export interface ParseWarning {
 
 export interface VoiceGroup {
   id: string;          // e.g. "japan", "usa"
-  engine: string;      // "omnivoice" or "edge-tts"
+  engine: string;      // "kokoro", "omnivoice", or "edge-tts"
   voiceId: string;     // voice persona ID or edge-tts voice name
   emotion?: string;    // default emotion for this group
   rate?: string;       // default rate
@@ -73,7 +73,7 @@ export interface VoiceGroup {
 }
 
 export interface ResolvedVoiceConfig {
-  engine: 'edge-tts' | 'omnivoice';
+  engine: 'edge-tts' | 'omnivoice' | 'kokoro';
   voiceId: string;
   fallbackVoice?: string; // edge-tts voice to use when OmniVoice is unavailable
   emotion?: string;
@@ -117,6 +117,30 @@ export type LogLevel = 'info' | 'warn' | 'error' | 'success';
 export type LogOperation = 'parse' | 'align' | 'copy' | 'produce' | 'status_change';
 export type CheckpointName = 'alignment' | 'clips' | 'timeline';
 export type BlockStatus = 'pending' | 'audio_ready' | 'clip_ready' | 'rendered' | 'error';
+
+export interface StudioTableConfig {
+  docs: string;
+  blocks: string;
+  logs: string;
+  checkpoints: string;
+  defaultVisualType: string;
+}
+
+export const SCRIPT_STUDIO_TABLES: StudioTableConfig = {
+  docs: 'script_docs',
+  blocks: 'script_blocks',
+  logs: 'script_doc_logs',
+  checkpoints: 'production_checkpoints',
+  defaultVisualType: 'pexels',
+};
+
+export const DVIDS_STUDIO_TABLES: StudioTableConfig = {
+  docs: 'dvids_docs',
+  blocks: 'dvids_blocks',
+  logs: 'dvids_doc_logs',
+  checkpoints: 'dvids_checkpoints',
+  defaultVisualType: 'dvids',
+};
 
 /** A single clip within a block's multi-clip timeline. */
 export interface BlockClip {
@@ -401,6 +425,95 @@ export function ensureScriptStudioTables(): void {
       } catch { /* skip malformed */ }
     }
   } catch { /* ignore migration errors */ }
+}
+
+export function ensureDvidsStudioTables(): void {
+  try {
+    dbRun(`CREATE TABLE IF NOT EXISTS dvids_docs (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      raw_markdown TEXT NOT NULL,
+      parsed_json TEXT NOT NULL DEFAULT '{}',
+      source_ref TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      linked_storyboard_id TEXT,
+      warnings_count INTEGER NOT NULL DEFAULT 0,
+      segments_count INTEGER NOT NULL DEFAULT 0,
+      blocks_count INTEGER NOT NULL DEFAULT 0,
+      words_count INTEGER NOT NULL DEFAULT 0,
+      est_duration_seconds INTEGER NOT NULL DEFAULT 0,
+      subtitle_style TEXT,
+      produce_options TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )`);
+    dbRun(`CREATE INDEX IF NOT EXISTS idx_dvids_docs_status ON dvids_docs(status)`);
+    dbRun(`CREATE INDEX IF NOT EXISTS idx_dvids_docs_updated ON dvids_docs(updated_at)`);
+
+    dbRun(`CREATE TABLE IF NOT EXISTS dvids_doc_logs (
+      id TEXT PRIMARY KEY,
+      doc_id TEXT NOT NULL REFERENCES dvids_docs(id) ON DELETE CASCADE,
+      ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      level TEXT NOT NULL DEFAULT 'info',
+      operation TEXT NOT NULL,
+      message TEXT NOT NULL
+    )`);
+    dbRun(`CREATE INDEX IF NOT EXISTS idx_dvids_doc_logs_doc ON dvids_doc_logs(doc_id)`);
+
+    dbRun(`CREATE TABLE IF NOT EXISTS dvids_checkpoints (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      doc_id TEXT NOT NULL REFERENCES dvids_docs(id) ON DELETE CASCADE,
+      checkpoint TEXT NOT NULL,
+      state_json TEXT NOT NULL DEFAULT '{}',
+      edits_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )`);
+    dbRun(`CREATE INDEX IF NOT EXISTS idx_dvids_checkpoints_job ON dvids_checkpoints(job_id)`);
+    dbRun(`CREATE INDEX IF NOT EXISTS idx_dvids_checkpoints_doc ON dvids_checkpoints(doc_id, checkpoint, created_at)`);
+
+    dbRun(`CREATE TABLE IF NOT EXISTS dvids_blocks (
+      id TEXT PRIMARY KEY,
+      doc_id TEXT NOT NULL REFERENCES dvids_docs(id) ON DELETE CASCADE,
+      block_index INTEGER NOT NULL,
+      segment_index INTEGER NOT NULL,
+      segment_name TEXT NOT NULL,
+      scene_number INTEGER NOT NULL DEFAULT 0,
+      narration TEXT NOT NULL DEFAULT '',
+      pexels_query TEXT,
+      chart_spec_json TEXT,
+      overlays_json TEXT NOT NULL DEFAULT '[]',
+      overlay_style_json TEXT,
+      content_hash TEXT,
+      audio_path TEXT,
+      audio_duration_ms INTEGER,
+      audio_engine TEXT,
+      words_json TEXT,
+      visual_type TEXT NOT NULL DEFAULT 'dvids',
+      clip_asset_path TEXT,
+      clips_json TEXT,
+      motion TEXT NOT NULL DEFAULT 'slow-zoom',
+      pace_hint TEXT,
+      rendered_clip_path TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      error_msg TEXT,
+      voice_config TEXT,
+      ai_prompt TEXT,
+      ai_asset_path TEXT,
+      ai_meta_json TEXT,
+      clip_start_sec REAL,
+      clip_end_sec REAL,
+      display_number INTEGER,
+      opening_text TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE(doc_id, block_index)
+    )`);
+    dbRun(`CREATE INDEX IF NOT EXISTS idx_dvids_blocks_doc ON dvids_blocks(doc_id, block_index)`);
+  } catch {
+    // tables already exist
+  }
 }
 
 // ── Checkpoint helpers ──
@@ -701,8 +814,8 @@ export function parseScript(rawMarkdown: string, onLog?: LogCallback): ParsedScr
     // Skip horizontal rules
     if (/^[-*_]{3,}$/.test(trimmed)) continue;
 
-    // Production notes heading
-    if (/^#{1,2}\s+.*production\s+notes/i.test(trimmed)) {
+    // Production notes heading — must be the heading text itself, not just mentioned in a comment
+    if (/^#{1,2}\s+(?:production\s+notes)\s*$/i.test(trimmed)) {
       flushSegment();
       inProductionNotes = true;
       currentNoteSection = null;
@@ -1063,7 +1176,7 @@ export function resolveBlockVoice(
   blockVoiceConfig: string | null | undefined,
   docVoiceConfig: string | null | undefined,
   voiceGroups: VoiceGroup[],
-  appDefaults: { voice: string; rate: string; userVoice?: string; userRate?: string },
+  appDefaults: { voice: string; rate: string; userVoice?: string; userRate?: string; userEngine?: string },
 ): ResolvedVoiceConfig {
   const blockParsed = parseVoiceConfig(blockVoiceConfig);
   const docParsed = parseVoiceConfig(docVoiceConfig);
@@ -1072,12 +1185,13 @@ export function resolveBlockVoice(
   const groupId = blockParsed.group || docParsed.group;
   const group = groupId ? voiceGroups.find(g => g.id === groupId) : undefined;
 
-  // Resolution order: block > group > user-selected (produce settings) > doc > system defaults
-  const engine = (blockParsed.engine || group?.engine || docParsed.engine || 'edge-tts') as 'edge-tts' | 'omnivoice';
-  const voiceId = blockParsed.voice || group?.voiceId || appDefaults.userVoice || docParsed.voice || appDefaults.voice;
+  // Resolution order: user-selected (produce settings) > block > group > doc > system defaults
+  // User's explicit engine/voice choice from Produce Settings always wins
+  const engine = (appDefaults.userEngine || blockParsed.engine || group?.engine || docParsed.engine || 'edge-tts') as 'edge-tts' | 'omnivoice' | 'kokoro';
+  const voiceId = appDefaults.userVoice || blockParsed.voice || group?.voiceId || docParsed.voice || appDefaults.voice;
   const fallbackVoice = group?.fallbackVoice || blockParsed['fallback-voice'] || blockParsed['fallback'];
   const emotion = blockParsed.emotion || group?.emotion || docParsed.emotion;
-  const rate = blockParsed.rate || group?.rate || appDefaults.userRate || docParsed.rate || appDefaults.rate;
+  const rate = appDefaults.userRate || blockParsed.rate || group?.rate || docParsed.rate || appDefaults.rate;
   const pitch = blockParsed.pitch || group?.pitch || docParsed.pitch;
 
   const pauseBefore = blockParsed['pause-before'] ? parseInt(blockParsed['pause-before']) : undefined;
@@ -1296,17 +1410,17 @@ export function createDoc(rawMarkdown: string, titleOverride?: string, sourceRef
     [id, finalTitle, rawMarkdown, JSON.stringify(parsed), sourceRef ?? null, parsed.warnings.length, parsed.segments.length, blocksCount, wc, estDuration, JSON.stringify({
       enabled: true,
       fontFamily: 'Arial',
-      fontSize: 24,
+      fontSize: 48,
       fontColor: '#FFFFFF',
       fontWeight: 'bold',
       strokeColor: '#000000',
       strokeWidth: 2,
       bgColor: '#000000',
-      bgOpacity: 0.5,
+      bgOpacity: 0.4,
       position: 'bottom',
       alignment: 'center',
       marginX: 40,
-      marginBottom: 60,
+      marginBottom: 110,
       uppercase: false,
       animation: 'none',
     }), now, now],
@@ -1346,8 +1460,22 @@ export function getDoc(id: string) {
 }
 
 export function listDocs() {
-  const rows = dbAll<ScriptDocRow>(`SELECT * FROM script_docs ORDER BY updated_at DESC`);
-  return rows.map(rowToDoc);
+  const rows = dbAll<Pick<ScriptDocRow, 'id' | 'title' | 'status' | 'linked_storyboard_id' | 'warnings_count' | 'segments_count' | 'blocks_count' | 'words_count' | 'est_duration_seconds' | 'created_at' | 'updated_at'>>(
+    `SELECT id, title, status, linked_storyboard_id, warnings_count, segments_count, blocks_count, words_count, est_duration_seconds, created_at, updated_at FROM script_docs ORDER BY updated_at DESC`
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    linkedStoryboardId: row.linked_storyboard_id,
+    warningsCount: row.warnings_count,
+    segmentsCount: row.segments_count,
+    blocksCount: row.blocks_count,
+    wordsCount: row.words_count,
+    estDurationSeconds: row.est_duration_seconds,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
 }
 
 function rowToDoc(row: ScriptDocRow) {
@@ -1704,19 +1832,19 @@ export function splitBlock(docId: string, blockIndex: number): { ok: boolean; ne
       [i + 1, now, docId, i]);
   }
 
-  // Update original block: truncate narration, set display_number, reset audio & clip
-  const oldFiles = collectBlockClipFiles(row);
+  // Update original block: truncate narration, set display_number, reset audio but KEEP existing clips
+  // Clips are visual content that still applies — only audio needs regen since narration changed
   dbRun(
     `UPDATE script_blocks SET narration = ?, display_number = ?, content_hash = NULL,
      audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
-     clip_asset_path = NULL, clips_json = NULL, rendered_clip_path = NULL,
-     status = 'pending', error_msg = NULL, updated_at = ?
+     rendered_clip_path = NULL,
+     status = CASE WHEN clip_asset_path IS NOT NULL OR clips_json IS NOT NULL THEN 'clip_ready' ELSE 'pending' END,
+     error_msg = NULL, updated_at = ?
      WHERE doc_id = ? AND block_index = ?`,
     [leftNarration, displayNum, now, docId, blockIndex],
   );
-  for (const f of oldFiles) deleteClipFile(docId, f);
 
-  // Insert new block with same display_number
+  // Insert new block with same display_number — no clips (new block needs its own media)
   const motion = MOTION_CYCLE[newIdx % MOTION_CYCLE.length];
   dbRun(
     `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number,
@@ -1759,17 +1887,16 @@ export function splitBlockAtText(docId: string, blockIndex: number, leftText: st
       [i + 1, now, docId, i]);
   }
 
-  // Update original block with left text, reset audio
-  const oldFiles = collectBlockClipFiles(row);
+  // Update original block with left text, reset audio but KEEP existing clips
   dbRun(
     `UPDATE script_blocks SET narration = ?, display_number = ?, content_hash = NULL,
      audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
-     clip_asset_path = NULL, clips_json = NULL, rendered_clip_path = NULL,
-     status = 'pending', error_msg = NULL, updated_at = ?
+     rendered_clip_path = NULL,
+     status = CASE WHEN clip_asset_path IS NOT NULL OR clips_json IS NOT NULL THEN 'clip_ready' ELSE 'pending' END,
+     error_msg = NULL, updated_at = ?
      WHERE doc_id = ? AND block_index = ?`,
     [leftText.trim(), displayNum, now, docId, blockIndex],
   );
-  for (const f of oldFiles) deleteClipFile(docId, f);
 
   // Insert new block with right text
   const motion = MOTION_CYCLE[newIdx % MOTION_CYCLE.length];
@@ -2192,17 +2319,16 @@ export function breakdownBlock(docId: string, blockIndex: number): { ok: boolean
       [i + slotsNeeded, now, docId, i]);
   }
 
-  // Update original block with the first sentence
-  const oldFiles = collectBlockClipFiles(row);
+  // Update original block with the first sentence — reset audio but KEEP existing clips
   dbRun(
     `UPDATE script_blocks SET narration = ?, display_number = ?, content_hash = NULL,
      audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
-     clip_asset_path = NULL, clips_json = NULL, rendered_clip_path = NULL,
-     status = 'pending', error_msg = NULL, updated_at = ?
+     rendered_clip_path = NULL,
+     status = CASE WHEN clip_asset_path IS NOT NULL OR clips_json IS NOT NULL THEN 'clip_ready' ELSE 'pending' END,
+     error_msg = NULL, updated_at = ?
      WHERE doc_id = ? AND block_index = ?`,
     [sentences[0], displayNum, now, docId, blockIndex],
   );
-  for (const f of oldFiles) deleteClipFile(docId, f);
 
   // Insert new blocks for remaining sentences
   for (let i = 1; i < sentences.length; i++) {
