@@ -56,6 +56,7 @@ export function Sidebar() {
     { path: '/drama', icon: Film, label: t('nav.dramaStudio') },
     { path: '/image-drama', icon: FileImage, label: t('nav.imageDramaStudio') },
     { path: '/script-studio', icon: BookOpen, label: t('nav.scriptStudio') },
+    { path: '/dvids-studio', icon: Shield, label: t('nav.dvidsStudio') },
     { path: '/transform', icon: Wand2, label: t('nav.transformStudio') },
     { path: '/dvids', icon: Shield, label: t('nav.dvids') },
     { path: '/channels', icon: Share2, label: t('nav.channels') },

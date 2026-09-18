@@ -19,6 +19,8 @@ import { MediaLibrary } from './pages/MediaLibrary';
 import { FrameVideoLibrary } from './pages/FrameVideoLibrary';
 import { ScriptStudio } from './pages/script-studio/ScriptStudio';
 import ScriptDoc from './pages/script-studio/ScriptDoc';
+import { DvidsStudio } from './pages/dvids-studio/DvidsStudio';
+import DvidsDoc from './pages/dvids-studio/DvidsDoc';
 import { TransformStudio } from './pages/transform';
 import { DvidsBrowser } from './pages/DvidsBrowser';
 import { useSSE } from './hooks/useSSE';
@@ -54,6 +56,8 @@ function AppShell() {
             <Route path="/image-drama/:id" element={<DramaProjectPage />} />
             <Route path="/script-studio" element={<ScriptStudio />} />
             <Route path="/script-studio/:id" element={<ScriptDoc />} />
+            <Route path="/dvids-studio" element={<DvidsStudio />} />
+            <Route path="/dvids-studio/:id" element={<DvidsDoc />} />
             <Route path="/transform" element={<TransformStudio />} />
             <Route path="/dvids" element={<DvidsBrowser />} />
             <Route path="/settings" element={<Settings />} />
