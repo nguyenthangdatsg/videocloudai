@@ -518,29 +518,29 @@ export function ensureDvidsStudioTables(): void {
 
 // ── Checkpoint helpers ──
 
-export function saveCheckpoint(jobId: string, docId: string, checkpoint: CheckpointName, state: Record<string, unknown>): void {
+export function saveCheckpoint(jobId: string, docId: string, checkpoint: CheckpointName, state: Record<string, unknown>, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   const existing = dbGet<{ id: string }>(
-    `SELECT id FROM production_checkpoints WHERE job_id = ?`,
+    `SELECT id FROM ${tables.checkpoints} WHERE job_id = ?`,
     [jobId],
   );
   const now = new Date().toISOString();
   if (existing) {
     dbRun(
-      `UPDATE production_checkpoints SET checkpoint = ?, state_json = ?, updated_at = ? WHERE job_id = ?`,
+      `UPDATE ${tables.checkpoints} SET checkpoint = ?, state_json = ?, updated_at = ? WHERE job_id = ?`,
       [checkpoint, JSON.stringify(state), now, jobId],
     );
   } else {
     dbRun(
-      `INSERT INTO production_checkpoints (id, job_id, doc_id, checkpoint, state_json, edits_json, created_at, updated_at)
+      `INSERT INTO ${tables.checkpoints} (id, job_id, doc_id, checkpoint, state_json, edits_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, '{}', ?, ?)`,
       [randomUUID(), jobId, docId, checkpoint, JSON.stringify(state), now, now],
     );
   }
 }
 
-export function loadCheckpoint(jobId: string): ProductionCheckpoint | null {
+export function loadCheckpoint(jobId: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): ProductionCheckpoint | null {
   const row = dbGet<ProductionCheckpointRow>(
-    `SELECT * FROM production_checkpoints WHERE job_id = ?`,
+    `SELECT * FROM ${tables.checkpoints} WHERE job_id = ?`,
     [jobId],
   );
   if (!row) return null;
@@ -556,14 +556,14 @@ export function loadCheckpoint(jobId: string): ProductionCheckpoint | null {
   };
 }
 
-export function loadLatestCheckpoint(docId: string, atOrBefore: CheckpointName): ProductionCheckpoint | null {
+export function loadLatestCheckpoint(docId: string, atOrBefore: CheckpointName, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): ProductionCheckpoint | null {
   const order: CheckpointName[] = ['alignment', 'clips', 'timeline'];
   const maxIdx = order.indexOf(atOrBefore);
   if (maxIdx < 0) return null;
   const allowed = order.slice(0, maxIdx + 1);
   const placeholders = allowed.map(() => '?').join(', ');
   const row = dbGet<ProductionCheckpointRow>(
-    `SELECT * FROM production_checkpoints WHERE doc_id = ? AND checkpoint IN (${placeholders})
+    `SELECT * FROM ${tables.checkpoints} WHERE doc_id = ? AND checkpoint IN (${placeholders})
      ORDER BY created_at DESC LIMIT 1`,
     [docId, ...allowed],
   );
@@ -580,9 +580,9 @@ export function loadLatestCheckpoint(docId: string, atOrBefore: CheckpointName):
   };
 }
 
-export function applyCheckpointEdits(jobId: string, edits: Record<string, unknown>): void {
+export function applyCheckpointEdits(jobId: string, edits: Record<string, unknown>, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   dbRun(
-    `UPDATE production_checkpoints SET edits_json = ?, updated_at = ? WHERE job_id = ?`,
+    `UPDATE ${tables.checkpoints} SET edits_json = ?, updated_at = ? WHERE job_id = ?`,
     [JSON.stringify(edits), new Date().toISOString(), jobId],
   );
 }
@@ -593,14 +593,14 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
-export function addLog(docId: string, level: LogLevel, operation: LogOperation, message: string): void {
+export function addLog(docId: string, level: LogLevel, operation: LogOperation, message: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   dbRun(
-    `INSERT INTO script_doc_logs (id, doc_id, ts, level, operation, message) VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${tables.logs} (id, doc_id, ts, level, operation, message) VALUES (?, ?, ?, ?, ?, ?)`,
     [randomUUID(), docId, new Date().toISOString(), level, operation, message],
   );
 }
 
-function updateDocMeta(id: string, parsed: ParsedScript): void {
+function updateDocMeta(id: string, parsed: ParsedScript, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   const blocksCount = parsed.segments.reduce((s, seg) => s + seg.blocks.length, 0);
   const allNarration = parsed.segments
     .flatMap((seg) => seg.blocks.map((b) => b.narration))
@@ -610,7 +610,7 @@ function updateDocMeta(id: string, parsed: ParsedScript): void {
   const estDuration = Math.round((wc / 140) * 60);
 
   dbRun(
-    `UPDATE script_docs SET parsed_json = ?, warnings_count = ?, segments_count = ?,
+    `UPDATE ${tables.docs} SET parsed_json = ?, warnings_count = ?, segments_count = ?,
      blocks_count = ?, words_count = ?, est_duration_seconds = ?, updated_at = ? WHERE id = ?`,
     [
       JSON.stringify(parsed),
@@ -1394,7 +1394,7 @@ export function alignToSegments(
 
 // ── CRUD ──
 
-export function createDoc(rawMarkdown: string, titleOverride?: string, sourceRef?: string, onLog?: LogCallback): { id: string; title: string; parsed: ParsedScript } {
+export function createDoc(rawMarkdown: string, titleOverride?: string, sourceRef?: string, onLog?: LogCallback, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): { id: string; title: string; parsed: ParsedScript } {
   const id = randomUUID();
   const parsed = parseScript(rawMarkdown, onLog);
   const finalTitle = titleOverride || parsed.title;
@@ -1405,7 +1405,7 @@ export function createDoc(rawMarkdown: string, titleOverride?: string, sourceRef
   const estDuration = Math.round((wc / 140) * 60);
 
   dbRun(
-    `INSERT INTO script_docs (id, title, raw_markdown, parsed_json, source_ref, status, warnings_count, segments_count, blocks_count, words_count, est_duration_seconds, subtitle_style, created_at, updated_at)
+    `INSERT INTO ${tables.docs} (id, title, raw_markdown, parsed_json, source_ref, status, warnings_count, segments_count, blocks_count, words_count, est_duration_seconds, subtitle_style, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, 'parsed', ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, finalTitle, rawMarkdown, JSON.stringify(parsed), sourceRef ?? null, parsed.warnings.length, parsed.segments.length, blocksCount, wc, estDuration, JSON.stringify({
       enabled: true,
@@ -1426,42 +1426,42 @@ export function createDoc(rawMarkdown: string, titleOverride?: string, sourceRef
     }), now, now],
   );
 
-  addLog(id, 'success', 'parse', `Document created and parsed: ${parsed.segments.length} segments, ${blocksCount} blocks, ${wc} words`);
-  addLog(id, 'info', 'status_change', 'Status: draft → parsed');
+  addLog(id, 'success', 'parse', `Document created and parsed: ${parsed.segments.length} segments, ${blocksCount} blocks, ${wc} words`, tables);
+  addLog(id, 'info', 'status_change', 'Status: draft → parsed', tables);
 
-  syncBlocksFromParsed(id, parsed);
+  syncBlocksFromParsed(id, parsed, tables);
 
   return { id, title: finalTitle, parsed };
 }
 
-export function updateDoc(id: string, rawMarkdown: string, titleOverride?: string, onLog?: LogCallback): { id: string; title: string; parsed: ParsedScript } {
+export function updateDoc(id: string, rawMarkdown: string, titleOverride?: string, onLog?: LogCallback, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): { id: string; title: string; parsed: ParsedScript } {
   const parsed = parseScript(rawMarkdown, onLog);
   const finalTitle = titleOverride || parsed.title;
   const now = new Date().toISOString();
 
   dbRun(
-    `UPDATE script_docs SET title = ?, raw_markdown = ?, status = 'parsed', updated_at = ? WHERE id = ?`,
+    `UPDATE ${tables.docs} SET title = ?, raw_markdown = ?, status = 'parsed', updated_at = ? WHERE id = ?`,
     [finalTitle, rawMarkdown, now, id],
   );
-  updateDocMeta(id, parsed);
+  updateDocMeta(id, parsed, tables);
 
-  addLog(id, 'success', 'parse', `Document re-parsed: ${parsed.segments.length} segments, ${parsed.warnings.length} warnings`);
-  addLog(id, 'info', 'status_change', 'Status → parsed (re-parse)');
+  addLog(id, 'success', 'parse', `Document re-parsed: ${parsed.segments.length} segments, ${parsed.warnings.length} warnings`, tables);
+  addLog(id, 'info', 'status_change', 'Status → parsed (re-parse)', tables);
 
-  syncBlocksFromParsed(id, parsed);
+  syncBlocksFromParsed(id, parsed, tables);
 
   return { id, title: finalTitle, parsed };
 }
 
-export function getDoc(id: string) {
-  const row = dbGet<ScriptDocRow>(`SELECT * FROM script_docs WHERE id = ?`, [id]);
+export function getDoc(id: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES) {
+  const row = dbGet<ScriptDocRow>(`SELECT * FROM ${tables.docs} WHERE id = ?`, [id]);
   if (!row) return null;
   return rowToDoc(row);
 }
 
-export function listDocs() {
+export function listDocs(tables: StudioTableConfig = SCRIPT_STUDIO_TABLES) {
   const rows = dbAll<Pick<ScriptDocRow, 'id' | 'title' | 'status' | 'linked_storyboard_id' | 'warnings_count' | 'segments_count' | 'blocks_count' | 'words_count' | 'est_duration_seconds' | 'created_at' | 'updated_at'>>(
-    `SELECT id, title, status, linked_storyboard_id, warnings_count, segments_count, blocks_count, words_count, est_duration_seconds, created_at, updated_at FROM script_docs ORDER BY updated_at DESC`
+    `SELECT id, title, status, linked_storyboard_id, warnings_count, segments_count, blocks_count, words_count, est_duration_seconds, created_at, updated_at FROM ${tables.docs} ORDER BY updated_at DESC`
   );
   return rows.map((row) => ({
     id: row.id,
@@ -1499,34 +1499,34 @@ function rowToDoc(row: ScriptDocRow) {
   };
 }
 
-export function deleteDoc(id: string) {
-  dbRun(`DELETE FROM script_docs WHERE id = ?`, [id]);
+export function deleteDoc(id: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES) {
+  dbRun(`DELETE FROM ${tables.docs} WHERE id = ?`, [id]);
 }
 
-export function setDocStatus(id: string, status: DocStatus) {
-  const doc = getDoc(id);
+export function setDocStatus(id: string, status: DocStatus, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES) {
+  const doc = getDoc(id, tables);
   if (!doc) return;
   const oldStatus = doc.status;
-  dbRun(`UPDATE script_docs SET status = ?, updated_at = ? WHERE id = ?`, [status, new Date().toISOString(), id]);
-  addLog(id, 'info', 'status_change', `Status: ${oldStatus} → ${status}`);
+  dbRun(`UPDATE ${tables.docs} SET status = ?, updated_at = ? WHERE id = ?`, [status, new Date().toISOString(), id]);
+  addLog(id, 'info', 'status_change', `Status: ${oldStatus} → ${status}`, tables);
 }
 
-export function linkStoryboard(id: string, storyboardId: string) {
-  dbRun(`UPDATE script_docs SET linked_storyboard_id = ?, updated_at = ? WHERE id = ?`, [storyboardId, new Date().toISOString(), id]);
+export function linkStoryboard(id: string, storyboardId: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES) {
+  dbRun(`UPDATE ${tables.docs} SET linked_storyboard_id = ?, updated_at = ? WHERE id = ?`, [storyboardId, new Date().toISOString(), id]);
 }
 
-export function markNarrationCopied(id: string) {
-  const doc = getDoc(id);
+export function markNarrationCopied(id: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES) {
+  const doc = getDoc(id, tables);
   if (!doc) return;
   if (doc.status === 'parsed') {
-    setDocStatus(id, 'narration_copied');
+    setDocStatus(id, 'narration_copied', tables);
   }
-  addLog(id, 'info', 'copy', 'Clean narration copied to clipboard');
+  addLog(id, 'info', 'copy', 'Clean narration copied to clipboard', tables);
 }
 
-export function getLogs(docId: string, limit = 200) {
+export function getLogs(docId: string, limit = 200, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES) {
   return dbAll<LogRow>(
-    `SELECT * FROM script_doc_logs WHERE doc_id = ? ORDER BY ts DESC LIMIT ?`,
+    `SELECT * FROM ${tables.logs} WHERE doc_id = ? ORDER BY ts DESC LIMIT ?`,
     [docId, limit],
   );
 }
@@ -1604,13 +1604,13 @@ function rowToBlock(row: ScriptBlockRow): ScriptBlockRecord {
   };
 }
 
-export function listBlocks(docId: string): ScriptBlockRecord[] {
-  const rows = dbAll<ScriptBlockRow>(`SELECT * FROM script_blocks WHERE doc_id = ? ORDER BY block_index`, [docId]);
+export function listBlocks(docId: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): ScriptBlockRecord[] {
+  const rows = dbAll<ScriptBlockRow>(`SELECT * FROM ${tables.blocks} WHERE doc_id = ? ORDER BY block_index`, [docId]);
   return rows.map(rowToBlock);
 }
 
-export function getBlock(docId: string, blockIndex: number): ScriptBlockRecord | null {
-  const row = dbGet<ScriptBlockRow>(`SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
+export function getBlock(docId: string, blockIndex: number, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): ScriptBlockRecord | null {
+  const row = dbGet<ScriptBlockRow>(`SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
   return row ? rowToBlock(row) : null;
 }
 
@@ -1627,8 +1627,8 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
   clipStartSec?: number | null;
   clipEndSec?: number | null;
   chartSpec?: ChartSpec;
-}): void {
-  const oldBlock = getBlock(docId, blockIndex);
+}, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
+  const oldBlock = getBlock(docId, blockIndex, tables);
   if (oldBlock && oldBlock.renderedClipPath && fs.existsSync(oldBlock.renderedClipPath)) {
     const isClipChanging = 'clipAssetPath' in fields && fields.clipAssetPath !== oldBlock.clipAssetPath;
     const isPromptChanging = 'aiPrompt' in fields && fields.aiPrompt !== oldBlock.aiPrompt;
@@ -1693,11 +1693,11 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
   updates.push('updated_at = ?');
   vals.push(now, docId, blockIndex);
 
-  dbRun(`UPDATE script_blocks SET ${updates.join(', ')} WHERE doc_id = ? AND block_index = ?`, vals);
+  dbRun(`UPDATE ${tables.blocks} SET ${updates.join(', ')} WHERE doc_id = ? AND block_index = ?`, vals);
 }
 
-export function updateBlockClips(docId: string, blockIndex: number, clips: BlockClip[]): void {
-  const old = dbGet<ScriptBlockRow>(`SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
+export function updateBlockClips(docId: string, blockIndex: number, clips: BlockClip[], tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
+  const old = dbGet<ScriptBlockRow>(`SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
   const now = new Date().toISOString();
   // Also sync legacy single-clip fields (clip_start_sec, clip_end_sec) for the producer
   const firstClip = clips.length > 0 ? clips[0] : null;
@@ -1706,7 +1706,7 @@ export function updateBlockClips(docId: string, blockIndex: number, clips: Block
   const clipEndSec = firstClip?.endSec ?? null;
   const status = clips.length > 0 ? 'clip_ready' : 'pending';
   dbRun(
-    `UPDATE script_blocks SET clips_json = ?, clip_asset_path = ?, clip_start_sec = ?, clip_end_sec = ?, rendered_clip_path = NULL, status = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    `UPDATE ${tables.blocks} SET clips_json = ?, clip_asset_path = ?, clip_start_sec = ?, clip_end_sec = ?, rendered_clip_path = NULL, status = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [JSON.stringify(clips), clipAssetPath, clipStartSec, clipEndSec, status, now, docId, blockIndex],
   );
   // Delete old files no longer referenced by new clips
@@ -1734,20 +1734,20 @@ export function updateBlockAudio(docId: string, blockIndex: number, fields: {
   audioDurationMs: number;
   wordsJson: string;
   audioEngine?: string;
-}): void {
-  const old = dbGet<ScriptBlockRow>(`SELECT rendered_clip_path FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
+}, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
+  const old = dbGet<ScriptBlockRow>(`SELECT rendered_clip_path FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
   dbRun(
-    `UPDATE script_blocks SET content_hash = ?, audio_path = ?, audio_duration_ms = ?, audio_engine = ?, words_json = ?,
+    `UPDATE ${tables.blocks} SET content_hash = ?, audio_path = ?, audio_duration_ms = ?, audio_engine = ?, words_json = ?,
      rendered_clip_path = NULL, status = 'audio_ready', updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [fields.contentHash, fields.audioPath, fields.audioDurationMs, fields.audioEngine ?? null, fields.wordsJson, new Date().toISOString(), docId, blockIndex],
   );
   if (old?.rendered_clip_path) deleteClipFile(docId, old.rendered_clip_path);
 }
 
-export function updateBlockClip(docId: string, blockIndex: number, clipAssetPath: string, visualType: string): void {
-  const old = dbGet<ScriptBlockRow>(`SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
+export function updateBlockClip(docId: string, blockIndex: number, clipAssetPath: string, visualType: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
+  const old = dbGet<ScriptBlockRow>(`SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
   dbRun(
-    `UPDATE script_blocks SET clip_asset_path = ?, visual_type = ?, rendered_clip_path = NULL,
+    `UPDATE ${tables.blocks} SET clip_asset_path = ?, visual_type = ?, rendered_clip_path = NULL,
      clip_start_sec = NULL, clip_end_sec = NULL, clips_json = NULL,
      status = 'clip_ready', updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [clipAssetPath, visualType, new Date().toISOString(), docId, blockIndex],
@@ -1761,16 +1761,16 @@ export function updateBlockClip(docId: string, blockIndex: number, clipAssetPath
   }
 }
 
-export function updateBlockRendered(docId: string, blockIndex: number, renderedClipPath: string): void {
+export function updateBlockRendered(docId: string, blockIndex: number, renderedClipPath: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   dbRun(
-    `UPDATE script_blocks SET rendered_clip_path = ?, status = 'rendered', error_msg = NULL, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    `UPDATE ${tables.blocks} SET rendered_clip_path = ?, status = 'rendered', error_msg = NULL, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [renderedClipPath, new Date().toISOString(), docId, blockIndex],
   );
 }
 
-export function updateBlockError(docId: string, blockIndex: number, errorMsg: string): void {
+export function updateBlockError(docId: string, blockIndex: number, errorMsg: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   dbRun(
-    `UPDATE script_blocks SET status = 'error', error_msg = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    `UPDATE ${tables.blocks} SET status = 'error', error_msg = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
     [errorMsg, new Date().toISOString(), docId, blockIndex],
   );
 }
@@ -1780,9 +1780,9 @@ export function updateBlockError(docId: string, blockIndex: number, errorMsg: st
  * Uses display_number so block 3 becomes 3a + 3b without renumbering subsequent blocks visually.
  * Internally, block_index still shifts to maintain ordering.
  */
-export function splitBlock(docId: string, blockIndex: number): { ok: boolean; newBlockIndex: number; leftNarration: string; rightNarration: string } {
+export function splitBlock(docId: string, blockIndex: number, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): { ok: boolean; newBlockIndex: number; leftNarration: string; rightNarration: string } {
   const row = dbGet<ScriptBlockRow>(
-    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    `SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`,
     [docId, blockIndex],
   );
   if (!row) throw new Error(`Block ${blockIndex} not found`);
@@ -1820,22 +1820,22 @@ export function splitBlock(docId: string, blockIndex: number): { ok: boolean; ne
 
   // Backfill display_number on all blocks that don't have one yet (before shifting)
   dbRun(
-    `UPDATE script_blocks SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`,
+    `UPDATE ${tables.blocks} SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`,
     [docId],
   );
 
   // Shift all subsequent blocks up by 1 (reverse order to avoid unique constraint)
-  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM ${tables.blocks} WHERE doc_id = ?`, [docId]);
   const maxIdx = maxRow?.mx ?? blockIndex;
   for (let i = maxIdx; i >= newIdx; i--) {
-    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    dbRun(`UPDATE ${tables.blocks} SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
       [i + 1, now, docId, i]);
   }
 
   // Update original block: truncate narration, set display_number, reset audio but KEEP existing clips
   // Clips are visual content that still applies — only audio needs regen since narration changed
   dbRun(
-    `UPDATE script_blocks SET narration = ?, display_number = ?, content_hash = NULL,
+    `UPDATE ${tables.blocks} SET narration = ?, display_number = ?, content_hash = NULL,
      audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
      rendered_clip_path = NULL,
      status = CASE WHEN clip_asset_path IS NOT NULL OR clips_json IS NOT NULL THEN 'clip_ready' ELSE 'pending' END,
@@ -1847,7 +1847,7 @@ export function splitBlock(docId: string, blockIndex: number): { ok: boolean; ne
   // Insert new block with same display_number — no clips (new block needs its own media)
   const motion = MOTION_CYCLE[newIdx % MOTION_CYCLE.length];
   dbRun(
-    `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number,
+    `INSERT INTO ${tables.blocks} (id, doc_id, block_index, segment_index, segment_name, scene_number,
      narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt,
      visual_type, motion, display_number, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)`,
@@ -1856,7 +1856,7 @@ export function splitBlock(docId: string, blockIndex: number): { ok: boolean; ne
      displayNum, now, now],
   );
 
-  addLog(docId, 'info', 'parse', `Block ${displayNum} split → ${displayNum}a (${countWords(leftNarration)}w) + ${displayNum}b (${countWords(rightNarration)}w)`);
+  addLog(docId, 'info', 'parse', `Block ${displayNum} split → ${displayNum}a (${countWords(leftNarration)}w) + ${displayNum}b (${countWords(rightNarration)}w)`, tables);
 
   return { ok: true, newBlockIndex: newIdx, leftNarration, rightNarration };
 }
@@ -1865,9 +1865,9 @@ export function splitBlock(docId: string, blockIndex: number): { ok: boolean; ne
  * Split a block at a specific text position (cursor position from the UI).
  * leftText and rightText are provided by the frontend.
  */
-export function splitBlockAtText(docId: string, blockIndex: number, leftText: string, rightText: string): { ok: boolean; newBlockIndex: number } {
+export function splitBlockAtText(docId: string, blockIndex: number, leftText: string, rightText: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): { ok: boolean; newBlockIndex: number } {
   const row = dbGet<ScriptBlockRow>(
-    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    `SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`,
     [docId, blockIndex],
   );
   if (!row) throw new Error(`Block ${blockIndex} not found`);
@@ -1877,19 +1877,19 @@ export function splitBlockAtText(docId: string, blockIndex: number, leftText: st
   const newIdx = blockIndex + 1;
   const displayNum = row.display_number ?? (blockIndex + 1);
 
-  dbRun(`UPDATE script_blocks SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`, [docId]);
+  dbRun(`UPDATE ${tables.blocks} SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`, [docId]);
 
   // Shift subsequent blocks
-  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM ${tables.blocks} WHERE doc_id = ?`, [docId]);
   const maxIdx = maxRow?.mx ?? blockIndex;
   for (let i = maxIdx; i >= newIdx; i--) {
-    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    dbRun(`UPDATE ${tables.blocks} SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
       [i + 1, now, docId, i]);
   }
 
   // Update original block with left text, reset audio but KEEP existing clips
   dbRun(
-    `UPDATE script_blocks SET narration = ?, display_number = ?, content_hash = NULL,
+    `UPDATE ${tables.blocks} SET narration = ?, display_number = ?, content_hash = NULL,
      audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
      rendered_clip_path = NULL,
      status = CASE WHEN clip_asset_path IS NOT NULL OR clips_json IS NOT NULL THEN 'clip_ready' ELSE 'pending' END,
@@ -1901,26 +1901,26 @@ export function splitBlockAtText(docId: string, blockIndex: number, leftText: st
   // Insert new block with right text
   const motion = MOTION_CYCLE[newIdx % MOTION_CYCLE.length];
   dbRun(
-    `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number,
+    `INSERT INTO ${tables.blocks} (id, doc_id, block_index, segment_index, segment_name, scene_number,
      narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt,
      visual_type, motion, display_number, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)`,
     [randomUUID(), docId, newIdx, row.segment_index, row.segment_name, row.scene_number,
      rightText.trim(), row.pexels_query, row.pace_hint, row.voice_config,
-     row.visual_type === 'chart' ? 'pexels' : row.visual_type, motion,
+     row.visual_type === 'chart' ? tables.defaultVisualType : row.visual_type, motion,
      displayNum, now, now],
   );
 
   // Update markdown
-  updateMarkdownForSplitAt(docId, row.narration?.trim() || '', leftText.trim(), rightText.trim());
+  updateMarkdownForSplitAt(docId, row.narration?.trim() || '', leftText.trim(), rightText.trim(), tables);
 
-  addLog(docId, 'info', 'parse', `Block ${blockIndex + 1} split at cursor → "${leftText.trim().substring(0, 30)}..." + "${rightText.trim().substring(0, 30)}..."`);
+  addLog(docId, 'info', 'parse', `Block ${blockIndex + 1} split at cursor → "${leftText.trim().substring(0, 30)}..." + "${rightText.trim().substring(0, 30)}..."`, tables);
   return { ok: true, newBlockIndex: newIdx };
 }
 
 /** Update raw_markdown when splitting a scene at cursor position. */
-function updateMarkdownForSplitAt(docId: string, originalNarration: string, leftText: string, rightText: string): void {
-  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+function updateMarkdownForSplitAt(docId: string, originalNarration: string, leftText: string, rightText: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM ${tables.docs} WHERE id = ?`, [docId]);
   if (!docRow || !originalNarration) return;
 
   const lines = docRow.raw_markdown.split('\n');
@@ -1962,21 +1962,21 @@ function updateMarkdownForSplitAt(docId: string, originalNarration: string, left
   const newMarkdown = lines.join('\n');
   const parsed = parseScript(newMarkdown);
   const now = new Date().toISOString();
-  dbRun(`UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+  dbRun(`UPDATE ${tables.docs} SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
     [newMarkdown, JSON.stringify(parsed), now, docId]);
-  updateDocMeta(docId, parsed);
+  updateDocMeta(docId, parsed, tables);
 }
 
 /**
  * Merge a block with the next block — combines narration, keeps first block's clip.
  */
-export function mergeBlockWithNext(docId: string, blockIndex: number): { ok: boolean; mergedNarration: string } {
+export function mergeBlockWithNext(docId: string, blockIndex: number, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): { ok: boolean; mergedNarration: string } {
   const row = dbGet<ScriptBlockRow>(
-    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    `SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`,
     [docId, blockIndex],
   );
   const nextRow = dbGet<ScriptBlockRow>(
-    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    `SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`,
     [docId, blockIndex + 1],
   );
   if (!row) throw new Error(`Block ${blockIndex} not found`);
@@ -1991,7 +1991,7 @@ export function mergeBlockWithNext(docId: string, blockIndex: number): { ok: boo
 
   // Update first block with merged narration, reset audio (narration changed)
   dbRun(
-    `UPDATE script_blocks SET narration = ?, content_hash = NULL,
+    `UPDATE ${tables.blocks} SET narration = ?, content_hash = NULL,
      audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
      rendered_clip_path = NULL, status = 'pending', error_msg = NULL, updated_at = ?
      WHERE doc_id = ? AND block_index = ?`,
@@ -1999,20 +1999,20 @@ export function mergeBlockWithNext(docId: string, blockIndex: number): { ok: boo
   );
 
   // Delete the next block
-  dbRun(`DELETE FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex + 1]);
+  dbRun(`DELETE FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex + 1]);
 
   // Shift subsequent blocks down by 1
-  const maxRow2 = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxRow2 = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM ${tables.blocks} WHERE doc_id = ?`, [docId]);
   const maxIdx = maxRow2?.mx ?? blockIndex + 1;
   for (let i = blockIndex + 2; i <= maxIdx + 1; i++) {
-    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    dbRun(`UPDATE ${tables.blocks} SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
       [i - 1, now, docId, i]);
   }
 
   // Update markdown
-  mergeSceneInMarkdown(docId, row.narration?.trim() || '', nextRow.narration?.trim() || '', mergedNarration);
+  mergeSceneInMarkdown(docId, row.narration?.trim() || '', nextRow.narration?.trim() || '', mergedNarration, tables);
 
-  addLog(docId, 'info', 'parse', `Merged block ${blockIndex + 1} with ${blockIndex + 2} → "${mergedNarration.substring(0, 60)}..."`);
+  addLog(docId, 'info', 'parse', `Merged block ${blockIndex + 1} with ${blockIndex + 2} → "${mergedNarration.substring(0, 60)}..."`, tables);
   return { ok: true, mergedNarration };
 }
 
@@ -2022,8 +2022,8 @@ function normalizeNarr(raw: string): string {
 }
 
 /** Update raw_markdown to merge two consecutive scenes into one. */
-function mergeSceneInMarkdown(docId: string, firstNarration: string, secondNarration: string, mergedNarration: string): void {
-  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+function mergeSceneInMarkdown(docId: string, firstNarration: string, secondNarration: string, mergedNarration: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM ${tables.docs} WHERE id = ?`, [docId]);
   if (!docRow) return;
 
   const lines = docRow.raw_markdown.split('\n');
@@ -2076,17 +2076,17 @@ function mergeSceneInMarkdown(docId: string, firstNarration: string, secondNarra
   const newMarkdown = lines.join('\n');
   const parsed = parseScript(newMarkdown);
   const now = new Date().toISOString();
-  dbRun(`UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+  dbRun(`UPDATE ${tables.docs} SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
     [newMarkdown, JSON.stringify(parsed), now, docId]);
-  updateDocMeta(docId, parsed);
+  updateDocMeta(docId, parsed, tables);
 }
 
 /**
  * Delete a block entirely. Shifts subsequent blocks down.
  */
-export function deleteBlock(docId: string, blockIndex: number): { ok: boolean } {
+export function deleteBlock(docId: string, blockIndex: number, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): { ok: boolean } {
   const row = dbGet<ScriptBlockRow>(
-    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    `SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`,
     [docId, blockIndex],
   );
   if (!row) throw new Error(`Block ${blockIndex} not found`);
@@ -2098,26 +2098,26 @@ export function deleteBlock(docId: string, blockIndex: number): { ok: boolean } 
   for (const f of files) deleteClipFile(docId, f);
 
   // Delete the block
-  dbRun(`DELETE FROM script_blocks WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
+  dbRun(`DELETE FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`, [docId, blockIndex]);
 
   // Shift subsequent blocks down
-  const maxRow2 = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxRow2 = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM ${tables.blocks} WHERE doc_id = ?`, [docId]);
   const maxIdx = maxRow2?.mx ?? blockIndex;
   for (let i = blockIndex + 1; i <= maxIdx + 1; i++) {
-    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    dbRun(`UPDATE ${tables.blocks} SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
       [i - 1, now, docId, i]);
   }
 
   // Update markdown — remove the scene
-  deleteSceneInMarkdown(docId, row.narration?.trim() || '');
+  deleteSceneInMarkdown(docId, row.narration?.trim() || '', tables);
 
-  addLog(docId, 'info', 'parse', `Deleted block ${blockIndex + 1}: "${(row.narration || '').substring(0, 50)}"`);
+  addLog(docId, 'info', 'parse', `Deleted block ${blockIndex + 1}: "${(row.narration || '').substring(0, 50)}"`, tables);
   return { ok: true };
 }
 
 /** Remove a scene from raw_markdown by matching narration. */
-function deleteSceneInMarkdown(docId: string, narration: string): void {
-  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+function deleteSceneInMarkdown(docId: string, narration: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM ${tables.docs} WHERE id = ?`, [docId]);
   if (!docRow || !narration) return;
 
   const lines = docRow.raw_markdown.split('\n');
@@ -2152,9 +2152,9 @@ function deleteSceneInMarkdown(docId: string, narration: string): void {
   const newMarkdown = lines.join('\n');
   const parsed = parseScript(newMarkdown);
   const now = new Date().toISOString();
-  dbRun(`UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+  dbRun(`UPDATE ${tables.docs} SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
     [newMarkdown, JSON.stringify(parsed), now, docId]);
-  updateDocMeta(docId, parsed);
+  updateDocMeta(docId, parsed, tables);
 }
 
 /**
@@ -2162,46 +2162,46 @@ function deleteSceneInMarkdown(docId: string, narration: string): void {
  * Shifts all blocks at and after blockIndex up by 1, inserts a blank block,
  * and updates raw_markdown with a new ### SCENE entry.
  */
-export function insertBlockBefore(docId: string, blockIndex: number): { ok: boolean; newBlockIndex: number } {
+export function insertBlockBefore(docId: string, blockIndex: number, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): { ok: boolean; newBlockIndex: number } {
   const now = new Date().toISOString();
 
   // Find the block at the target index to get segment info
   const targetRow = dbGet<ScriptBlockRow>(
-    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    `SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`,
     [docId, blockIndex],
   );
   if (!targetRow) throw new Error(`Block ${blockIndex} not found`);
 
   // Backfill display_number on all blocks that don't have one yet
   dbRun(
-    `UPDATE script_blocks SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`,
+    `UPDATE ${tables.blocks} SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`,
     [docId],
   );
 
   // Shift all blocks at and after blockIndex up by 1
-  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM ${tables.blocks} WHERE doc_id = ?`, [docId]);
   const maxIdx = maxRow?.mx ?? blockIndex;
   for (let i = maxIdx; i >= blockIndex; i--) {
-    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    dbRun(`UPDATE ${tables.blocks} SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
       [i + 1, now, docId, i]);
   }
 
   // Insert new empty block
   const motion = MOTION_CYCLE[blockIndex % MOTION_CYCLE.length];
   dbRun(
-    `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number,
+    `INSERT INTO ${tables.blocks} (id, doc_id, block_index, segment_index, segment_name, scene_number,
      narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt,
      visual_type, motion, display_number, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, '', NULL, NULL, '[]', NULL, ?, NULL, 'pexels', ?, ?, 'pending', ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, '', NULL, NULL, '[]', NULL, ?, NULL, ?, ?, ?, 'pending', ?, ?)`,
     [randomUUID(), docId, blockIndex, targetRow.segment_index, targetRow.segment_name,
-     targetRow.scene_number, targetRow.voice_config, motion,
+     targetRow.scene_number, targetRow.voice_config, tables.defaultVisualType, motion,
      targetRow.display_number, now, now],
   );
 
   // Update raw_markdown — insert a new ### SCENE before the target scene
-  insertSceneInMarkdown(docId, targetRow);
+  insertSceneInMarkdown(docId, targetRow, tables);
 
-  addLog(docId, 'info', 'parse', `New block inserted before block ${targetRow.display_number ?? blockIndex + 1}`);
+  addLog(docId, 'info', 'parse', `New block inserted before block ${targetRow.display_number ?? blockIndex + 1}`, tables);
 
   return { ok: true, newBlockIndex: blockIndex };
 }
@@ -2209,8 +2209,8 @@ export function insertBlockBefore(docId: string, blockIndex: number): { ok: bool
 /**
  * Insert a new empty ### SCENE in the markdown before the scene matching the given block.
  */
-function insertSceneInMarkdown(docId: string, targetBlock: ScriptBlockRow): void {
-  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+function insertSceneInMarkdown(docId: string, targetBlock: ScriptBlockRow, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM ${tables.docs} WHERE id = ?`, [docId]);
   if (!docRow) return;
 
   const lines = docRow.raw_markdown.split('\n');
@@ -2274,19 +2274,19 @@ function insertSceneInMarkdown(docId: string, targetBlock: ScriptBlockRow): void
   const now = new Date().toISOString();
 
   dbRun(
-    `UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+    `UPDATE ${tables.docs} SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
     [newMarkdown, JSON.stringify(parsed), now, docId],
   );
-  updateDocMeta(docId, parsed);
+  updateDocMeta(docId, parsed, tables);
 }
 
 /**
  * Break down a block into multiple blocks — one per sentence.
  * Similar to splitBlock but produces N blocks instead of 2.
  */
-export function breakdownBlock(docId: string, blockIndex: number): { ok: boolean; count: number; sentences: string[] } {
+export function breakdownBlock(docId: string, blockIndex: number, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): { ok: boolean; count: number; sentences: string[] } {
   const row = dbGet<ScriptBlockRow>(
-    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+    `SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`,
     [docId, blockIndex],
   );
   if (!row) throw new Error(`Block ${blockIndex} not found`);
@@ -2306,22 +2306,22 @@ export function breakdownBlock(docId: string, blockIndex: number): { ok: boolean
 
   // Backfill display_number on all blocks that don't have one yet
   dbRun(
-    `UPDATE script_blocks SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`,
+    `UPDATE ${tables.blocks} SET display_number = block_index + 1 WHERE doc_id = ? AND display_number IS NULL`,
     [docId],
   );
 
   // Shift all subsequent blocks up by (sentences.length - 1) to make room
   const slotsNeeded = sentences.length - 1;
-  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM script_blocks WHERE doc_id = ?`, [docId]);
+  const maxRow = dbGet<{ mx: number }>(`SELECT MAX(block_index) as mx FROM ${tables.blocks} WHERE doc_id = ?`, [docId]);
   const maxIdx = maxRow?.mx ?? blockIndex;
   for (let i = maxIdx; i > blockIndex; i--) {
-    dbRun(`UPDATE script_blocks SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
+    dbRun(`UPDATE ${tables.blocks} SET block_index = ?, updated_at = ? WHERE doc_id = ? AND block_index = ?`,
       [i + slotsNeeded, now, docId, i]);
   }
 
   // Update original block with the first sentence — reset audio but KEEP existing clips
   dbRun(
-    `UPDATE script_blocks SET narration = ?, display_number = ?, content_hash = NULL,
+    `UPDATE ${tables.blocks} SET narration = ?, display_number = ?, content_hash = NULL,
      audio_path = NULL, audio_duration_ms = NULL, words_json = NULL, audio_engine = NULL,
      rendered_clip_path = NULL,
      status = CASE WHEN clip_asset_path IS NOT NULL OR clips_json IS NOT NULL THEN 'clip_ready' ELSE 'pending' END,
@@ -2335,22 +2335,22 @@ export function breakdownBlock(docId: string, blockIndex: number): { ok: boolean
     const newIdx = blockIndex + i;
     const motion = MOTION_CYCLE[newIdx % MOTION_CYCLE.length];
     dbRun(
-      `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number,
+      `INSERT INTO ${tables.blocks} (id, doc_id, block_index, segment_index, segment_name, scene_number,
        narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt,
        visual_type, motion, display_number, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)`,
       [randomUUID(), docId, newIdx, row.segment_index, row.segment_name, row.scene_number,
        sentences[i], row.pexels_query, row.pace_hint, row.voice_config,
-       row.visual_type === 'chart' ? 'pexels' : row.visual_type, motion,
+       row.visual_type === 'chart' ? tables.defaultVisualType : row.visual_type, motion,
        displayNum, now, now],
     );
   }
 
   // ── Update raw_markdown so re-parses preserve the breakdown ──
-  updateMarkdownForBreakdown(docId, narration, sentences);
+  updateMarkdownForBreakdown(docId, narration, sentences, tables);
 
   const wordCounts = sentences.map(s => `${countWords(s)}w`).join(', ');
-  addLog(docId, 'info', 'parse', `Block ${displayNum} broken down into ${sentences.length} blocks (${wordCounts})`);
+  addLog(docId, 'info', 'parse', `Block ${displayNum} broken down into ${sentences.length} blocks (${wordCounts})`, tables);
 
   return { ok: true, count: sentences.length, sentences };
 }
@@ -2360,8 +2360,8 @@ export function breakdownBlock(docId: string, blockIndex: number): { ok: boolean
  * with multiple scenes (one per sentence) so that future re-parses preserve them.
  * Finds the scene by matching the original narration text (robust against index shifts).
  */
-function updateMarkdownForBreakdown(docId: string, originalNarration: string, sentences: string[]): void {
-  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM script_docs WHERE id = ?`, [docId]);
+function updateMarkdownForBreakdown(docId: string, originalNarration: string, sentences: string[], tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
+  const docRow = dbGet<{ raw_markdown: string }>(`SELECT raw_markdown FROM ${tables.docs} WHERE id = ?`, [docId]);
   if (!docRow || !originalNarration.trim()) return;
 
   const lines = docRow.raw_markdown.split('\n');
@@ -2442,10 +2442,10 @@ function updateMarkdownForBreakdown(docId: string, originalNarration: string, se
   const now = new Date().toISOString();
 
   dbRun(
-    `UPDATE script_docs SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
+    `UPDATE ${tables.docs} SET raw_markdown = ?, parsed_json = ?, updated_at = ? WHERE id = ?`,
     [newMarkdown, JSON.stringify(parsed), now, docId],
   );
-  updateDocMeta(docId, parsed);
+  updateDocMeta(docId, parsed, tables);
 }
 
 export function updateBlockAi(
@@ -2454,9 +2454,10 @@ export function updateBlockAi(
   aiPrompt: string,
   aiAssetPath: string | null,
   aiMeta: Record<string, unknown> | null,
+  tables: StudioTableConfig = SCRIPT_STUDIO_TABLES,
 ): void {
   dbRun(
-    `UPDATE script_blocks SET ai_prompt = ?, ai_asset_path = ?, ai_meta_json = ?,
+    `UPDATE ${tables.blocks} SET ai_prompt = ?, ai_asset_path = ?, ai_meta_json = ?,
      clip_asset_path = COALESCE(?, clip_asset_path),
      visual_type = 'ai', rendered_clip_path = NULL,
      status = CASE WHEN ? IS NOT NULL THEN 'clip_ready' ELSE status END,
@@ -2491,7 +2492,7 @@ export function buildFlowPrompt(
 const MOTION_CYCLE = ['slow-zoom', 'ken-burns-in', 'ken-burns-out', 'pan-left', 'pan-right'];
 
 /** Upsert script_blocks after parsing. Preserves audio state when narration is unchanged. */
-export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void {
+export function syncBlocksFromParsed(docId: string, parsed: ParsedScript, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   const now = new Date().toISOString();
   let flatIdx = 0;
 
@@ -2502,7 +2503,7 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
       const blockIndex = flatIdx++;
       const narrationHash = createHash('sha256').update(block.narration || '').digest('hex').slice(0, 16);
       const existing = dbGet<ScriptBlockRow>(
-        `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index = ?`,
+        `SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index = ?`,
         [docId, blockIndex],
       );
 
@@ -2513,20 +2514,20 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
       const hasFlow = !!block.flowPrompt && !block.chartSpec;
       const aiPrompt = hasFlow ? block.flowPrompt! : null;
       const chartSpecJson = block.chartSpec ? JSON.stringify(block.chartSpec) : null;
-      const parsedVisualType = block.chartSpec ? 'chart' : hasFlow ? 'ai' : block.pexelsQuery ? 'pexels' : 'inherit';
+      const parsedVisualType = block.chartSpec ? 'chart' : hasFlow ? 'ai' : block.pexelsQuery ? tables.defaultVisualType : 'inherit';
       // Inherit visual_type from existing block, but fix inconsistencies:
-      // - 'chart' without chart_spec is invalid → reset to 'pexels'
-      // - 'ai' without ai_prompt is invalid → reset to 'pexels'
+      // - 'chart' without chart_spec is invalid → reset to defaultVisualType
+      // - 'ai' without ai_prompt is invalid → reset to defaultVisualType
       let visualType: string;
       if (parsedVisualType !== 'inherit') {
         visualType = parsedVisualType;
       } else if (existing) {
         const inheritedType = existing.visual_type;
-        if (inheritedType === 'chart' && !chartSpecJson) visualType = 'pexels';
-        else if (inheritedType === 'ai' && !aiPrompt) visualType = 'pexels';
+        if (inheritedType === 'chart' && !chartSpecJson) visualType = tables.defaultVisualType;
+        else if (inheritedType === 'ai' && !aiPrompt) visualType = tables.defaultVisualType;
         else visualType = inheritedType;
       } else {
-        visualType = 'pexels';
+        visualType = tables.defaultVisualType;
       }
 
       const motion = MOTION_CYCLE[blockIndex % MOTION_CYCLE.length];
@@ -2536,7 +2537,7 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
 
       if (!existing) {
         dbRun(
-          `INSERT INTO script_blocks (id, doc_id, block_index, segment_index, segment_name, scene_number, narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt, visual_type, motion, opening_text, status, created_at, updated_at)
+          `INSERT INTO ${tables.blocks} (id, doc_id, block_index, segment_index, segment_name, scene_number, narration, pexels_query, chart_spec_json, overlays_json, pace_hint, voice_config, ai_prompt, visual_type, motion, opening_text, status, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
           [randomUUID(), docId, blockIndex, si + 1, seg.name, sceneNum, block.narration || '', block.pexelsQuery ?? null, chartSpecJson, overlaysJson, paceHint, voiceConfig, aiPrompt, visualType, motion, openingText, now, now],
         );
@@ -2550,8 +2551,8 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
         const hasUserClip = !!existing.clip_asset_path;
         // Preserve user-set visual type when they have a clip, but fix inconsistencies
         let targetVisualType = hasUserClip ? existing.visual_type : visualType;
-        if (targetVisualType === 'chart' && !chartSpecJson) targetVisualType = 'pexels';
-        if (targetVisualType === 'ai' && !aiPrompt) targetVisualType = 'pexels';
+        if (targetVisualType === 'chart' && !chartSpecJson) targetVisualType = tables.defaultVisualType;
+        if (targetVisualType === 'ai' && !aiPrompt) targetVisualType = tables.defaultVisualType;
 
         const visualChanged = !hasUserClip && (
           (existing.pexels_query ?? null) !== (block.pexelsQuery ?? null)
@@ -2565,7 +2566,7 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
         if (narrationTextChanged && hasAudio) {
           // Narration changed and audio exists — reset audio + render, keep clip asset path
           dbRun(
-            `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, narration = ?, pexels_query = ?,
+            `UPDATE ${tables.blocks} SET segment_index = ?, segment_name = ?, scene_number = ?, narration = ?, pexels_query = ?,
              chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?, opening_text = ?, content_hash = NULL,
              audio_path = NULL, audio_duration_ms = NULL, words_json = NULL,
              rendered_clip_path = NULL, status = 'pending', error_msg = NULL, updated_at = ?
@@ -2576,7 +2577,7 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
           // Narration text changed (no audio to reset) or visual changed — update narration + visual, reset clip + render
           const oldFiles = collectBlockClipFiles(existing);
           dbRun(
-            `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, narration = ?, pexels_query = ?,
+            `UPDATE ${tables.blocks} SET segment_index = ?, segment_name = ?, scene_number = ?, narration = ?, pexels_query = ?,
              chart_spec_json = ?, overlays_json = ?, pace_hint = ?, voice_config = ?, ai_prompt = ?, visual_type = ?, opening_text = ?, content_hash = NULL,
              clip_asset_path = NULL, ai_asset_path = NULL, rendered_clip_path = NULL,
              status = CASE WHEN status IN ('clip_ready','rendered') THEN 'audio_ready' ELSE status END,
@@ -2588,7 +2589,7 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
         } else {
           // Just update metadata — keep clips intact, but always fix visual_type/chart_spec inconsistencies
           dbRun(
-            `UPDATE script_blocks SET segment_index = ?, segment_name = ?, scene_number = ?, pexels_query = ?,
+            `UPDATE ${tables.blocks} SET segment_index = ?, segment_name = ?, scene_number = ?, pexels_query = ?,
              overlays_json = ?, pace_hint = ?, voice_config = ?, opening_text = ?,
              visual_type = ?, chart_spec_json = ?, updated_at = ?
              WHERE doc_id = ? AND block_index = ?`,
@@ -2603,30 +2604,30 @@ export function syncBlocksFromParsed(docId: string, parsed: ParsedScript): void 
   // Delete blocks beyond new total count — clean up their clip files
   const newCount = flatIdx;
   const removedBlocks = dbAll<ScriptBlockRow>(
-    `SELECT * FROM script_blocks WHERE doc_id = ? AND block_index >= ?`, [docId, newCount],
+    `SELECT * FROM ${tables.blocks} WHERE doc_id = ? AND block_index >= ?`, [docId, newCount],
   );
-  dbRun(`DELETE FROM script_blocks WHERE doc_id = ? AND block_index >= ?`, [docId, newCount]);
+  dbRun(`DELETE FROM ${tables.blocks} WHERE doc_id = ? AND block_index >= ?`, [docId, newCount]);
   for (const rb of removedBlocks) {
     const oldFiles = collectBlockClipFiles(rb);
     for (const f of oldFiles) deleteClipFile(docId, f);
   }
 }
 
-export function updateDocSubtitleStyle(id: string, style: any): void {
+export function updateDocSubtitleStyle(id: string, style: any, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   dbRun(
-    `UPDATE script_docs SET subtitle_style = ?, updated_at = ? WHERE id = ?`,
+    `UPDATE ${tables.docs} SET subtitle_style = ?, updated_at = ? WHERE id = ?`,
     [JSON.stringify(style), new Date().toISOString(), id]
   );
 }
 
-export function updateDocProduceOptions(id: string, options: any): void {
+export function updateDocProduceOptions(id: string, options: any, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   dbRun(
-    `UPDATE script_docs SET produce_options = ?, updated_at = ? WHERE id = ?`,
+    `UPDATE ${tables.docs} SET produce_options = ?, updated_at = ? WHERE id = ?`,
     [JSON.stringify(options), new Date().toISOString(), id]
   );
 }
 
-export function deleteDocProduceJob(docId: string): void {
+export function deleteDocProduceJob(docId: string, tables: StudioTableConfig = SCRIPT_STUDIO_TABLES): void {
   const row = dbGet<{ id: string; payload: string; result: string | null }>(
     `SELECT * FROM jobs WHERE type = 'script-studio-produce'
      AND json_extract(payload, '$.docId') = ?
@@ -2643,7 +2644,7 @@ export function deleteDocProduceJob(docId: string): void {
           const videoPath = path.join(outDir, resObj.resultFilename);
           if (fs.existsSync(videoPath)) {
             fs.unlinkSync(videoPath);
-            addLog(docId, 'info', 'produce', `Deleted produced video file: ${resObj.resultFilename}`);
+            addLog(docId, 'info', 'produce', `Deleted produced video file: ${resObj.resultFilename}`, tables);
           }
         }
       } catch (err) {
@@ -2655,7 +2656,7 @@ export function deleteDocProduceJob(docId: string): void {
   }
 
   // Reset status to parsed
-  setDocStatus(docId, 'parsed');
+  setDocStatus(docId, 'parsed', tables);
 }
 
 export function getJobStatus(jobId: string): string | null {
