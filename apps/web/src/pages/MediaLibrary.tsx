@@ -20,13 +20,14 @@ import {
   ChevronDown,
 } from 'lucide-react';
 
-type MediaType = '' | 'sticker' | 'icon' | 'animation' | 'sfx';
+type MediaType = '' | 'sticker' | 'icon' | 'animation' | 'sfx' | 'screen-effect';
 
 const TYPE_BADGE_COLORS: Record<string, string> = {
   sticker: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
   icon: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
   animation: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
   sfx: 'bg-green-500/20 text-green-400 border-green-500/30',
+  'screen-effect': 'bg-amber-500/20 text-amber-400 border-amber-500/30',
 };
 
 function formatFileSize(bytes: number): string {
@@ -210,6 +211,7 @@ export function MediaLibrary() {
     { value: 'icon', labelKey: 'mediaLibrary.icons' },
     { value: 'animation', labelKey: 'mediaLibrary.animations' },
     { value: 'sfx', labelKey: 'mediaLibrary.sfx' },
+    { value: 'screen-effect', labelKey: 'mediaLibrary.screenEffects' },
   ];
 
   const selectedItem = items.find((i) => i.id === selectedId);
@@ -374,6 +376,7 @@ export function MediaLibrary() {
                           <option value="icon">Icon</option>
                           <option value="animation">Animation</option>
                           <option value="sfx">SFX</option>
+                          <option value="screen-effect">Screen Effect</option>
                         </select>
                         <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-c-dim pointer-events-none" />
                       </div>
@@ -493,6 +496,15 @@ export function MediaLibrary() {
                             <span className="text-xs text-c-dim">{t('mediaLibrary.duration', { duration: item.duration.toFixed(1) })}</span>
                           )}
                         </button>
+                      ) : item.type === 'screen-effect' ? (
+                        <video
+                          src={item.url}
+                          className="w-full h-full object-cover"
+                          muted
+                          loop
+                          autoPlay
+                          playsInline
+                        />
                       ) : (
                         <img
                           src={item.url}
@@ -590,6 +602,16 @@ export function MediaLibrary() {
                     <Play className="w-6 h-6 text-c-dim" />
                   )}
                 </button>
+              ) : selectedItem.type === 'screen-effect' ? (
+                <video
+                  src={selectedItem.url}
+                  className="w-full h-full object-cover"
+                  muted
+                  loop
+                  autoPlay
+                  playsInline
+                  controls
+                />
               ) : (
                 <img src={selectedItem.url} alt={selectedItem.name} className="w-full h-full object-contain" />
               )}

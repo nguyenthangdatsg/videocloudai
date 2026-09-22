@@ -1045,7 +1045,7 @@ export interface ImageLibraryItem {
 export interface MediaItem {
   id: string;
   name: string;
-  type: 'sticker' | 'icon' | 'animation' | 'sfx';
+  type: 'sticker' | 'icon' | 'animation' | 'sfx' | 'screen-effect';
   tags: string[];
   category: string;
   filename: string;
@@ -1290,7 +1290,7 @@ function createStudioApi(basePath: string) {
       const res = await api.post(`${basePath}/docs/${id}/sync-blocks`);
       return res.data as { ok: boolean; blocks: any[] };
     },
-    updateBlock: async (id: string, blockIndex: number, fields: { narration?: string; openingText?: string | null; overlays?: string[]; overlayStyle?: { color?: string; bgEnabled?: boolean; bgColor?: string; bgOpacity?: number; fontSize?: string; position?: string } | null; pexelsQuery?: string | null; motion?: string; clipAssetPath?: string | null; visualType?: string; aiPrompt?: string | null; chartSpec?: Record<string, unknown> }) => {
+    updateBlock: async (id: string, blockIndex: number, fields: { narration?: string; openingText?: string | null; overlays?: string[]; overlayStyle?: { color?: string; bgEnabled?: boolean; bgColor?: string; bgOpacity?: number; fontSize?: string; position?: string } | null; ctaOverlay?: { buttons: ('subscribe' | 'like' | 'comment')[]; position?: 'bottom' | 'bottom-right' | 'bottom-left' | 'top' | 'top-right' | 'top-left' } | null; effectOverlay?: { type: 'money-rain' | 'confetti'; density?: number; opacity?: number } | null; screenEffectId?: string | null; sfxId?: string | null; pexelsQuery?: string | null; motion?: string; clipAssetPath?: string | null; visualType?: string; aiPrompt?: string | null; chartSpec?: Record<string, unknown> }) => {
       const res = await api.patch(`${basePath}/docs/${id}/blocks/${blockIndex}`, fields);
       return res.data;
     },

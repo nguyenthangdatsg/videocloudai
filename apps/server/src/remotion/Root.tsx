@@ -9,10 +9,11 @@ import { ChartLine } from './compositions/ChartLine';
 import { ChartBars } from './compositions/ChartBars';
 import { ChartVs } from './compositions/ChartVs';
 import { SplitScreen } from './compositions/SplitScreen';
+import { ParticleEffect } from './compositions/ParticleEffect';
 import type {
   IntroConfig, OutroConfig, SceneClipConfig, ComparisonSceneConfig,
   ChartBigNumberConfig, ChartLineConfig, ChartBarsConfig, ChartVsConfig,
-  SplitScreenConfig,
+  SplitScreenConfig, ParticleEffectConfig,
 } from './types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,6 +34,8 @@ const ChartBarsComp = ChartBars as React.ComponentType<any>;
 const ChartVsComp = ChartVs as React.ComponentType<any>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const SplitScreenComp = SplitScreen as React.ComponentType<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ParticleEffectComp = ParticleEffect as React.ComponentType<any>;
 
 function RemotionRoot() {
   return (
@@ -196,6 +199,19 @@ function RemotionRoot() {
           accentColor: '#7c6af5',
           bgColor: '#0d0e12',
         } satisfies SplitScreenConfig}
+      />
+      <Composition
+        id="ParticleEffect"
+        component={ParticleEffectComp}
+        durationInFrames={144}
+        fps={24}
+        width={1920}
+        height={1080}
+        defaultProps={{
+          durationInFrames: 144,
+          effectType: 'confetti',
+          density: 1,
+        } satisfies ParticleEffectConfig}
       />
     </>
   );

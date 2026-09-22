@@ -1,7 +1,7 @@
 import React from 'react';
 import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, Img, staticFile } from 'remotion';
 
-export type MotionEffect = 'static' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down';
+export type MotionEffect = 'static' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down' | 'fade-in' | 'fade-out';
 
 export interface SceneClipProps {
   imageSrc: string;       // absolute path or URL to the image
@@ -23,6 +23,7 @@ export function SceneClip({ imageSrc, motion, bgColor }: SceneClipProps) {
   let scale = 1;
   let translateX = 0; // percent
   let translateY = 0; // percent
+  let opacity = 1;
 
   switch (motion) {
     case 'zoom-in':
@@ -30,6 +31,14 @@ export function SceneClip({ imageSrc, motion, bgColor }: SceneClipProps) {
       break;
     case 'zoom-out':
       scale = interpolate(progress, [0, 1], [1.15, 1]);
+      break;
+    case 'fade-in':
+      opacity = interpolate(progress, [0, 0.4], [0, 1], { extrapolateRight: 'clamp' });
+      scale = interpolate(progress, [0, 1], [1.02, 1.08]);
+      break;
+    case 'fade-out':
+      opacity = interpolate(progress, [0.6, 1], [1, 0], { extrapolateLeft: 'clamp' });
+      scale = interpolate(progress, [0, 1], [1.08, 1.02]);
       break;
     case 'pan-left':
       scale = 1.3;
@@ -69,7 +78,8 @@ export function SceneClip({ imageSrc, motion, bgColor }: SceneClipProps) {
             height: '100%',
             objectFit: 'cover',
             transform: `scale(${scale}) translate(${translateX}%, ${translateY}%)`,
-            willChange: 'transform',
+            opacity,
+            willChange: 'transform, opacity',
           }}
         />
       </AbsoluteFill>

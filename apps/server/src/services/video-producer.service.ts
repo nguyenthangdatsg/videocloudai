@@ -21,16 +21,26 @@ import {
   type LogLevel,
   type ScriptBlockRecord,
   type OverlayStyle,
+  type CtaOverlay,
+  type EffectOverlay,
   type VoiceGroup,
   type ResolvedVoiceConfig,
 } from './script-studio.service';
 import { isReachable as omnivoiceReachable, synthesize as omnivoiceSynthesize, getBaseUrl as getOmnivoiceBaseUrl } from '../providers/omnivoice.provider';
+import { isAvailable as kokoroIsAvailable, synthesize as kokoroSynthesize, listVoices as kokoroListVoices } from '../providers/kokoro.provider';
+
+const KOKORO_VOICE_IDS = new Set(kokoroListVoices().map(v => v.voice_id));
+function resolveKokoroVoice(voiceId: string | undefined): string {
+  if (voiceId && KOKORO_VOICE_IDS.has(voiceId)) return voiceId;
+  return 'af_heart';
+}
 import { generateVideoClip } from './image-providers';
 import {
   searchPexelsVideos,
   resolveImageCacheDir,
 } from './pexels.service';
 import { renderChart } from './chart-renderer.service';
+import { renderEffect } from './effect-renderer.service';
 import { getSettings } from './settings.service';
 import { resolveFfmpegPathSync } from './import.service';
 
@@ -41,6 +51,7 @@ const execFileAsync = promisify(execFile);
 export interface ProduceOptions {
   voice?: string;
   rate?: string;
+  ttsEngine?: 'edge-tts' | 'omnivoice' | 'kokoro';
   orientation?: 'landscape' | 'portrait';
   music?: { enabled: boolean; trackId?: string; volumeDb?: number };
   subtitles?: boolean;
@@ -490,7 +501,7 @@ export async function searchPexelsCandidates(
       const preview = mp4Files.find((f) => f.quality === 'sd') ?? mp4Files[mp4Files.length - 1];
       return {
         pexelsId: v.id,
-        thumbnail: (v as unknown as { image?: string }).image ?? '',
+        thumbnail: v.image ?? v.video_pictures?.[0]?.picture ?? '',
         previewUrl: preview?.link ?? null,
         downloadUrl: best?.link ?? preview?.link ?? null,
         duration: v.duration,
@@ -918,6 +929,185 @@ function buildOverlayDrawtext(overlays: string[], style: OverlayStyle | null, w:
   return vf;
 }
 
+/** Emoji font path for CTA icon rendering (Segoe UI Emoji on Windows). */
+const EMOJI_FONT = process.platform === 'win32'
+  ? 'C:/Windows/Fonts/seguiemj.ttf'
+  : '/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf';
+
+/** CTA icon emoji characters (rendered via emoji font textfile). */
+const CTA_ICONS: Record<string, string> = {
+  subscribe: '\u{1F514}', // 🔔
+  like:      '\u{1F44D}', // 👍
+  comment:   '\u{1F4AC}', // 💬
+};
+
+/** Write a single-char textfile for FFmpeg drawtext (emoji need textfile, not inline text). */
+function writeCtaIconFile(icon: string, name: string): string {
+  const cacheDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'cta_icons');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const filePath = path.join(cacheDir, `${name}.txt`);
+  fs.writeFileSync(filePath, icon);
+  return filePath;
+}
+
+/** Build FFmpeg drawbox+drawtext filters for YouTube-style CTA buttons (Subscribe, Like, Comment). */
+function buildCtaDrawtext(cta: CtaOverlay | null, w: number, h: number): string {
+  if (!cta || !cta.buttons?.length) return '';
+
+  const pos = cta.position ?? 'bottom';
+  const btnH = Math.round(h * 0.05);       // button height ~5% of video height
+  const btnGap = Math.round(w * 0.025);     // gap between buttons
+  const fontSize = Math.round(btnH * 0.5);
+  const iconSize = Math.round(btnH * 0.55);
+  const padX = Math.round(btnH * 0.6);      // padding inside button
+  const iconGap = Math.round(fontSize * 0.4); // gap between icon and text
+  const isTop = pos === 'top' || pos === 'top-left' || pos === 'top-right';
+  const cornerY = isTop
+    ? Math.round(h * 0.05)
+    : h - btnH - Math.round(h * 0.05);
+
+  const hasEmojiFont = fs.existsSync(EMOJI_FONT);
+  const emojiFontEsc = EMOJI_FONT.replace(/:/g, '\\:');
+
+  // Button definitions
+  const btnDefs: Record<string, { label: string; bgColor: string; textColor: string; charCount: number }> = {
+    subscribe: { label: 'SUBSCRIBE', bgColor: 'CC0000', textColor: 'FFFFFF', charCount: 9 },
+    like:      { label: 'LIKE',      bgColor: '333333', textColor: 'FFFFFF', charCount: 4 },
+    comment:   { label: 'COMMENT',   bgColor: '333333', textColor: 'FFFFFF', charCount: 7 },
+  };
+
+  // Estimate button widths: icon + gap + text + padding
+  const charW = Math.round(fontSize * 0.65);
+  const iconW = hasEmojiFont ? iconSize + iconGap : 0;
+  const buttons = cta.buttons.map(b => {
+    const def = btnDefs[b];
+    if (!def) return null;
+    return { ...def, key: b, minW: padX + iconW + def.charCount * charW + padX };
+  }).filter(Boolean) as Array<{ label: string; bgColor: string; textColor: string; charCount: number; key: string; minW: number }>;
+
+  const totalW = buttons.reduce((s, b) => s + b.minW, 0) + (buttons.length - 1) * btnGap;
+  let startX: number;
+  if (pos === 'bottom-right' || pos === 'top-right') startX = w - totalW - Math.round(w * 0.04);
+  else if (pos === 'bottom-left' || pos === 'top-left') startX = Math.round(w * 0.04);
+  else startX = Math.round((w - totalW) / 2);
+
+  let vf = '';
+  let curX = startX;
+
+  for (const btn of buttons) {
+    // Background fill
+    vf += `,drawbox=x=${curX}:y=${cornerY}:w=${btn.minW}:h=${btnH}:color=0x${btn.bgColor}E6:t=fill`;
+
+    let contentX = curX + padX;
+
+    // Icon (emoji via textfile + emoji font)
+    if (hasEmojiFont && CTA_ICONS[btn.key]) {
+      const iconFile = writeCtaIconFile(CTA_ICONS[btn.key], btn.key);
+      const iconFileEsc = iconFile.replace(/\\/g, '/').replace(/:/g, '\\:');
+      const iconY = cornerY + Math.round((btnH - iconSize) / 2);
+      vf += `,drawtext=fontfile='${emojiFontEsc}':textfile='${iconFileEsc}':fontsize=${iconSize}:fontcolor=0x${btn.textColor}:x=${contentX}:y=${iconY}`;
+      contentX += iconSize + iconGap;
+    }
+
+    // Label text
+    const textY = cornerY + Math.round((btnH - fontSize) / 2);
+    vf += `,drawtext=text='${btn.label}':fontsize=${fontSize}:fontcolor=0x${btn.textColor}:x=${contentX}:y=${textY}:borderw=1:bordercolor=0x00000066`;
+
+    curX += btn.minW + btnGap;
+  }
+
+  return vf;
+}
+
+/**
+ * Render a particle effect and composite it over an existing video clip.
+ * Returns the path to the composited output (or original if no effect).
+ */
+async function compositeEffectOverlay(
+  effectOverlay: EffectOverlay,
+  inputClipPath: string,
+  durationSec: number,
+  orientation: 'landscape' | 'portrait',
+  ffmpeg: string,
+  log: (msg: string) => void,
+): Promise<string> {
+  const opacity = effectOverlay.opacity ?? 0.8;
+  const density = effectOverlay.density ?? 1;
+
+  log(`Rendering ${effectOverlay.type} effect (density=${density}, opacity=${opacity})...`);
+  const effectResult = await renderEffect(effectOverlay.type, orientation, durationSec, density, log);
+
+  const outPath = inputClipPath.replace(/\.mp4$/i, `_fx_${effectOverlay.type}.mp4`);
+  const opStr = opacity.toFixed(2);
+
+  const isPortrait = orientation === 'portrait';
+  const w = isPortrait ? 1080 : 1920;
+  const h = isPortrait ? 1920 : 1080;
+
+  // Particles are rendered on black background; use 'screen' blend to make black transparent
+  // and 'opacity' to control effect intensity
+  await execFileAsync(ffmpeg, [
+    '-i', inputClipPath,
+    '-stream_loop', '-1', '-i', effectResult.filePath,
+    '-filter_complex', [
+      `[1:v]scale=${w}:${h}[fx]`,
+      `[0:v][fx]blend=all_mode=screen:all_opacity=${opStr}[out]`,
+    ].join(';'),
+    '-map', '[out]',
+    '-t', durationSec.toFixed(3),
+    '-r', '24',
+    '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+    '-pix_fmt', 'yuv420p',
+    '-an', '-y', outPath,
+  ], { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 });
+
+  log(`Effect composited: ${path.basename(outPath)}`);
+  return outPath;
+}
+
+/**
+ * Composite a screen effect video from media library over a clip using screen blend.
+ */
+async function compositeScreenEffectFile(
+  effectFilePath: string,
+  inputClipPath: string,
+  durationSec: number,
+  w: number,
+  h: number,
+  ffmpeg: string,
+  log: (msg: string) => void,
+  opacity = 0.8,
+): Promise<string> {
+  const outPath = inputClipPath.replace(/\.mp4$/i, '_sfx.mp4');
+  const opStr = opacity.toFixed(2);
+
+  log(`Compositing screen effect: ${path.basename(effectFilePath)} (opacity=${opStr})...`);
+  await execFileAsync(ffmpeg, [
+    '-i', inputClipPath,
+    '-stream_loop', '-1', '-i', effectFilePath,
+    '-filter_complex', [
+      `[1:v]scale=${w}:${h}[fx]`,
+      `[0:v][fx]blend=all_mode=screen:all_opacity=${opStr}[out]`,
+    ].join(';'),
+    '-map', '[out]',
+    '-t', durationSec.toFixed(3),
+    '-r', '24',
+    '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+    '-pix_fmt', 'yuv420p',
+    '-an', '-y', outPath,
+  ], { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 });
+
+  log(`Screen effect composited: ${path.basename(outPath)}`);
+  return outPath;
+}
+
+/** Resolve a media library item's file path by ID */
+function resolveMediaLibraryPath(mediaId: string): string | null {
+  const { dbGet: dbGetSync } = require('../db');
+  const row = dbGetSync<{ filepath: string }>('SELECT filepath FROM media_library WHERE id = ?', [mediaId]);
+  return row?.filepath && fs.existsSync(row.filepath) ? row.filepath : null;
+}
+
 // ── Single-block reproduce ──
 
 export async function reproduceSingleBlock(
@@ -1002,7 +1192,7 @@ export async function reproduceSingleBlock(
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
             '-pix_fmt', 'yuv420p',
             '-an', '-y', compositePath,
-          ], { timeout: 300_000 });
+          ], { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 });
 
           updateBlockClip(docId, blockIndex, compositeFilename, 'chart');
           updateBlockRendered(docId, blockIndex, compositePath);
@@ -1056,14 +1246,14 @@ export async function reproduceSingleBlock(
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
         '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
         '-an', '-y', segOut,
-      ], { timeout: 120_000 });
+      ], { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
     } else {
       log(`Encoding opening title card (no bg, ${openingDurSec}s)...`);
       await execFileAsync(ffmpeg, [
         '-f', 'lavfi', '-i', `color=c=black:s=${w}x${h}:r=24`,
         '-vf', drawText, '-t', openingDurSec.toFixed(3),
         '-pix_fmt', 'yuv420p', '-y', segOut,
-      ], { timeout: 60_000 });
+      ], { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
     }
 
     updateBlockRendered(docId, blockIndex, segOut);
@@ -1081,13 +1271,17 @@ export async function reproduceSingleBlock(
   const segOut = path.join(outDir, `reproduced_block_${blockIndex}_${Date.now()}.mp4`);
   const trimStart = block.clipStartSec ?? 0;
 
-  // Build video filter: scale + optional overlay text
+  // Build video filter: scale + optional overlay text + CTA buttons
   const scaleFilter = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
   const overlayTexts = block.overlays ?? [];
   const overlayVf = buildOverlayDrawtext(overlayTexts, block.overlayStyle ?? null, w, h);
-  const vfChain = scaleFilter + overlayVf + ',format=yuv420p';
+  const ctaVf = buildCtaDrawtext(block.ctaOverlay ?? null, w, h);
+  const vfChain = scaleFilter + overlayVf + ctaVf + ',format=yuv420p';
   if (overlayTexts.length > 0) {
     log(`Overlay text: ${overlayTexts.join(' | ')} [${block.overlayStyle?.fontSize ?? 'md'}, ${block.overlayStyle?.position ?? 'center'}${block.overlayStyle?.bgEnabled ? ', bg' : ''}]`);
+  }
+  if (block.ctaOverlay?.buttons?.length) {
+    log(`CTA buttons: ${block.ctaOverlay.buttons.join(', ')} [${block.ctaOverlay.position ?? 'bottom'}]`);
   }
 
   // Detect if source is an image (not a video) — stream_loop only works with video files
@@ -1105,11 +1299,34 @@ export async function reproduceSingleBlock(
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
     '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
     '-an', '-y', segOut,
-  ], { timeout: 180_000 });
+  ], { timeout: 180_000, maxBuffer: 10 * 1024 * 1024 });
 
-  updateBlockRendered(docId, blockIndex, segOut);
-  log(`Done: ${path.basename(segOut)}`);
-  return { clipPath: segOut, filename: path.basename(segOut), durationSec: audioDurSec };
+  // ── Screen effect overlay — from media library or legacy effectOverlay ──
+  let finalOut = segOut;
+  if (block.screenEffectId) {
+    const effectPath = resolveMediaLibraryPath(block.screenEffectId);
+    if (effectPath) {
+      try {
+        finalOut = await compositeScreenEffectFile(effectPath, segOut, audioDurSec, w, h, ffmpeg, log);
+      } catch (err) {
+        log(`Screen effect failed: ${(err as Error).message?.slice(0, 100)} — using clip without effect`);
+        finalOut = segOut;
+      }
+    } else {
+      log(`Screen effect not found: ${block.screenEffectId}`);
+    }
+  } else if (block.effectOverlay?.type) {
+    try {
+      finalOut = await compositeEffectOverlay(block.effectOverlay, segOut, audioDurSec, orientation, ffmpeg, log);
+    } catch (err) {
+      log(`Effect overlay failed: ${(err as Error).message?.slice(0, 100)} — using clip without effect`);
+      finalOut = segOut;
+    }
+  }
+
+  updateBlockRendered(docId, blockIndex, finalOut);
+  log(`Done: ${path.basename(finalOut)}`);
+  return { clipPath: finalOut, filename: path.basename(finalOut), durationSec: audioDurSec };
 }
 
 // ── Main orchestrator ──
@@ -1177,11 +1394,15 @@ export async function produceBlocks(
     }
     let finalArgs = args;
     const isFfmpeg = file.endsWith('ffmpeg') || file.endsWith('ffmpeg.exe') || file === 'ffmpeg';
-    if (isFfmpeg && !args.includes('-nostdin')) {
-      finalArgs = ['-nostdin', ...args];
+    if (isFfmpeg) {
+      const extras: string[] = [];
+      if (!args.includes('-nostdin')) extras.push('-nostdin');
+      // Limit CPU usage to avoid starving the server & browser during produce
+      if (!args.includes('-threads')) extras.push('-threads', '2');
+      finalArgs = [...extras, ...args];
     }
     try {
-      return await execFileAsync(file, finalArgs, { ...options, signal });
+      return await execFileAsync(file, finalArgs, { maxBuffer: 10 * 1024 * 1024, ...options, signal });
     } catch (err: any) {
       if (err.name === 'AbortError' || err.message?.includes('abort') || signal?.aborted) {
         throw new Error('JOB_CANCELLED');
@@ -1211,6 +1432,15 @@ export async function produceBlocks(
     }
   }
 
+  let kokoroAvailable = false;
+  if (options.ttsEngine === 'kokoro' || voiceGroups.some(g => g.engine === 'kokoro')) {
+    kokoroAvailable = await kokoroIsAvailable();
+    if (!kokoroAvailable) {
+      emit('warn', `Kokoro TTS not available — affected blocks will fall back to edge-tts`, 0);
+      addLog(docId, 'warn', 'produce', `Kokoro TTS not available`);
+    }
+  }
+
   // ══════════════════════════════════════════
   // STAGE 1: Per-block TTS Audio (0–30%)
   // ══════════════════════════════════════════
@@ -1236,7 +1466,7 @@ export async function produceBlocks(
     const ttsText = norm.normalized;
 
     // Resolve per-block voice config (block overrides > group > doc > app defaults)
-    const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate });
+    const resolved = resolveBlockVoice(block.voiceConfig, docVoiceConfig, voiceGroups, { voice, rate, userVoice, userRate, userEngine: options.ttsEngine });
 
     // Content hash includes engine + voice + emotion + rate + text so cache collisions are avoided
     const cacheComponents = [ttsText, resolved.engine, resolved.voiceId, resolved.emotion ?? '', resolved.rate ?? ''].join('|');
@@ -1264,7 +1494,22 @@ export async function produceBlocks(
       let wordsJson = '[]';
       let actualEngine = resolved.engine;
 
-      if (resolved.engine === 'omnivoice' && omnivoiceAvailable) {
+      if (resolved.engine === 'kokoro' && kokoroAvailable) {
+        // ── Kokoro TTS ──
+        const speed = resolved.rate ? 1.0 + (parseFloat(resolved.rate) / 100) : 1.0;
+        await kokoroSynthesize({ text: ttsText, voice: resolveKokoroVoice(resolved.voiceId), speed }, audioPath);
+        // Get duration via ffprobe
+        try {
+          const ffprobe = resolveFfmpegPathSync('ffprobe');
+          const { stdout: probeOut } = await execFileAsync(ffprobe, ['-v', 'quiet', '-print_format', 'json', '-show_streams', audioPath], { timeout: 10_000 });
+          const durSec = parseFloat(JSON.parse(probeOut).streams?.[0]?.duration ?? '0');
+          if (durSec > 0) totalMs = Math.round(durSec * 1000);
+        } catch { /* ignore */ }
+        wordCount = ttsText.split(/\s+/).filter(Boolean).length;
+        wordsJson = '[]'; // Kokoro doesn't provide word-level timing
+
+        addLog(docId, 'info', 'produce', `${ref(block)}: Kokoro audio ${(totalMs / 1000).toFixed(1)}s`);
+      } else if (resolved.engine === 'omnivoice' && omnivoiceAvailable) {
         // ── OmniVoice TTS ──
         const result = await runOmnivoiceTts(ttsText, resolved, audioPath, wordsPath);
         totalMs = result.totalMs || 0;
@@ -1274,6 +1519,11 @@ export async function produceBlocks(
         addLog(docId, 'info', 'produce', `${ref(block)}: OmniVoice audio ${(totalMs / 1000).toFixed(1)}s, timing: ${result.timingMethod}`);
       } else {
         // ── edge-tts (default or fallback) ──
+        if (resolved.engine === 'kokoro' && !kokoroAvailable) {
+          actualEngine = 'edge-tts';
+          addLog(docId, 'warn', 'produce', `${ref(block)}: Kokoro unavailable, falling back to edge-tts`);
+          emit('warn', `${ref(block)}: Kokoro fallback → edge-tts`, pct);
+        }
         if (resolved.engine === 'omnivoice' && !omnivoiceAvailable) {
           actualEngine = 'edge-tts';
           addLog(docId, 'warn', 'produce', `${ref(block)}: OmniVoice unavailable, falling back to edge-tts (voice: ${resolved.fallbackVoice || voice})`);
@@ -1792,14 +2042,21 @@ export async function produceBlocks(
     const persistentPath = path.join(docDir, `block_${i}_${contentHash}_${visualHash}.mp4`);
 
     // Check if already rendered and file exists (skip cache for chart blocks — always re-composite)
+    // Also reject tiny files (<1KB) that are corrupt empty containers from failed encodes
     if (block.visualType !== 'chart' && fs.existsSync(persistentPath)) {
-      emit('info', `${ref(block)}: block video loaded`, pct);
-      if (block.renderedClipPath !== persistentPath) {
-        updateBlockRendered(docId, i, persistentPath);
+      const fileSize = fs.statSync(persistentPath).size;
+      if (fileSize > 1024) {
+        emit('info', `${ref(block)}: block video loaded`, pct);
+        if (block.renderedClipPath !== persistentPath) {
+          updateBlockRendered(docId, i, persistentPath);
+        }
+        blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
+        encodedCount++;
+        continue;
       }
-      blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
-      encodedCount++;
-      continue;
+      // Remove corrupt file so it gets re-encoded
+      try { fs.unlinkSync(persistentPath); } catch { /* ignore */ }
+      addLog(docId, 'warn', 'produce', `${ref(block)}: removed corrupt cached clip (${fileSize} bytes)`);
     }
 
     // Resolve source clip path
@@ -2021,6 +2278,12 @@ export async function produceBlocks(
         motionVf += buildOverlayDrawtext(blockOverlays, block.overlayStyle ?? null, w, h);
         motionVf += ',format=yuv420p';
       }
+      // Append CTA buttons
+      if (block.ctaOverlay?.buttons?.length) {
+        motionVf = motionVf.replace(/,format=yuv420p$/, '');
+        motionVf += buildCtaDrawtext(block.ctaOverlay, w, h);
+        motionVf += ',format=yuv420p';
+      }
 
       try {
         if (freezeHold) {
@@ -2046,15 +2309,25 @@ export async function produceBlocks(
           shotPaths.push(shotOut);
         } else {
           // Normal encode: trim source clip with motion filter
+          // Detect if source is an image — images need -loop 1, not -ss/-stream_loop
+          const isImageSource = /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(chosenClipPath);
+
           // Only apply clipEndSec limit for single-shot blocks or first shot with user trim
-          const clipReadDurSec = (block.clipEndSec != null && si === 0 && shots.length === 1)
+          const clipReadDurSec = (!isImageSource && block.clipEndSec != null && si === 0 && shots.length === 1)
             ? Math.max(0.1, block.clipEndSec - trimOffsetSec)
             : undefined;
 
+          const inputArgs: string[] = isImageSource
+            ? ['-loop', '1', '-i', chosenClipPath]
+            : [
+                '-ss', trimOffsetSec.toFixed(3),
+                ...(clipReadDurSec != null ? ['-t', clipReadDurSec.toFixed(3)] : []),
+                '-stream_loop', '-1',
+                '-i', chosenClipPath,
+              ];
+
           const ffArgs = [
-            '-ss', trimOffsetSec.toFixed(3),
-            ...(clipReadDurSec != null ? ['-t', clipReadDurSec.toFixed(3)] : []),
-            '-i', chosenClipPath,
+            ...inputArgs,
             '-vf', motionVf,
             '-t', shotDurSec.toFixed(3),
             '-r', String(fps),
@@ -2068,6 +2341,12 @@ export async function produceBlocks(
             shotOut,
           ];
           await execFileWithCancel(ffmpeg, ffArgs, { timeout: 180_000 });
+
+          // Verify output is valid (not an empty container from failed encode)
+          const shotSize = fs.existsSync(shotOut) ? fs.statSync(shotOut).size : 0;
+          if (shotSize < 1024) {
+            throw new Error(`encode produced empty/corrupt file (${shotSize} bytes) — source may be an unsupported format`);
+          }
 
           // Verify output duration; if source was too short, pad with last frame
           try {
@@ -2125,8 +2404,36 @@ export async function produceBlocks(
       for (const sp of shotPaths) { try { fs.unlinkSync(sp); } catch { /* ignore */ } }
     }
 
-    updateBlockRendered(docId, i, persistentPath);
-    blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
+    // ── Screen effect overlay (media library or legacy effectOverlay) ──
+    let finalBlockPath = persistentPath;
+    const blockDurSec = shots.reduce((s, sh) => s + sh.durationMs / 1000, 0);
+    if (block.screenEffectId) {
+      const effectPath = resolveMediaLibraryPath(block.screenEffectId);
+      if (effectPath) {
+        try {
+          finalBlockPath = await compositeScreenEffectFile(
+            effectPath, persistentPath, blockDurSec, w, h, ffmpeg,
+            (m) => emit('info', `${ref(block)}: ${m}`, pct),
+          );
+        } catch (err) {
+          emit('warn', `${ref(block)}: screen effect failed — ${(err as Error).message?.slice(0, 100)}`, pct);
+          finalBlockPath = persistentPath;
+        }
+      }
+    } else if (block.effectOverlay?.type) {
+      try {
+        finalBlockPath = await compositeEffectOverlay(
+          block.effectOverlay, persistentPath, blockDurSec, orientation, ffmpeg,
+          (m) => emit('info', `${ref(block)}: ${m}`, pct),
+        );
+      } catch (err) {
+        emit('warn', `${ref(block)}: effect overlay failed — ${(err as Error).message?.slice(0, 100)}`, pct);
+        finalBlockPath = persistentPath;
+      }
+    }
+
+    updateBlockRendered(docId, i, finalBlockPath);
+    blocksAfterVisuals[i] = { ...block, renderedClipPath: finalBlockPath, status: 'rendered' };
     encodedCount++;
     if (shotsFailed > 0) {
       emit('info', `${ref(block)}: encoded (${shots.length - shotsFailed}/${shots.length} shots)`, pct);
@@ -2246,11 +2553,42 @@ export async function produceBlocks(
   }
 
   const audioList = path.join(concatDir, 'audio_list.txt');
-  const audioFiles = renderedBlocks.map((b) => {
+  const audioFilesRaw = renderedBlocks.map((b) => {
     if (b.openingText) return silencePath;
     if (b.audioPath) return path.join(audioDir, b.audioPath);
     return null;
   }).filter((f): f is string => !!f);
+
+  // Mix SFX audio into blocks that have sfxId
+  const audioFiles: string[] = [];
+  for (let i = 0; i < renderedBlocks.length; i++) {
+    const b = renderedBlocks[i];
+    const audioFile = audioFilesRaw[i];
+    if (!audioFile) continue;
+    if (b.sfxId) {
+      const sfxPath = resolveMediaLibraryPath(b.sfxId);
+      if (sfxPath) {
+        const sfxOut = path.join(concatDir, `block_${b.blockIndex}_sfx_mix.mp3`);
+        try {
+          const durSec = (b.audioDurationMs ?? 3000) / 1000;
+          await execFileWithCancel(ffmpeg, [
+            '-i', audioFile, '-i', sfxPath,
+            '-filter_complex', `[1:a]atrim=0:${durSec.toFixed(3)},volume=0.5[sfx];[0:a][sfx]amix=inputs=2:duration=first[out]`,
+            '-map', '[out]', '-c:a', 'libmp3lame', '-q:a', '2', '-y', sfxOut,
+          ], { timeout: 60_000 });
+          log(`SFX mixed into block ${b.blockIndex}`);
+          audioFiles.push(sfxOut);
+          continue;
+        } catch (err) {
+          log(`SFX mix failed for block ${b.blockIndex}: ${(err as Error).message?.slice(0, 80)}`);
+        }
+      } else {
+        log(`SFX not found: ${b.sfxId} for block ${b.blockIndex}`);
+      }
+    }
+    audioFiles.push(audioFile);
+  }
+
   fs.writeFileSync(audioList, audioFiles.map((f) => `file '${f.replace(/\\/g, '/')}'`).join('\n'));
   const masterAudio = path.join(concatDir, 'master_audio.mp3');
   await execFileWithCancel(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', audioList, '-c', 'copy', '-y', masterAudio], { timeout: 300_000 });

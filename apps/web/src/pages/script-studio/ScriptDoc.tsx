@@ -6,9 +6,9 @@ import {
   ArrowLeft, ChevronDown, ChevronUp, AlertTriangle, Info, Check,
   Play, Loader2, BarChart2, Video, Mic, Settings, RefreshCw, X,
   Volume2, Film, Square, ChevronRight, ChevronLeft, Pencil, Music2,
-  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2, Merge, Type as TypeIcon, Copy, Wifi, WifiOff,
+  List, Rows3, Wand2, Zap, FileText, ExternalLink, Sparkles, Scissors, Plus, Trash2, Image, Upload, Columns, Maximize2, Merge, Type as TypeIcon, Copy, Wifi, WifiOff, Bell, ThumbsUp, MessageCircle,
 } from 'lucide-react';
-import { scriptStudioApi, dvidsStudioApi, queueApi, ttsApi, musicApi, type SubtitleStyle } from '../../lib/api';
+import { scriptStudioApi, dvidsStudioApi, queueApi, ttsApi, musicApi, mediaLibraryApi, type SubtitleStyle } from '../../lib/api';
 import { useAppStore } from '../../store';
 import { SubtitlePanel } from '../storyboard/components/SubtitlePanel';
 
@@ -32,6 +32,17 @@ interface ScriptBlock {
     fontSize?: 'sm' | 'md' | 'lg' | 'xl';
     position?: 'center' | 'top' | 'bottom';
   } | null;
+  ctaOverlay: {
+    buttons: ('subscribe' | 'like' | 'comment')[];
+    position?: 'bottom' | 'bottom-right' | 'bottom-left' | 'top' | 'top-right' | 'top-left';
+  } | null;
+  effectOverlay: {
+    type: 'money-rain' | 'confetti';
+    density?: number;
+    opacity?: number;
+  } | null;
+  screenEffectId: string | null;
+  sfxId: string | null;
   paceHint: 'slow' | 'fast' | null;
   contentHash: string | null;
   audioPath: string | null;
@@ -304,7 +315,7 @@ function autoFlowPrompt(block: ScriptBlock, orientation: 'landscape' | 'portrait
 
 // ── Block Step Editor (one-by-one preview + edit) ──
 
-function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0, ttsEngine, onTtsEngineChange, voice, rate, downloadQueue, queueStockDownload, studioApi }: {
+function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialIdx = 0, ttsEngine, onTtsEngineChange, voice, rate, downloadQueue, queueStockDownload, studioApi, defaultStockSource = 'pexels' }: {
   blocks: ScriptBlock[];
   docId: string;
   orientation: 'landscape' | 'portrait';
@@ -317,6 +328,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   downloadQueue: Map<number, DownloadTask>;
   queueStockDownload: (blockIndex: number, label: string, downloadFn: () => Promise<{ filename: string; duration: number }>, onSuccess?: (data: { filename: string; duration: number }) => void) => void;
   studioApi: typeof scriptStudioApi;
+  defaultStockSource?: 'pexels' | 'pixabay' | 'dvids';
 }) {
   const { t } = useTranslation();
   const [idx, setIdx] = useState(initialIdx);
@@ -334,7 +346,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
   // Stock picker state
   const [showPexelsPicker, setShowPexelsPicker] = useState(false);
   const [remotionRendering, setRemotionRendering] = useState(false);
-  const [pickerService, setPickerService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images'>('pexels');
+  const [pickerService, setPickerService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'images'>(defaultStockSource);
   const [pickerOrientation, setPickerOrientation] = useState<'landscape' | 'portrait'>(orientation);
   const [pickerQuery, setPickerQuery] = useState('');
   const [pickerCandidates, setPickerCandidates] = useState<Array<{
@@ -471,8 +483,8 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     const b = blocks[clampedIdx];
     setTrimStart(b?.clipStartSec != null ? String(b.clipStartSec) : '');
     setTrimEnd(b?.clipEndSec != null ? String(b.clipEndSec) : '');
-    // Auto-open Pexels picker for every block, close split panel
-    setPickerService('pexels');
+    // Auto-open stock picker for every block, close split panel
+    setPickerService(defaultStockSource);
     setPickerOrientation(orientation);
     setShowPexelsPicker(true);
     setShowSplitPanel(false);
@@ -485,14 +497,14 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
     }, 150);
   }, [clampedIdx]);
 
-  // Auto-fetch Pexels stock when navigating to a new block
+  // Auto-fetch stock when navigating to a new block
   useEffect(() => {
     const currentBlock = blocks[clampedIdx];
     if (!currentBlock) return;
     const q = currentBlock.pexelsQuery || currentBlock.narration.split(/\s+/).slice(0, 5).join(' ');
     if (!q) return;
     setPickerQuery(q);
-    fetchPickerCandidates('pexels', q, orientation);
+    fetchPickerCandidates(defaultStockSource, q, orientation);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clampedIdx]);
 
@@ -1445,6 +1457,54 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                 </div>
               );
             })()}
+            {/* Live CTA buttons preview */}
+            {(block.ctaOverlay?.buttons?.length ?? 0) > 0 && !renderedUrl && (() => {
+              const cta = block.ctaOverlay!;
+              const posMap: Record<string, React.CSSProperties> = {
+                'bottom': { bottom: '8%', left: '50%', transform: 'translateX(-50%)' },
+                'bottom-left': { bottom: '8%', left: '4%' },
+                'bottom-right': { bottom: '8%', right: '4%' },
+                'top': { top: '8%', left: '50%', transform: 'translateX(-50%)' },
+                'top-left': { top: '8%', left: '4%' },
+                'top-right': { top: '8%', right: '4%' },
+              };
+              return (
+                <div className="absolute pointer-events-none flex items-center gap-1.5" style={{ ...posMap[cta.position ?? 'bottom'], zIndex: 6 }}>
+                  {cta.buttons.map((btn) => {
+                    const isSubscribe = btn === 'subscribe';
+                    return (
+                      <span key={btn} className="inline-flex items-center gap-1 rounded-full whitespace-nowrap" style={{
+                        backgroundColor: isSubscribe ? '#CC0000' : 'rgba(255,255,255,0.15)',
+                        color: '#FFF',
+                        padding: '4px 10px',
+                        fontSize: '9px',
+                        fontWeight: 700,
+                        letterSpacing: '0.03em',
+                        backdropFilter: isSubscribe ? 'none' : 'blur(8px)',
+                        boxShadow: isSubscribe ? '0 2px 8px rgba(204,0,0,0.4)' : '0 1px 4px rgba(0,0,0,0.3)',
+                        border: isSubscribe ? 'none' : '1px solid rgba(255,255,255,0.15)',
+                      }}>
+                        {btn === 'subscribe' && <Bell style={{ width: 11, height: 11, color: 'white' }} />}
+                        {btn === 'like' && <ThumbsUp style={{ width: 11, height: 11, color: 'white' }} />}
+                        {btn === 'comment' && <MessageCircle style={{ width: 11, height: 11, color: 'white' }} />}
+                        {{ subscribe: 'SUBSCRIBE', like: 'LIKE', comment: 'COMMENT' }[btn]}
+                      </span>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+            {/* Live Effect overlay preview */}
+            {(block.screenEffectId || block.effectOverlay?.type) && !renderedUrl && (
+              <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-lg" style={{ zIndex: 5 }}>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="px-3 py-1.5 rounded-full text-[10px] font-bold text-white bg-amber-600/60" style={{ backdropFilter: 'blur(4px)' }}>
+                    <Sparkles style={{ width: 12, height: 12, display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
+                    SCREEN EFFECT
+                  </span>
+                </div>
+              </div>
+            )}
           </>
         ) : audioUrl ? (
           /* Audio-only: dark player area with waveform icon */
@@ -2132,7 +2192,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
               {splitSearchResults.map((c) => (
                 <div key={c.id} className="relative rounded-xl overflow-hidden group bg-black ring-1 ring-white/[0.06] hover:ring-teal-400/40 transition-all">
                   {c.previewUrl || c.downloadUrl ? (
-                    <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} className={splitSearchOrientation === 'landscape' ? 'aspect-video' : 'aspect-[9/16]'} />
+                    <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} className={splitSearchOrientation === 'landscape' ? 'aspect-video' : 'aspect-[9/16]'} poster={c.thumbnail} />
                   ) : (
                     <img src={c.thumbnail} alt="" className={`w-full object-cover ${splitSearchOrientation === 'landscape' ? 'aspect-video' : 'aspect-[9/16]'}`} />
                   )}
@@ -2289,7 +2349,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
                         {isImageMode ? (
                           <img src={c.thumbnail} alt={c.title || ''} className={`w-full object-cover ${pickerOrientation === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}`} loading="lazy" />
                         ) : c.previewUrl || c.downloadUrl ? (
-                          <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} className={pickerOrientation === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'} />
+                          <PickerVideo previewUrl={c.previewUrl || c.downloadUrl!} downloadUrl={c.downloadUrl} duration={c.duration} className={pickerOrientation === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'} poster={c.thumbnail} />
                         ) : (
                           <img src={c.thumbnail} alt="" className={`w-full object-cover ${pickerOrientation === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}`} />
                         )}
@@ -2440,6 +2500,7 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
             downloadQueue={downloadQueue}
             queueStockDownload={queueStockDownload}
             studioApi={studioApi}
+            defaultStockSource={defaultStockSource}
           />
         </div>
       )}
@@ -2500,13 +2561,14 @@ function BlockStepEditor({ blocks, docId, orientation, onBlockUpdated, initialId
 
 // ── Picker Video (stock preview with scrub bar) ──
 
-function PickerVideo({ previewUrl, downloadUrl, duration, className }: { previewUrl: string; downloadUrl?: string; duration: number; className?: string }) {
+function PickerVideo({ previewUrl, downloadUrl, duration, className, poster }: { previewUrl: string; downloadUrl?: string; duration: number; className?: string; poster?: string }) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const [progress, setProgress] = useState(0);
   const [dur, setDur] = useState(duration || 0);
   const [hovering, setHovering] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [videoError, setVideoError] = useState(false);
   const rafRef = useRef<number | null>(null);
 
   // Use full quality video URL when available, fall back to preview
@@ -2538,18 +2600,24 @@ function PickerVideo({ previewUrl, downloadUrl, duration, className }: { preview
       onMouseEnter={() => { setHovering(true); vidRef.current?.play().then(() => setPlaying(true)).catch(() => {}); }}
       onMouseLeave={() => { setHovering(false); const v = vidRef.current; if (v) { v.pause(); v.currentTime = 0; } setPlaying(false); setProgress(0); }}
     >
-      <video
-        ref={vidRef}
-        src={videoSrc}
-        className="w-full h-full object-cover"
-        muted
-        loop
-        playsInline
-        preload="metadata"
-        onLoadedMetadata={(e) => { const d = (e.currentTarget as HTMLVideoElement).duration; if (d && isFinite(d)) setDur(d); }}
-      />
-      {/* Scrub bar — always visible at bottom */}
-      {dur > 0 && (
+      {videoError && poster ? (
+        <img src={poster} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <video
+          ref={vidRef}
+          src={videoSrc}
+          className="w-full h-full object-cover"
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          poster={poster}
+          onLoadedMetadata={(e) => { const d = (e.currentTarget as HTMLVideoElement).duration; if (d && isFinite(d)) setDur(d); }}
+          onError={() => setVideoError(true)}
+        />
+      )}
+      {/* Scrub bar — always visible at bottom (hidden on error) */}
+      {dur > 0 && !videoError && (
         <div
           className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-1 pt-3 pb-1 z-20"
           onClick={(e) => e.stopPropagation()}
@@ -2867,13 +2935,18 @@ function BlockCardPlayer({ audioSrc, durationMs, clips, visualType, docId, block
 
 // ── Block Structure Row (Step 1 — compact transcript-like) ──
 
-function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel, onBlockUpdated, orientation, studioApi }: {
+function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel, onBlockUpdated, orientation, studioApi, screenEffects, sfxLibrary }: {
   block: ScriptBlock; idx: number; total: number; docId: string; isProducing: boolean; displayLabel: string; onBlockUpdated: () => void; orientation: 'landscape' | 'portrait'; studioApi: typeof scriptStudioApi;
+  screenEffects: Array<{ id: string; name: string; url: string; type: string }>;
+  sfxLibrary: Array<{ id: string; name: string; url: string; type: string; duration?: number }>;
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showOverlay, setShowOverlay] = useState(false);
+  const [showCta, setShowCta] = useState(false);
+  const [showEffect, setShowEffect] = useState(false);
+  const [showSfx, setShowSfx] = useState(false);
   const wordCount = block.narration?.split(/\s+/).filter(Boolean).length ?? 0;
   const durationSec = block.audioDurationMs ? (block.audioDurationMs / 1000) : (wordCount / 2.5);
   const hasClip = !!block.clipAssetPath || (block.clips?.length ?? 0) > 0;
@@ -2882,6 +2955,9 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
   const isEmpty = !block.narration?.trim() && !isOpening;
   const isLong = durationSec > 5;
   const hasOverlay = block.overlays && block.overlays.length > 0;
+  const hasCta = block.ctaOverlay && block.ctaOverlay.buttons.length > 0;
+  const hasEffect = !!block.effectOverlay?.type || !!block.screenEffectId;
+  const hasSfx = !!block.sfxId;
 
   const handleAction = async (action: string, fn: () => Promise<any>) => {
     if (busy || isProducing) return;
@@ -2909,6 +2985,9 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
         <Mic className={`w-3 h-3 ${hasAudio ? 'text-green-400' : 'text-c-border'}`} />
         <Film className={`w-3 h-3 ${hasClip ? 'text-blue-400' : 'text-c-border'}`} />
         {hasOverlay && <span title={block.overlays.join(', ')}><TypeIcon className="w-3 h-3 text-sky-400" /></span>}
+        {hasCta && <span title={`CTA: ${block.ctaOverlay!.buttons.join(', ')}`}><Zap className="w-3 h-3 text-rose-400" /></span>}
+        {hasEffect && <span title={block.screenEffectId ? `FX: ${screenEffects.find(e => e.id === block.screenEffectId)?.name ?? block.screenEffectId}` : `FX: ${block.effectOverlay?.type}`}><Sparkles className="w-3 h-3 text-amber-400" /></span>}
+        {hasSfx && <span title={`SFX: ${sfxLibrary.find(s => s.id === block.sfxId)?.name ?? block.sfxId}`}><Music2 className="w-3 h-3 text-green-400" /></span>}
         {block.chartSpec && (() => {
           const defaultAnim = block.audioDurationMs ? (block.audioDurationMs / 1000) / 2 : 4;
           const animSec = block.chartSpec.chartAnimSec ?? defaultAnim;
@@ -2990,6 +3069,30 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
         title={t('scriptStudio.studio.addOverlay')}
       >
         <TypeIcon className="w-3.5 h-3.5" />
+      </button>
+      {/* CTA buttons toggle */}
+      <button
+        onClick={() => setShowCta(v => !v)}
+        className={`p-1.5 rounded-md transition-colors cursor-pointer shrink-0 ${hasCta || showCta ? 'text-rose-400 bg-rose-500/10' : 'text-c-dim/30 hover:text-rose-400 hover:bg-rose-900/20'}`}
+        title={t('scriptStudio.studio.ctaToggle')}
+      >
+        <Zap className="w-3.5 h-3.5" />
+      </button>
+      {/* Effects toggle */}
+      <button
+        onClick={() => setShowEffect(v => !v)}
+        className={`p-1.5 rounded-md transition-colors cursor-pointer shrink-0 ${hasEffect || showEffect ? 'text-amber-400 bg-amber-500/10' : 'text-c-dim/30 hover:text-amber-400 hover:bg-amber-900/20'}`}
+        title={t('scriptStudio.studio.effectToggle')}
+      >
+        <Sparkles className="w-3.5 h-3.5" />
+      </button>
+      {/* SFX toggle */}
+      <button
+        onClick={() => setShowSfx(v => !v)}
+        className={`p-1.5 rounded-md transition-colors cursor-pointer shrink-0 ${hasSfx || showSfx ? 'text-green-400 bg-green-500/10' : 'text-c-dim/30 hover:text-green-400 hover:bg-green-900/20'}`}
+        title={t('scriptStudio.studio.sfxToggle')}
+      >
+        <Music2 className="w-3.5 h-3.5" />
       </button>
       {/* Actions — visible on hover */}
       <div className={`shrink-0 flex items-center gap-0.5 transition-opacity ${busy ? 'opacity-30 pointer-events-none' : 'opacity-0 group-hover:opacity-100'}`}>
@@ -3162,6 +3265,158 @@ function BlockStructureRow({ block, idx, total, docId, isProducing, displayLabel
         })()}
       </div>
     )}
+    {/* CTA buttons panel */}
+    {(showCta || hasCta) && (
+      <div className="pl-[3.25rem] pr-3 py-2 space-y-2 bg-rose-500/5 border-t border-rose-500/10">
+        {/* Button toggles */}
+        <div className="flex items-center gap-2">
+          <Zap className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+          {(['subscribe', 'like', 'comment'] as const).map((btn) => {
+            const active = block.ctaOverlay?.buttons?.includes(btn) ?? false;
+            const activeStyles: Record<string, string> = {
+              subscribe: 'bg-[#CC0000] text-white border-[#CC0000] shadow-[0_2px_8px_rgba(204,0,0,0.35)]',
+              like: 'bg-neutral-700 text-white border-neutral-600',
+              comment: 'bg-neutral-700 text-white border-neutral-600',
+            };
+            const inactiveStyles: Record<string, string> = {
+              subscribe: 'bg-transparent text-c-muted border-c-border hover:border-[#CC0000]/60 hover:text-[#CC0000] hover:bg-[#CC0000]/5',
+              like: 'bg-transparent text-c-muted border-c-border hover:border-neutral-500 hover:text-neutral-300 hover:bg-neutral-700/20',
+              comment: 'bg-transparent text-c-muted border-c-border hover:border-neutral-500 hover:text-neutral-300 hover:bg-neutral-700/20',
+            };
+            return (
+              <button
+                key={btn}
+                onClick={() => {
+                  const current = block.ctaOverlay?.buttons ?? [];
+                  const next = active ? current.filter(b => b !== btn) : [...current, btn];
+                  const ctaOverlay = next.length > 0 ? { buttons: next, position: block.ctaOverlay?.position ?? 'bottom' } : null;
+                  handleAction('cta', () => studioApi.updateBlock(docId, block.blockIndex, { ctaOverlay } as any));
+                }}
+                disabled={isProducing || !!busy}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-semibold border transition-all duration-200 cursor-pointer ${active ? activeStyles[btn] : inactiveStyles[btn]}`}
+              >
+                {btn === 'subscribe' && <Bell className="w-3.5 h-3.5 shrink-0" />}
+                {btn === 'like' && <ThumbsUp className="w-3.5 h-3.5 shrink-0" />}
+                {btn === 'comment' && <MessageCircle className="w-3.5 h-3.5 shrink-0" />}
+                {t(`scriptStudio.studio.cta${btn.charAt(0).toUpperCase() + btn.slice(1)}`)}
+              </button>
+            );
+          })}
+          {/* Spacer + controls */}
+          <div className="flex items-center gap-1.5 ml-auto">
+            {/* Position selector */}
+            {hasCta && (
+              <select
+                value={block.ctaOverlay?.position ?? 'bottom'}
+                onChange={(e) => {
+                  const ctaOverlay = { ...block.ctaOverlay!, position: e.target.value as any };
+                  handleAction('cta', () => studioApi.updateBlock(docId, block.blockIndex, { ctaOverlay } as any));
+                }}
+                className="text-[10px] bg-c-elevated border border-c-border/60 rounded-md px-1.5 py-1 text-c-muted cursor-pointer hover:border-c-border transition-colors"
+              >
+                <option value="bottom">{t('scriptStudio.studio.ctaPosBottomCenter')}</option>
+                <option value="bottom-left">{t('scriptStudio.studio.ctaPosBottomLeft')}</option>
+                <option value="bottom-right">{t('scriptStudio.studio.ctaPosBottomRight')}</option>
+                <option value="top">{t('scriptStudio.studio.ctaPosTopCenter')}</option>
+                <option value="top-left">{t('scriptStudio.studio.ctaPosTopLeft')}</option>
+                <option value="top-right">{t('scriptStudio.studio.ctaPosTopRight')}</option>
+              </select>
+            )}
+            {/* Clear CTA */}
+            {hasCta && (
+              <button
+                onClick={() => handleAction('cta', () => studioApi.updateBlock(docId, block.blockIndex, { ctaOverlay: null } as any))}
+                className="p-1.5 rounded-md text-c-dim hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
+                title={t('scriptStudio.studio.ctaClear')}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+    {/* Screen Effect picker panel */}
+    {(showEffect || hasEffect) && (
+      <div className="pl-[3.25rem] pr-3 py-2 space-y-2 bg-amber-500/5 border-t border-amber-500/10">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="text-[10px] text-amber-400 font-medium">{t('scriptStudio.studio.screenEffect')}</span>
+          {screenEffects.length === 0 && <span className="text-[10px] text-c-dim">{t('scriptStudio.studio.loadingEffects')}</span>}
+          {screenEffects.map((item) => {
+            const active = block.screenEffectId === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  const screenEffectId = active ? null : item.id;
+                  handleAction('effect', () => studioApi.updateBlock(docId, block.blockIndex, { screenEffectId, effectOverlay: null } as any));
+                }}
+                disabled={isProducing || !!busy}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold border transition-all duration-200 cursor-pointer ${
+                  active
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-[0_2px_8px_rgba(217,119,6,0.35)]'
+                    : 'bg-transparent text-c-muted border-c-border hover:border-amber-500/60 hover:text-amber-300 hover:bg-amber-500/5'
+                }`}
+                title={item.name}
+              >
+                {item.name}
+              </button>
+            );
+          })}
+          {hasEffect && (
+            <button
+              onClick={() => handleAction('effect', () => studioApi.updateBlock(docId, block.blockIndex, { screenEffectId: null, effectOverlay: null } as any))}
+              className="p-1.5 rounded-md text-c-dim hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0 ml-auto"
+              title={t('scriptStudio.studio.effectClear')}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+    )}
+    {/* SFX picker panel */}
+    {(showSfx || hasSfx) && (
+      <div className="pl-[3.25rem] pr-3 py-2 space-y-2 bg-green-500/5 border-t border-green-500/10">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Music2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
+          <span className="text-[10px] text-green-400 font-medium">{t('scriptStudio.studio.sfxLabel')}</span>
+          {sfxLibrary.length === 0 && <span className="text-[10px] text-c-dim">No SFX found</span>}
+          {sfxLibrary.map((item) => {
+            const active = block.sfxId === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  const sfxId = active ? null : item.id;
+                  handleAction('sfx', () => studioApi.updateBlock(docId, block.blockIndex, { sfxId } as any));
+                }}
+                disabled={isProducing || !!busy}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold border transition-all duration-200 cursor-pointer ${
+                  active
+                    ? 'bg-green-600 text-white border-green-600 shadow-[0_2px_8px_rgba(34,197,94,0.35)]'
+                    : 'bg-transparent text-c-muted border-c-border hover:border-green-500/60 hover:text-green-300 hover:bg-green-500/5'
+                }`}
+                title={item.name}
+              >
+                {item.name}
+                {item.duration != null && <span className="text-[8px] opacity-60">{item.duration.toFixed(1)}s</span>}
+              </button>
+            );
+          })}
+          {hasSfx && (
+            <button
+              onClick={() => handleAction('sfx', () => studioApi.updateBlock(docId, block.blockIndex, { sfxId: null } as any))}
+              className="p-1.5 rounded-md text-c-dim hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0 ml-auto"
+              title={t('scriptStudio.studio.sfxClear')}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+    )}
     </div>
   );
 }
@@ -3200,7 +3455,7 @@ function InsertBlockButton({ docId, blockIndex, isProducing, onInserted, studioA
   );
 }
 
-function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, displayLabel, downloadQueue, queueStockDownload, studioApi }: {
+function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, displayLabel, downloadQueue, queueStockDownload, studioApi, defaultStockSource = 'pexels' }: {
   block: ScriptBlock;
   docId: string;
   orientation: 'landscape' | 'portrait';
@@ -3210,6 +3465,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   downloadQueue?: Map<number, DownloadTask>;
   queueStockDownload?: (blockIndex: number, label: string, downloadFn: () => Promise<{ filename: string; duration: number }>, onSuccess?: (data: { filename: string; duration: number }) => void) => void;
   studioApi: typeof scriptStudioApi;
+  defaultStockSource?: 'pexels' | 'pixabay' | 'dvids';
 }) {
   const { t } = useTranslation();
   const [editingQuery, setEditingQuery] = useState(false);
@@ -3218,7 +3474,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
   const [showAlts, setShowAlts] = useState(false);
   const [alts, setAlts] = useState<any[]>([]);
   const [loadingAlts, setLoadingAlts] = useState(false);
-  const [altService, setAltService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'remotion'>('pexels');
+  const [altService, setAltService] = useState<'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'remotion'>(defaultStockSource === 'dvids' ? 'dvids' : defaultStockSource === 'pixabay' ? 'pixabay' : 'pexels');
   const [remotionRendering, setRemotionRendering] = useState(false);
   const [saving, setSaving] = useState(false);
   const [applyingAltId, setApplyingAltId] = useState<number | string | null>(null);
@@ -3343,7 +3599,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
     setEditingMotion(false);
   };
 
-  const fetchAlts = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'remotion' = altService) => {
+  const fetchAlts = async (service: 'pexels' | 'pixabay' | 'mixkit' | 'dvids' | 'remotion' = altService) => {
     if (loadingAlts) return;
     setAltService(service);
     setShowAlts(true);
@@ -3673,6 +3929,52 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
               </div>
             );
           })()}
+          {/* Live CTA buttons preview (collapsed card) */}
+          {(block.ctaOverlay?.buttons?.length ?? 0) > 0 && block.clipAssetPath && !block.renderedClipPath && (() => {
+            const cta = block.ctaOverlay!;
+            const posMap: Record<string, React.CSSProperties> = {
+              'bottom': { bottom: '12%', left: '50%', transform: 'translateX(-50%)' },
+              'bottom-left': { bottom: '12%', left: '4%' },
+              'bottom-right': { bottom: '12%', right: '4%' },
+              'top': { top: '8%', left: '50%', transform: 'translateX(-50%)' },
+              'top-left': { top: '8%', left: '4%' },
+              'top-right': { top: '8%', right: '4%' },
+            };
+            return (
+              <div className="absolute pointer-events-none flex items-center gap-1" style={{ ...posMap[cta.position ?? 'bottom'], zIndex: 6 }}>
+                {cta.buttons.map((btn) => {
+                  const isSubscribe = btn === 'subscribe';
+                  return (
+                    <span key={btn} className="inline-flex items-center gap-0.5 rounded-full whitespace-nowrap" style={{
+                      backgroundColor: isSubscribe ? '#CC0000' : 'rgba(255,255,255,0.15)',
+                      color: '#FFF',
+                      padding: '2px 7px',
+                      fontSize: '7px',
+                      fontWeight: 700,
+                      letterSpacing: '0.03em',
+                      backdropFilter: isSubscribe ? 'none' : 'blur(6px)',
+                      boxShadow: isSubscribe ? '0 1px 6px rgba(204,0,0,0.4)' : '0 1px 3px rgba(0,0,0,0.3)',
+                      border: isSubscribe ? 'none' : '1px solid rgba(255,255,255,0.12)',
+                    }}>
+                      {btn === 'subscribe' && <Bell style={{ width: 9, height: 9, color: 'white' }} />}
+                      {btn === 'like' && <ThumbsUp style={{ width: 9, height: 9, color: 'white' }} />}
+                      {btn === 'comment' && <MessageCircle style={{ width: 9, height: 9, color: 'white' }} />}
+                      {{ subscribe: 'SUB', like: 'LIKE', comment: 'CMT' }[btn]}
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          })()}
+          {/* Effect badge on card thumbnail */}
+          {(block.screenEffectId || block.effectOverlay?.type) && !block.renderedClipPath && (
+            <div className="absolute bottom-1 left-1 pointer-events-none" style={{ zIndex: 7 }}>
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[7px] font-bold text-white bg-amber-600/70">
+                <Sparkles style={{ width: 8, height: 8 }} />
+                FX
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -4018,7 +4320,7 @@ function BlockCard({ block, docId, orientation, isProducing, onBlockUpdated, dis
         <div className="px-3.5 pb-3 space-y-2 border-t border-c-border pt-2.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1">
-              {(['pexels', 'pixabay', 'mixkit', 'remotion'] as const).map((svc) => (
+              {(['pexels', 'pixabay', 'mixkit', 'dvids', 'remotion'] as const).map((svc) => (
                 <button
                   key={svc}
                   className={`text-[10px] px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
@@ -5127,6 +5429,18 @@ export default function ScriptDoc({ studioConfig = SCRIPT_STUDIO_CONFIG }: { stu
   const [fetchAllSource, setFetchAllSource] = useState<'pexels' | 'pixabay' | 'dvids'>(studioConfig.defaultStockSource);
   const prevResultUrlRef = useRef<string | null>(null);
 
+  // Screen effects & SFX from media library (shared across all blocks)
+  const { data: screenEffectItems = [] } = useQuery({
+    queryKey: ['media-library-screen-effects'],
+    queryFn: () => mediaLibraryApi.list({ type: 'screen-effect' }),
+    staleTime: 5 * 60_000,
+  });
+  const { data: sfxLibraryItems = [] } = useQuery({
+    queryKey: ['media-library-sfx'],
+    queryFn: () => mediaLibraryApi.list({ type: 'sfx' }),
+    staleTime: 5 * 60_000,
+  });
+
   // Background download queue — allows user to continue editing while stock downloads
   const [downloadQueue, setDownloadQueue] = useState<Map<number, DownloadTask>>(new Map());
 
@@ -5579,6 +5893,8 @@ export default function ScriptDoc({ studioConfig = SCRIPT_STUDIO_CONFIG }: { stu
                         onBlockUpdated={handleBlockUpdated}
                         orientation={orientation}
                         studioApi={studioApi}
+                        screenEffects={screenEffectItems}
+                        sfxLibrary={sfxLibraryItems}
                       />
                     ))}
                   </div>
@@ -5662,6 +5978,7 @@ export default function ScriptDoc({ studioConfig = SCRIPT_STUDIO_CONFIG }: { stu
                 downloadQueue={downloadQueue}
                 queueStockDownload={queueStockDownload}
                 studioApi={studioApi}
+                defaultStockSource={studioConfig.defaultStockSource}
               />
             </div>
           ) : (
@@ -5728,6 +6045,7 @@ export default function ScriptDoc({ studioConfig = SCRIPT_STUDIO_CONFIG }: { stu
                             downloadQueue={downloadQueue}
                             queueStockDownload={queueStockDownload}
                             studioApi={studioApi}
+                            defaultStockSource={studioConfig.defaultStockSource}
                           />
                         </div>
                       ))}

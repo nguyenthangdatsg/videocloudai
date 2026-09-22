@@ -163,6 +163,10 @@ export interface ScriptBlockRow {
   chart_spec_json: string | null;
   overlays_json: string;
   overlay_style_json: string | null;
+  cta_overlay_json: string | null;
+  effect_overlay_json: string | null;
+  screen_effect_id: string | null;
+  sfx_id: string | null;
   pace_hint: 'slow' | 'fast' | null;
   content_hash: string | null;
   audio_path: string | null;
@@ -197,6 +201,17 @@ export interface OverlayStyle {
   position?: 'center' | 'top' | 'bottom';
 }
 
+export interface CtaOverlay {
+  buttons: ('subscribe' | 'like' | 'comment')[];
+  position?: 'bottom' | 'bottom-right' | 'bottom-left' | 'top' | 'top-right' | 'top-left';
+}
+
+export interface EffectOverlay {
+  type: 'money-rain' | 'confetti';
+  density?: number; // 0.5 = sparse, 1 = normal, 2 = dense
+  opacity?: number; // 0-1, default 0.8
+}
+
 export interface ScriptBlockRecord {
   id: string;
   docId: string;
@@ -209,6 +224,10 @@ export interface ScriptBlockRecord {
   chartSpec: ChartSpec | null;
   overlays: string[];
   overlayStyle: OverlayStyle | null;
+  ctaOverlay: CtaOverlay | null;
+  effectOverlay: EffectOverlay | null;
+  screenEffectId: string | null;
+  sfxId: string | null;
   paceHint: 'slow' | 'fast' | null;
   contentHash: string | null;
   audioPath: string | null;
@@ -406,6 +425,13 @@ export function ensureScriptStudioTables(): void {
   // Migration: opening_text (title card text for opening blocks)
   try { dbRun(`ALTER TABLE script_blocks ADD COLUMN opening_text TEXT`); } catch { /* already exists */ }
   try { dbRun(`ALTER TABLE script_blocks ADD COLUMN overlay_style_json TEXT`); } catch { /* already exists */ }
+  try { dbRun(`ALTER TABLE script_blocks ADD COLUMN cta_overlay_json TEXT`); } catch { /* already exists */ }
+  try { dbRun(`ALTER TABLE script_blocks ADD COLUMN effect_overlay_json TEXT`); } catch { /* already exists */ }
+  try { dbRun(`ALTER TABLE dvids_blocks ADD COLUMN effect_overlay_json TEXT`); } catch { /* already exists */ }
+  try { dbRun(`ALTER TABLE script_blocks ADD COLUMN screen_effect_id TEXT`); } catch { /* already exists */ }
+  try { dbRun(`ALTER TABLE script_blocks ADD COLUMN sfx_id TEXT`); } catch { /* already exists */ }
+  try { dbRun(`ALTER TABLE dvids_blocks ADD COLUMN screen_effect_id TEXT`); } catch { /* already exists */ }
+  try { dbRun(`ALTER TABLE dvids_blocks ADD COLUMN sfx_id TEXT`); } catch { /* already exists */ }
 
   // Migrate: sync blocks for any existing docs that have no blocks yet
   try {
@@ -1577,6 +1603,10 @@ function rowToBlock(row: ScriptBlockRow): ScriptBlockRecord {
     chartSpec: row.chart_spec_json ? (JSON.parse(row.chart_spec_json) as ChartSpec) : null,
     overlays: JSON.parse(row.overlays_json || '[]') as string[],
     overlayStyle: row.overlay_style_json ? (JSON.parse(row.overlay_style_json) as OverlayStyle) : null,
+    ctaOverlay: row.cta_overlay_json ? (JSON.parse(row.cta_overlay_json) as CtaOverlay) : null,
+    effectOverlay: row.effect_overlay_json ? (JSON.parse(row.effect_overlay_json) as EffectOverlay) : null,
+    screenEffectId: row.screen_effect_id ?? null,
+    sfxId: row.sfx_id ?? null,
     paceHint: row.pace_hint ?? null,
     contentHash: row.content_hash,
     audioPath: row.audio_path,
@@ -1619,6 +1649,10 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
   openingText?: string | null;
   overlays?: string[];
   overlayStyle?: OverlayStyle | null;
+  ctaOverlay?: CtaOverlay | null;
+  effectOverlay?: EffectOverlay | null;
+  screenEffectId?: string | null;
+  sfxId?: string | null;
   pexelsQuery?: string | null;
   motion?: string;
   clipAssetPath?: string | null;
@@ -1649,6 +1683,10 @@ export function updateBlockVisual(docId: string, blockIndex: number, fields: {
   if ('openingText' in fields) { updates.push('opening_text = ?'); vals.push(fields.openingText ?? null); }
   if ('overlays' in fields) { updates.push('overlays_json = ?'); vals.push(JSON.stringify(fields.overlays ?? [])); }
   if ('overlayStyle' in fields) { updates.push('overlay_style_json = ?'); vals.push(fields.overlayStyle ? JSON.stringify(fields.overlayStyle) : null); }
+  if ('ctaOverlay' in fields) { updates.push('cta_overlay_json = ?'); vals.push(fields.ctaOverlay ? JSON.stringify(fields.ctaOverlay) : null); }
+  if ('effectOverlay' in fields) { updates.push('effect_overlay_json = ?'); vals.push(fields.effectOverlay ? JSON.stringify(fields.effectOverlay) : null); }
+  if ('screenEffectId' in fields) { updates.push('screen_effect_id = ?'); vals.push(fields.screenEffectId ?? null); }
+  if ('sfxId' in fields) { updates.push('sfx_id = ?'); vals.push(fields.sfxId ?? null); }
   if ('pexelsQuery' in fields) { updates.push('pexels_query = ?'); vals.push(fields.pexelsQuery ?? null); }
   if ('motion' in fields && fields.motion != null) { updates.push('motion = ?'); vals.push(fields.motion); }
   if ('visualType' in fields) { updates.push('visual_type = ?'); vals.push(fields.visualType); }

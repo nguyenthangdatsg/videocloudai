@@ -47,7 +47,7 @@ import { resolveImageCacheDir, downloadPexelsVideoById } from '../services/pexel
 import { dbGet, dbRun } from '../db';
 import { isReachable as omnivoiceReachable, getBaseUrl as omnivoiceBaseUrl, listVoices as omnivoiceListVoices } from '../providers/omnivoice.provider';
 import { isAvailable as kokoroIsAvailable, synthesize as kokoroSynthesize, listVoices as kokoroListVoices } from '../providers/kokoro.provider';
-import { searchDvids, downloadDvidsVideo } from '../services/dvids.service';
+import { searchDvids, getAssetDetails, downloadDvidsVideo } from '../services/dvids.service';
 
 const KOKORO_VOICE_IDS = new Set(kokoroListVoices().map(v => v.voice_id));
 function resolveKokoroVoice(voiceId: string | undefined): string {
@@ -322,6 +322,10 @@ export function createStudioRouter(tables: StudioTableConfig = SCRIPT_STUDIO_TAB
     if ('openingText' in body) fields.openingText = (body.openingText ?? null) as string | null;
     if ('overlays' in body) fields.overlays = (body.overlays ?? []) as string[];
     if ('overlayStyle' in body) fields.overlayStyle = (body.overlayStyle ?? null) as any;
+    if ('ctaOverlay' in body) fields.ctaOverlay = (body.ctaOverlay ?? null) as any;
+    if ('effectOverlay' in body) fields.effectOverlay = (body.effectOverlay ?? null) as any;
+    if ('screenEffectId' in body) fields.screenEffectId = (body.screenEffectId ?? null) as string | null;
+    if ('sfxId' in body) fields.sfxId = (body.sfxId ?? null) as string | null;
     if ('pexelsQuery' in body) fields.pexelsQuery = (body.pexelsQuery ?? null) as string | null;
     if ('motion' in body && body.motion != null) fields.motion = body.motion as string;
     if ('clipAssetPath' in body) fields.clipAssetPath = (body.clipAssetPath ?? null) as string | null;
@@ -635,17 +639,31 @@ export function createStudioRouter(tables: StudioTableConfig = SCRIPT_STUDIO_TAB
         res.json({ candidates, service: 'mixkit' });
       } else if (service === 'dvids') {
         const { results } = await searchDvids(query, { maxResults: perPage, aspectRatio: orientation === 'portrait' ? 'portrait' : '16:9' });
-        const candidates = results.map(r => ({
-          id: r.id,
-          thumbnail: r.thumbnail,
-          previewUrl: r.thumbnail,
-          downloadUrl: r.url,
-          duration: r.duration,
-          width: r.width,
-          height: r.height,
-          pageUrl: r.url,
-          title: r.title,
-          source: 'dvids',
+        // Fetch asset details in parallel to get actual video file URLs for preview
+        const candidates = await Promise.all(results.map(async (r) => {
+          let previewUrl = r.thumbnail;
+          try {
+            const asset = await getAssetDetails(r.id);
+            if (asset.hls_url) {
+              previewUrl = asset.hls_url;
+            } else if (asset.files?.length) {
+              const sorted = [...asset.files].sort((a, b) => b.width - a.width);
+              const mp4 = sorted.find(f => f.type?.includes('mp4') || f.src?.endsWith('.mp4')) || sorted[0];
+              if (mp4?.src) previewUrl = mp4.src;
+            }
+          } catch {}
+          return {
+            id: r.id,
+            thumbnail: r.thumbnail,
+            previewUrl,
+            downloadUrl: r.url,
+            duration: r.duration,
+            width: r.width,
+            height: r.height,
+            pageUrl: r.url,
+            title: r.title,
+            source: 'dvids',
+          };
         }));
         res.json({ candidates, service: 'dvids' });
       } else {

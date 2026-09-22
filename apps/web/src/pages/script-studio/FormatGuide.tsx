@@ -1,15 +1,28 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Download, Copy, Check, BookOpen, AlertTriangle, CheckCircle, BarChart2 } from 'lucide-react';
+import { X, Download, Copy, Check, BookOpen, AlertTriangle, CheckCircle, BarChart2, Sparkles, Music2, Shield } from 'lucide-react';
 import { useAppStore } from '../../store';
 
 const TEMPLATE_MD = `# VIDEO #1 — Your Video Title Here
 
+# Written 2026-01 | 25 scenes | full_ai | 5:00 target
+# This line is a comment — ignored by the parser
+
+[CHARACTER: narrator | wise elderly professor, silver beard, tweed jacket, warm expression]
+[CHARACTER: hero | young woman with short black hair, determined eyes, leather jacket]
+[VOICE_GROUP: main | engine:edge-tts | voice:en-US-GuyNeural | rate:-5%]
+[VOICE_GROUP: dramatic | engine:edge-tts | voice:en-US-ChristopherNeural | rate:-10%]
+[VOICE: en-US-GuyNeural | rate:-5%]
+
 ## SEGMENT 1 — COLD OPEN (0:00–0:25)
-[PEXELS: specific subject doing action in location]
+
+### SCENE 1
+[PEXELS: dark ocean waves crashing against rocks at night]
+[PACE: slow]
 Your hook narration paragraph goes here. This is the first thing viewers hear — make it count. Ask a question or state a surprising fact.
 
-[PEXELS: another specific visual for second paragraph]
+### SCENE 2
+[FLOW: cinematic wide shot of @narrator standing at the edge of a cliff overlooking a vast ancient city at sunset, dramatic lighting, 8K]
 [TEXT ON SCREEN: "Key statistic or quote"]
 Second narration paragraph with supporting detail.
 
@@ -17,14 +30,29 @@ Second narration paragraph with supporting detail.
 
 ### SCENE 1
 [PEXELS: concrete subject related to topic]
-Main body narration paragraph one.
+[VOICE: group:dramatic | emotion:serious]
+According to the World Bank, global GDP reached [STAT: global GDP | $105 trillion | currency] in 2024 — a record high.
 
 ### SCENE 2
-[PEXELS: different angle or related subject]
-Main body narration paragraph two.
+[CHART: bars | USA:28.8, China:18.5, Japan:4.2, Germany:4.5, India:3.9 | "GDP by country ($ trillions, 2024)" | World Bank]
+The United States still leads the world economy, but the gap is narrowing.
+
+### SCENE 3
+[PEXELS: city traffic aerial view highway cars]
+[SCREEN_EFFECT: confetti]
+[SFX: celebration cheer]
+The numbers paint a clear picture of where the world is headed.
+
+### SCENE 4
+[FLOW: auto]
+[PACE: fast]
+Main body narration paragraph — when set to auto, the system builds an AI image prompt from this narration text automatically.
 
 ## SEGMENT 3 — CONCLUSION (1:30–2:00)
+
+### SCENE 1
 [PEXELS: closing visual matching the mood]
+[VOICE: pause-before:600ms | rate:-15% | pause-after:300ms]
 Wrap-up narration paragraph. End with a call to action or thought-provoking statement.
 
 ---
@@ -32,8 +60,8 @@ Wrap-up narration paragraph. End with a call to action or thought-provoking stat
 # PRODUCTION NOTES
 
 ## Stats used & sources
-- Source 1: Description and link
-- Source 2: Description and link
+- World Bank GDP data 2024: https://data.worldbank.org/indicator/NY.GDP.MKTP.CD
+- UN Population estimates: https://population.un.org/wpp/
 
 ## Chapter markers
 0:00 Cold Open
@@ -92,12 +120,22 @@ export function FormatGuide({ onClose }: { onClose: () => void }) {
             </h3>
             <div className="font-mono text-sm bg-c-elevated rounded-lg p-4 space-y-1 overflow-x-auto leading-relaxed">
               <p><span className="text-purple-400"># VIDEO #1 — Title</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoTitle')}</span></p>
+              <p><span className="text-c-dim"># comment line (ignored)</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoComment')}</span></p>
+              <p><span className="text-pink-400">[CHARACTER: id | description]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoChar')}</span></p>
+              <p><span className="text-teal-400">[VOICE_GROUP: id | engine:X | voice:Y]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoVoiceGroup')}</span></p>
+              <p><span className="text-cyan-400">[VOICE: voice-name | rate:X%]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoVoiceDoc')}</span></p>
               <p className="mt-2"><span className="text-blue-400">## SEGMENT 1 — COLD OPEN (0:00–0:25)</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoSegment')}</span></p>
               <p><span className="text-orange-400">### SCENE 1</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoScene')}</span></p>
               <p><span className="text-green-400">[PEXELS: elderly japanese man shop tokyo]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoPexels')}</span></p>
+              <p><span className="text-rose-400">[FLOW: cinematic prompt or auto]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoFlow')}</span></p>
+              <p><span className="text-purple-400">[CHART: type | data | &quot;title&quot; | source]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoChart')}</span></p>
               <p><span className="text-c-text">Narration paragraph text...</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoNarration')}</span></p>
               <p><span className="text-amber-400">[TEXT ON SCREEN: &quot;overlay text&quot;]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoOverlay')}</span></p>
               <p><span className="text-cyan-400">[PACE: slow]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoPace')}</span></p>
+              <p><span className="text-cyan-400">[VOICE: group:X | emotion:Y]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoVoiceBlock')}</span></p>
+              <p><span className="text-amber-400/70">[STAT: label | fallback | type]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoStat')}</span></p>
+              <p><span className="text-amber-400">[SCREEN_EFFECT: effect-name]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoScreenEffect')}</span></p>
+              <p><span className="text-green-400/70">[SFX: sound description]</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoSfx')}</span></p>
               <p className="mt-2"><span className="text-c-dim">---</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoRule')}</span></p>
               <p className="mt-2"><span className="text-red-400"># PRODUCTION NOTES</span> <span className="text-c-dim text-xs ml-2">← {t('scriptStudio.guide.annoNotes')}</span></p>
               <p><span className="text-red-300/70">## Stats used & sources</span></p>
@@ -214,10 +252,130 @@ export function FormatGuide({ onClose }: { onClose: () => void }) {
             </div>
           </section>
 
-          {/* Section 7: Advanced Tags */}
+          {/* Section 7: AI Image Generation (FLOW) */}
+          <section>
+            <h3 className="text-base font-semibold text-c-text mb-1 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-rose-400" />
+              {t('scriptStudio.guide.flowTitle')}
+            </h3>
+            <p className="text-sm text-c-muted mb-3">{t('scriptStudio.guide.flowHint')}</p>
+
+            <div className="font-mono text-sm bg-c-elevated rounded-lg p-4 space-y-2 overflow-x-auto leading-relaxed mb-3">
+              <p className="text-rose-400">{t('scriptStudio.guide.flowSyntax')}</p>
+            </div>
+
+            <div className="space-y-3">
+              {(['flowEx1', 'flowEx2', 'flowEx3'] as const).map((key) => (
+                <div key={key} className="space-y-1">
+                  <p className="text-xs font-medium text-rose-400">
+                    {t(`scriptStudio.guide.${key}Label`)}
+                  </p>
+                  <pre className="font-mono text-xs bg-c-elevated rounded-lg p-3 text-c-text whitespace-pre-wrap leading-relaxed overflow-x-auto">
+                    {t(`scriptStudio.guide.${key}`)}
+                  </pre>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
+              <p className="text-xs text-rose-300">{t('scriptStudio.guide.flowNote')}</p>
+            </div>
+          </section>
+
+          {/* Section 8: Screen Effects */}
+          <section>
+            <h3 className="text-base font-semibold text-c-text mb-1 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              {t('scriptStudio.guide.screenEffectTitle')}
+            </h3>
+            <p className="text-sm text-c-muted mb-3">{t('scriptStudio.guide.screenEffectHint')}</p>
+
+            <div className="font-mono text-sm bg-c-elevated rounded-lg p-4 space-y-1 overflow-x-auto leading-relaxed mb-3">
+              <p className="text-amber-400">[SCREEN_EFFECT: effect-name]</p>
+              <p className="text-c-dim text-xs mt-1">{t('scriptStudio.guide.screenEffectTypes')}</p>
+            </div>
+
+            <div className="space-y-3">
+              {(['screenEffectEx1', 'screenEffectEx2', 'screenEffectEx3'] as const).map((key) => (
+                <div key={key} className="space-y-1">
+                  <p className="text-xs font-medium text-amber-400">
+                    {t(`scriptStudio.guide.${key}Label`)}
+                  </p>
+                  <pre className="font-mono text-xs bg-c-elevated rounded-lg p-3 text-c-text whitespace-pre-wrap leading-relaxed overflow-x-auto">
+                    {t(`scriptStudio.guide.${key}`)}
+                  </pre>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <p className="text-xs text-amber-300">{t('scriptStudio.guide.screenEffectNote')}</p>
+            </div>
+          </section>
+
+          {/* Section 9: Sound Effects */}
+          <section>
+            <h3 className="text-base font-semibold text-c-text mb-1 flex items-center gap-2">
+              <Music2 className="w-4 h-4 text-green-400" />
+              {t('scriptStudio.guide.sfxTitle')}
+            </h3>
+            <p className="text-sm text-c-muted mb-3">{t('scriptStudio.guide.sfxHint')}</p>
+
+            <div className="font-mono text-sm bg-c-elevated rounded-lg p-4 space-y-1 overflow-x-auto leading-relaxed mb-3">
+              <p className="text-green-400">[SFX: sound description]</p>
+            </div>
+
+            <div className="space-y-3">
+              {(['sfxEx1', 'sfxEx2'] as const).map((key) => (
+                <div key={key} className="space-y-1">
+                  <p className="text-xs font-medium text-green-400">
+                    {t(`scriptStudio.guide.${key}Label`)}
+                  </p>
+                  <pre className="font-mono text-xs bg-c-elevated rounded-lg p-3 text-c-text whitespace-pre-wrap leading-relaxed overflow-x-auto">
+                    {t(`scriptStudio.guide.${key}`)}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Section 10: Real Statistics & Trusted Sources */}
+          <section>
+            <h3 className="text-base font-semibold text-c-text mb-1 flex items-center gap-2">
+              <Shield className="w-4 h-4 text-blue-400" />
+              {t('scriptStudio.guide.statsTitle')}
+            </h3>
+            <p className="text-sm text-c-muted mb-3">{t('scriptStudio.guide.statsHint')}</p>
+
+            <div className="space-y-2 mb-3">
+              <p className="text-xs font-medium text-blue-400">{t('scriptStudio.guide.statsTrustedLabel')}</p>
+              <div className="font-mono text-xs bg-c-elevated rounded-lg p-3 text-c-text whitespace-pre-wrap leading-relaxed overflow-x-auto">
+                {t('scriptStudio.guide.statsTrustedList')}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {(['statsEx1', 'statsEx2'] as const).map((key) => (
+                <div key={key} className="space-y-1">
+                  <p className="text-xs font-medium text-blue-400">
+                    {t(`scriptStudio.guide.${key}Label`)}
+                  </p>
+                  <pre className="font-mono text-xs bg-c-elevated rounded-lg p-3 text-c-text whitespace-pre-wrap leading-relaxed overflow-x-auto">
+                    {t(`scriptStudio.guide.${key}`)}
+                  </pre>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+              <p className="text-xs text-blue-300">{t('scriptStudio.guide.statsNote')}</p>
+            </div>
+          </section>
+
+          {/* Section 11: Advanced Tags */}
           <section>
             <h3 className="text-base font-semibold text-c-text mb-3">
-              {t('scriptStudio.guide.advancedTitle')}
+              {t('scriptStudio.guide.advancedTitle11')}
             </h3>
 
             {/* Characters */}

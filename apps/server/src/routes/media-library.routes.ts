@@ -46,7 +46,7 @@ function toApiItem(row: MediaLibraryRow) {
   };
 }
 
-const ALLOWED_EXTENSIONS = new Set(['.png', '.gif', '.webp', '.svg', '.mp3', '.wav', '.ogg']);
+const ALLOWED_EXTENSIONS = new Set(['.png', '.gif', '.webp', '.svg', '.mp3', '.wav', '.ogg', '.mp4']);
 const MIME_MAP: Record<string, string> = {
   '.png': 'image/png',
   '.gif': 'image/gif',
@@ -55,7 +55,9 @@ const MIME_MAP: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4',
 };
+const VALID_TYPES = ['sticker', 'icon', 'animation', 'sfx', 'screen-effect'];
 
 function getMediaDir(): string {
   const dir = path.resolve(process.env.ASSETS_DIR || './assets', 'media-library');
@@ -193,10 +195,10 @@ export function createMediaLibraryRouter(): Router {
     };
 
     const mediaType = type || 'sticker';
-    if (!['sticker', 'icon', 'animation', 'sfx'].includes(mediaType)) {
+    if (!VALID_TYPES.includes(mediaType)) {
       // Clean up uploaded file
       fs.unlinkSync(file.path);
-      res.status(400).json({ error: 'Invalid type. Must be: sticker, icon, animation, or sfx' });
+      res.status(400).json({ error: 'Invalid type. Must be: sticker, icon, animation, sfx, or screen-effect' });
       return;
     }
 
@@ -247,10 +249,10 @@ export function createMediaLibraryRouter(): Router {
     };
 
     const mediaType = type || 'sticker';
-    if (!['sticker', 'icon', 'animation', 'sfx'].includes(mediaType)) {
+    if (!VALID_TYPES.includes(mediaType)) {
       // Clean up uploaded files
       for (const f of files) { try { fs.unlinkSync(f.path); } catch { /* ignore */ } }
-      res.status(400).json({ error: 'Invalid type. Must be: sticker, icon, animation, or sfx' });
+      res.status(400).json({ error: 'Invalid type. Must be: sticker, icon, animation, sfx, or screen-effect' });
       return;
     }
 
@@ -315,7 +317,7 @@ export function createMediaLibraryRouter(): Router {
     if (category !== undefined) { sets.push('category = ?'); params.push(category.trim()); }
     if (tags !== undefined) { sets.push('tags = ?'); params.push(JSON.stringify(tags)); }
     if (triggerTags !== undefined) { sets.push('trigger_tags = ?'); params.push(JSON.stringify(triggerTags)); }
-    if (type !== undefined && ['sticker', 'icon', 'animation', 'sfx'].includes(type)) {
+    if (type !== undefined && VALID_TYPES.includes(type)) {
       sets.push('type = ?');
       params.push(type);
     }

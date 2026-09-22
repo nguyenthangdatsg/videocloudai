@@ -89,6 +89,16 @@ export interface SplitScreenConfig {
   gap?: number;
 }
 
+export type ScreenEffectType =
+  | 'money-rain' | 'confetti' | 'snow' | 'sparkles' | 'fire-embers'
+  | 'bubbles' | 'hearts' | 'rain' | 'bokeh' | 'smoke';
+
+export interface ParticleEffectConfig {
+  durationInFrames: number;
+  effectType: ScreenEffectType;
+  density?: number; // 0.5 = sparse, 1 = normal, 2 = dense
+}
+
 export interface ComparisonSceneConfig {
   durationInFrames: number;
   leftMediaSrc: string;
