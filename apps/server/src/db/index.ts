@@ -30,9 +30,44 @@ export function getDb(): Database.Database {
   console.log('[DB] rawDbPath:', rawDbPath);
   console.log('[DB] Resolved database path:', dbPath);
   console.log('[DB] Database dir exists:', fs.existsSync(dir));
+
+  // Force DELETE journal mode by checkpointing WAL, closing, patching header, then reopening.
+  // SQLite stores journal mode at byte offsets 18-19 in the header:
+  //   1,1 = DELETE mode (rollback journal)
+  //   2,2 = WAL mode
+  try {
+    const header = Buffer.alloc(20);
+    const fd = fs.openSync(dbPath, 'r');
+    fs.readSync(fd, header, 0, 20, 0);
+    fs.closeSync(fd);
+    const isWal = header[18] === 2 && header[19] === 2;
+    if (isWal) {
+      console.log('[DB] Database is in WAL mode, converting to DELETE...');
+      // Open, checkpoint all WAL data, close
+      const tempDb = new Database(dbPath);
+      try { tempDb.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* empty WAL */ }
+      tempDb.close();
+      // Remove WAL/SHM files that close() recreated
+      for (const suffix of ['-wal', '-shm']) {
+        const f = dbPath + suffix;
+        if (fs.existsSync(f)) { try { fs.unlinkSync(f); } catch { /* ignore */ } }
+      }
+      // Patch header bytes 18-19 from WAL (2,2) to DELETE (1,1) AFTER removing WAL files
+      const fdw = fs.openSync(dbPath, 'r+');
+      const patch = Buffer.from([1, 1]);
+      fs.writeSync(fdw, patch, 0, 2, 18);
+      fs.closeSync(fdw);
+      console.log('[DB] Converted to DELETE mode');
+    }
+  } catch (e) {
+    console.warn('[DB] WAL conversion warning:', (e as Error).message);
+  }
+
   try {
     db = new Database(dbPath);
-    console.log('[DB] Database opened OK');
+    db.pragma('busy_timeout = 5000');
+    const actualMode = (db.pragma('journal_mode') as { journal_mode: string }[])[0]?.journal_mode;
+    console.log('[DB] Database opened OK, journal_mode:', actualMode);
   } catch (e) {
     console.error('[DB] FAILED to open database:', (e as Error).message);
     throw e;
@@ -150,7 +185,7 @@ export function getDb(): Database.Database {
     `CREATE TABLE IF NOT EXISTS media_library (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('sticker', 'icon', 'animation', 'sfx')),
+      type TEXT NOT NULL CHECK(type IN ('sticker', 'icon', 'animation', 'sfx', 'screen-effect')),
       tags TEXT NOT NULL DEFAULT '[]',
       category TEXT NOT NULL DEFAULT 'general',
       filename TEXT NOT NULL,
@@ -187,7 +222,44 @@ export function getDb(): Database.Database {
     `CREATE INDEX IF NOT EXISTS idx_frame_video_library_category ON frame_video_library(category)`,
     `ALTER TABLE drama_projects ADD COLUMN ai_long_scene_mode TEXT NOT NULL DEFAULT 'freeze_hold'`,
     `ALTER TABLE drama_projects ADD COLUMN pacing TEXT NOT NULL DEFAULT 'normal'`,
+    `ALTER TABLE transform_segments ADD COLUMN style TEXT NOT NULL DEFAULT 'natural'`,
+    `ALTER TABLE transform_segments ADD COLUMN speed REAL NOT NULL DEFAULT 1.0`,
+    `ALTER TABLE transform_segments ADD COLUMN duration INTEGER NOT NULL DEFAULT 6`,
+    `ALTER TABLE transform_segments ADD COLUMN preview_path TEXT`,
   ];
+
+  // ── Migrate media_library CHECK constraint to include 'screen-effect' ──
+  try {
+    const hasScreenEffect = db.prepare(`SELECT COUNT(*) as c FROM media_library WHERE type = 'screen-effect'`).get() as { c: number } | undefined;
+    // Test if constraint allows screen-effect by attempting a dummy insert + rollback
+    try {
+      db.exec(`BEGIN; INSERT INTO media_library (id,name,type,filename,filepath,url,created_at,updated_at) VALUES ('__test_se','t','screen-effect','t','t','t','t','t'); DELETE FROM media_library WHERE id='__test_se'; COMMIT;`);
+    } catch (checkErr) {
+      // Roll back the failed BEGIN transaction before attempting migration
+      try { db.exec('ROLLBACK'); } catch { /* not in transaction */ }
+      // Old CHECK constraint — recreate table
+      db.exec(`
+        ALTER TABLE media_library RENAME TO media_library_old;
+        CREATE TABLE media_library (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('sticker','icon','animation','sfx','screen-effect')),
+          tags TEXT NOT NULL DEFAULT '[]', category TEXT NOT NULL DEFAULT 'general',
+          filename TEXT NOT NULL, filepath TEXT NOT NULL, url TEXT NOT NULL,
+          mime_type TEXT NOT NULL DEFAULT 'image/png', filesize INTEGER NOT NULL DEFAULT 0,
+          duration REAL, width INTEGER, height INTEGER,
+          usage_count INTEGER NOT NULL DEFAULT 0, trigger_tags TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        INSERT INTO media_library SELECT * FROM media_library_old;
+        DROP TABLE media_library_old;
+        CREATE INDEX IF NOT EXISTS idx_media_library_type ON media_library(type);
+        CREATE INDEX IF NOT EXISTS idx_media_library_category ON media_library(category);
+      `);
+      console.log('[DB] Migrated media_library CHECK constraint to include screen-effect');
+    }
+  } catch (e) {
+    console.warn('[DB] media_library migration warning:', (e as Error).message);
+  }
   let migrationOk = 0, migrationSkip = 0;
   for (const sql of columnMigrations) {
     try { db.exec(sql); migrationOk++; } catch (e) {

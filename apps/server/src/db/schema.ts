@@ -1,8 +1,8 @@
 export const SCHEMA_SQL = `
-PRAGMA journal_mode = WAL;
+PRAGMA journal_mode = DELETE;
 PRAGMA foreign_keys = ON;
 PRAGMA cache_size = -32000;
-PRAGMA synchronous = NORMAL;
+PRAGMA synchronous = FULL;
 
 CREATE TABLE IF NOT EXISTS scenes (
   id TEXT PRIMARY KEY,

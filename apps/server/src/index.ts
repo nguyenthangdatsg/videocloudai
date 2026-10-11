@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
-import { execSync } from 'child_process';
+import { execSync, spawn, ChildProcess } from 'child_process';
 import * as dotenv from 'dotenv';
 
 // Load .env: server dir first, then monorepo root
@@ -46,7 +46,7 @@ for (const dir of requiredDirs) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-import { getDb } from './db';
+import { getDb, closeDb } from './db';
 import { initProviders } from './providers';
 import { getJobQueue } from './queue/queue';
 import { createApp } from './app';
@@ -125,6 +125,23 @@ async function main() {
     console.log(`SSE events: http://localhost:${PORT}/api/events`);
   });
 
+  // Start sqlite-web for DB management UI
+  const SQLITE_WEB_PORT = parseInt(process.env.SQLITE_WEB_PORT ?? '8080');
+  const dbPath = process.env.DATABASE_PATH ?? path.join(monoRoot, 'database', 'videocloudai.db');
+  let sqliteWeb: ChildProcess | null = null;
+  try {
+    sqliteWeb = spawn('python', [
+      '-c',
+      `import sys; sys.argv = ['sqlite_web', '${dbPath.replace(/\\/g, '/')}', '--port', '${SQLITE_WEB_PORT}', '--no-browser']; from sqlite_web.sqlite_web import main; main()`,
+    ], { stdio: 'ignore', detached: false });
+    sqliteWeb.unref();
+    sqliteWeb.on('error', () => console.warn('[sqlite-web] Failed to start — install with: pip install sqlite-web'));
+    sqliteWeb.on('exit', (code) => { if (code) console.warn(`[sqlite-web] Exited with code ${code}`); });
+    console.log(`[sqlite-web] DB manager at http://localhost:${SQLITE_WEB_PORT}`);
+  } catch {
+    console.warn('[sqlite-web] Not available — install with: pip install sqlite-web');
+  }
+
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`\n❌ Port ${PORT} is already in use.`);
@@ -140,7 +157,12 @@ async function main() {
   });
 
   // Graceful shutdown for ts-node-dev restart
-  const shutdown = () => { server.close(); process.exit(0); };
+  const shutdown = () => {
+    if (sqliteWeb && !sqliteWeb.killed) sqliteWeb.kill();
+    closeDb();
+    server.close();
+    process.exit(0);
+  };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }
