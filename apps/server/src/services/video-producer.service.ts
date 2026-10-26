@@ -929,94 +929,60 @@ function buildOverlayDrawtext(overlays: string[], style: OverlayStyle | null, w:
   return vf;
 }
 
-/** Emoji font path for CTA icon rendering (Segoe UI Emoji on Windows). */
-const EMOJI_FONT = process.platform === 'win32'
-  ? 'C:/Windows/Fonts/seguiemj.ttf'
-  : '/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf';
-
-/** CTA icon emoji characters (rendered via emoji font textfile). */
-const CTA_ICONS: Record<string, string> = {
-  subscribe: '\u{1F514}', // 🔔
-  like:      '\u{1F44D}', // 👍
-  comment:   '\u{1F4AC}', // 💬
-};
-
-/** Write a single-char textfile for FFmpeg drawtext (emoji need textfile, not inline text). */
-function writeCtaIconFile(icon: string, name: string): string {
-  const cacheDir = path.resolve(process.env.CACHE_DIR ?? './cache', 'cta_icons');
-  fs.mkdirSync(cacheDir, { recursive: true });
-  const filePath = path.join(cacheDir, `${name}.txt`);
-  fs.writeFileSync(filePath, icon);
-  return filePath;
-}
-
-/** Build FFmpeg drawbox+drawtext filters for YouTube-style CTA buttons (Subscribe, Like, Comment). */
-function buildCtaDrawtext(cta: CtaOverlay | null, w: number, h: number): string {
-  if (!cta || !cta.buttons?.length) return '';
+/**
+ * Composite CTA overlay onto a video using a pre-made youtube-cta.mp4 asset.
+ * Uses FFmpeg colorkey to remove the black background and overlay on the clip.
+ */
+async function compositeCtaOverlay(
+  cta: CtaOverlay,
+  videoPath: string,
+  durationSec: number,
+  w: number,
+  h: number,
+  ffmpegPath: string,
+  log: (msg: string) => void,
+): Promise<string> {
+  const ctaMp4 = path.resolve(process.env.ASSETS_DIR ?? './assets', 'youtube-cta.mp4');
+  if (!fs.existsSync(ctaMp4)) throw new Error(`CTA video not found: ${ctaMp4}`);
 
   const pos = cta.position ?? 'bottom';
-  const btnH = Math.round(h * 0.05);       // button height ~5% of video height
-  const btnGap = Math.round(w * 0.025);     // gap between buttons
-  const fontSize = Math.round(btnH * 0.5);
-  const iconSize = Math.round(btnH * 0.55);
-  const padX = Math.round(btnH * 0.6);      // padding inside button
-  const iconGap = Math.round(fontSize * 0.4); // gap between icon and text
-  const isTop = pos === 'top' || pos === 'top-left' || pos === 'top-right';
-  const cornerY = isTop
-    ? Math.round(h * 0.05)
-    : h - btnH - Math.round(h * 0.05);
+  log(`Compositing CTA overlay (${pos}) from youtube-cta.mp4...`);
 
-  const hasEmojiFont = fs.existsSync(EMOJI_FONT);
-  const emojiFontEsc = EMOJI_FONT.replace(/:/g, '\\:');
+  // Scale CTA to 1/3 video width, keep aspect ratio (2012x398 source), cap at half video height
+  const ctaScaleW = Math.round(w / 3);
+  const ctaScaleH = Math.min(Math.round(ctaScaleW * 398 / 2012), Math.round(h / 2));
 
-  // Button definitions
-  const btnDefs: Record<string, { label: string; bgColor: string; textColor: string; charCount: number }> = {
-    subscribe: { label: 'SUBSCRIBE', bgColor: 'CC0000', textColor: 'FFFFFF', charCount: 9 },
-    like:      { label: 'LIKE',      bgColor: '333333', textColor: 'FFFFFF', charCount: 4 },
-    comment:   { label: 'COMMENT',   bgColor: '333333', textColor: 'FFFFFF', charCount: 7 },
-  };
-
-  // Estimate button widths: icon + gap + text + padding
-  const charW = Math.round(fontSize * 0.65);
-  const iconW = hasEmojiFont ? iconSize + iconGap : 0;
-  const buttons = cta.buttons.map(b => {
-    const def = btnDefs[b];
-    if (!def) return null;
-    return { ...def, key: b, minW: padX + iconW + def.charCount * charW + padX };
-  }).filter(Boolean) as Array<{ label: string; bgColor: string; textColor: string; charCount: number; key: string; minW: number }>;
-
-  const totalW = buttons.reduce((s, b) => s + b.minW, 0) + (buttons.length - 1) * btnGap;
-  let startX: number;
-  if (pos === 'bottom-right' || pos === 'top-right') startX = w - totalW - Math.round(w * 0.04);
-  else if (pos === 'bottom-left' || pos === 'top-left') startX = Math.round(w * 0.04);
-  else startX = Math.round((w - totalW) / 2);
-
-  let vf = '';
-  let curX = startX;
-
-  for (const btn of buttons) {
-    // Background fill
-    vf += `,drawbox=x=${curX}:y=${cornerY}:w=${btn.minW}:h=${btnH}:color=0x${btn.bgColor}E6:t=fill`;
-
-    let contentX = curX + padX;
-
-    // Icon (emoji via textfile + emoji font)
-    if (hasEmojiFont && CTA_ICONS[btn.key]) {
-      const iconFile = writeCtaIconFile(CTA_ICONS[btn.key], btn.key);
-      const iconFileEsc = iconFile.replace(/\\/g, '/').replace(/:/g, '\\:');
-      const iconY = cornerY + Math.round((btnH - iconSize) / 2);
-      vf += `,drawtext=fontfile='${emojiFontEsc}':textfile='${iconFileEsc}':fontsize=${iconSize}:fontcolor=0x${btn.textColor}:x=${contentX}:y=${iconY}`;
-      contentX += iconSize + iconGap;
-    }
-
-    // Label text
-    const textY = cornerY + Math.round((btnH - fontSize) / 2);
-    vf += `,drawtext=text='${btn.label}':fontsize=${fontSize}:fontcolor=0x${btn.textColor}:x=${contentX}:y=${textY}:borderw=1:bordercolor=0x00000066`;
-
-    curX += btn.minW + btnGap;
+  // Position: centered horizontally, vertical based on position setting
+  const ox = Math.round((w - ctaScaleW) / 2);
+  let oy: number;
+  if (pos.startsWith('top')) {
+    oy = Math.round(h * 0.05);
+  } else if (pos.startsWith('bottom')) {
+    oy = h - ctaScaleH - Math.round(h * 0.05);
+  } else {
+    oy = Math.round((h - ctaScaleH) / 2);
   }
 
-  return vf;
+  const outPath = videoPath.replace(/\.(mp4|webm)$/, '_cta.mp4');
+  const ctaSrc = ctaMp4.replace(/\\/g, '/');
+
+  await execFileAsync(ffmpegPath, [
+    '-i', videoPath,
+    '-i', ctaSrc,
+    '-filter_complex',
+    `[1:v]scale=${ctaScaleW}:${ctaScaleH},colorkey=0x000000:0.3:0.2[cta];[0:v][cta]overlay=${ox}:${oy}:eof_action=pass[out]`,
+    '-map', '[out]',
+    '-t', durationSec.toFixed(3),
+    '-r', '24',
+    '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+    '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+    '-an', '-y', outPath,
+  ], { timeout: 180_000, maxBuffer: 10 * 1024 * 1024 });
+
+  // Replace original with composited
+  fs.unlinkSync(videoPath);
+  fs.renameSync(outPath, videoPath);
+  return videoPath;
 }
 
 /**
@@ -1057,7 +1023,7 @@ async function compositeEffectOverlay(
     '-t', durationSec.toFixed(3),
     '-r', '24',
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-    '-pix_fmt', 'yuv420p',
+    '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
     '-an', '-y', outPath,
   ], { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 });
 
@@ -1093,7 +1059,7 @@ async function compositeScreenEffectFile(
     '-t', durationSec.toFixed(3),
     '-r', '24',
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-    '-pix_fmt', 'yuv420p',
+    '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
     '-an', '-y', outPath,
   ], { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 });
 
@@ -1104,7 +1070,7 @@ async function compositeScreenEffectFile(
 /** Resolve a media library item's file path by ID */
 function resolveMediaLibraryPath(mediaId: string): string | null {
   const { dbGet: dbGetSync } = require('../db');
-  const row = dbGetSync<{ filepath: string }>('SELECT filepath FROM media_library WHERE id = ?', [mediaId]);
+  const row = dbGetSync('SELECT filepath FROM media_library WHERE id = ?', [mediaId]) as { filepath: string } | undefined;
   return row?.filepath && fs.existsSync(row.filepath) ? row.filepath : null;
 }
 
@@ -1178,26 +1144,43 @@ export async function reproduceSingleBlock(
           const chartH = h - chartMargin * 2;
           log(`Chart opacity: ${opacityStr}`);
 
+          const overlayVf = buildOverlayDrawtext(block.overlays ?? [], block.overlayStyle ?? null, w, h);
+
           await execFileAsync(ffmpeg, [
             '-stream_loop', '-1', '-i', bgClipPath,
             '-i', darkChartPath,
             '-filter_complex', [
               `[0:v]${bgScaleVf},eq=brightness=-0.15:saturation=0.4[bg]`,
               `[1:v]crop=${chartW}:${chartH}:(in_w-${chartW})/2:(in_h-${chartH})/2,format=rgba,colorchannelmixer=aa=${opacityStr}[chart]`,
-              `[bg][chart]overlay=${chartMargin}:${chartMargin}:shortest=1:format=auto[out]`,
+              `[bg][chart]overlay=${chartMargin}:${chartMargin}:shortest=1:format=auto${overlayVf}[out]`,
             ].join(';'),
             '-map', '[out]',
             '-t', String(chartDur),
             '-r', '24',
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-pix_fmt', 'yuv420p',
+            '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
             '-an', '-y', compositePath,
           ], { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 });
 
+          // Save clean composite as clipAssetPath (no CTA — produce applies CTA separately)
           updateBlockClip(docId, blockIndex, compositeFilename, 'chart');
-          updateBlockRendered(docId, blockIndex, compositePath);
+
+          // CTA overlay applied to a separate rendered copy so clipAssetPath stays clean
+          let renderedPath = compositePath;
+          if (block.ctaOverlay?.buttons?.length) {
+            try {
+              log(`CTA overlay [${block.ctaOverlay.position ?? 'bottom'}]`);
+              const ctaCopy = compositePath.replace(/\.mp4$/, '_rendered.mp4');
+              fs.copyFileSync(compositePath, ctaCopy);
+              await compositeCtaOverlay(block.ctaOverlay, ctaCopy, chartDur, w, h, ffmpeg, log);
+              renderedPath = ctaCopy;
+            } catch (err) {
+              log(`CTA overlay failed: ${(err as Error).message?.slice(0, 100)}`);
+            }
+          }
+          updateBlockRendered(docId, blockIndex, renderedPath);
           log(`Done: chart composited → ${compositeFilename}`);
-          return { clipPath: compositePath, filename: compositeFilename, durationSec: chartDur };
+          return { clipPath: renderedPath, filename: path.basename(renderedPath), durationSec: chartDur };
         }
       } catch (err) {
         log(`Bg fetch/composite failed for "${bgQuery}": ${(err as Error).message?.slice(0, 100)}`);
@@ -1271,17 +1254,13 @@ export async function reproduceSingleBlock(
   const segOut = path.join(outDir, `reproduced_block_${blockIndex}_${Date.now()}.mp4`);
   const trimStart = block.clipStartSec ?? 0;
 
-  // Build video filter: scale + optional overlay text + CTA buttons
+  // Build video filter: scale + optional overlay text
   const scaleFilter = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
   const overlayTexts = block.overlays ?? [];
   const overlayVf = buildOverlayDrawtext(overlayTexts, block.overlayStyle ?? null, w, h);
-  const ctaVf = buildCtaDrawtext(block.ctaOverlay ?? null, w, h);
-  const vfChain = scaleFilter + overlayVf + ctaVf + ',format=yuv420p';
+  const vfChain = scaleFilter + overlayVf + ',format=yuv420p';
   if (overlayTexts.length > 0) {
     log(`Overlay text: ${overlayTexts.join(' | ')} [${block.overlayStyle?.fontSize ?? 'md'}, ${block.overlayStyle?.position ?? 'center'}${block.overlayStyle?.bgEnabled ? ', bg' : ''}]`);
-  }
-  if (block.ctaOverlay?.buttons?.length) {
-    log(`CTA buttons: ${block.ctaOverlay.buttons.join(', ')} [${block.ctaOverlay.position ?? 'bottom'}]`);
   }
 
   // Detect if source is an image (not a video) — stream_loop only works with video files
@@ -1321,6 +1300,16 @@ export async function reproduceSingleBlock(
     } catch (err) {
       log(`Effect overlay failed: ${(err as Error).message?.slice(0, 100)} — using clip without effect`);
       finalOut = segOut;
+    }
+  }
+
+  // CTA overlay (youtube-cta.mp4)
+  if (block.ctaOverlay?.buttons?.length) {
+    try {
+      log(`CTA overlay [${block.ctaOverlay.position ?? 'bottom'}]`);
+      await compositeCtaOverlay(block.ctaOverlay, finalOut, audioDurSec, w, h, ffmpeg, log);
+    } catch (err) {
+      log(`CTA overlay failed: ${(err as Error).message?.slice(0, 100)}`);
     }
   }
 
@@ -2033,7 +2022,12 @@ export async function produceBlocks(
         orientation,
         block.clipsJson ?? '',
         options.chartOpacity ?? 0.85,
-        accentColor
+        accentColor,
+        JSON.stringify(block.ctaOverlay ?? ''),
+        JSON.stringify(block.overlays ?? []),
+        JSON.stringify(block.overlayStyle ?? ''),
+        JSON.stringify(block.effectOverlay ?? ''),
+        block.screenEffectId ?? '',
       ].join('|'))
       .digest('hex')
       .slice(0, 16);
@@ -2154,18 +2148,24 @@ export async function produceBlocks(
       try {
         const shotDurSec = (block.audioDurationMs ?? 6000) / 1000;
         const scaleVf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=bicubic,crop=${w}:${h}`;
+        const overlayVf = buildOverlayDrawtext(block.overlays ?? [], block.overlayStyle ?? null, w, h);
         const vLabel = isSplit ? 'split' : 'chart';
         addLog(docId, 'info', 'produce', `${ref(block)}: encoding ${vLabel} clip ${path.basename(primaryClipPath)}`);
         await execFileWithCancel(ffmpeg, [
           '-stream_loop', '-1',
           '-i', primaryClipPath,
-          '-vf', `${scaleVf},format=yuv420p`,
+          '-vf', `${scaleVf}${overlayVf},format=yuv420p`,
           '-t', shotDurSec.toFixed(3),
           '-r', String(fps),
           '-c:v', 'libx264', '-preset', preset, '-crf', '23',
           '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
           '-an', '-y', persistentPath,
         ], { timeout: 180_000 });
+        // CTA overlay (youtube-cta.mp4)
+        if (block.ctaOverlay?.buttons?.length) {
+          addLog(docId, 'info', 'produce', `${ref(block)}: CTA overlay [${block.ctaOverlay.position ?? 'bottom'}]`);
+          await compositeCtaOverlay(block.ctaOverlay, persistentPath, shotDurSec, w, h, ffmpeg, (m) => emit('info', `${ref(block)}: ${m}`, pct));
+        }
         updateBlockRendered(docId, i, persistentPath);
         blocksAfterVisuals[i] = { ...block, renderedClipPath: persistentPath, status: 'rendered' };
         encodedCount++;
@@ -2278,12 +2278,7 @@ export async function produceBlocks(
         motionVf += buildOverlayDrawtext(blockOverlays, block.overlayStyle ?? null, w, h);
         motionVf += ',format=yuv420p';
       }
-      // Append CTA buttons
-      if (block.ctaOverlay?.buttons?.length) {
-        motionVf = motionVf.replace(/,format=yuv420p$/, '');
-        motionVf += buildCtaDrawtext(block.ctaOverlay, w, h);
-        motionVf += ',format=yuv420p';
-      }
+      // CTA is composited as a post-step on the final block clip (Remotion overlay)
 
       try {
         if (freezeHold) {
@@ -2432,6 +2427,16 @@ export async function produceBlocks(
       }
     }
 
+    // CTA overlay (youtube-cta.mp4, composited via FFmpeg colorkey)
+    if (block.ctaOverlay?.buttons?.length) {
+      try {
+        emit('info', `${ref(block)}: CTA overlay [${block.ctaOverlay.position ?? 'bottom'}]`, pct);
+        await compositeCtaOverlay(block.ctaOverlay, finalBlockPath, blockDurSec, w, h, ffmpeg, (m) => emit('info', `${ref(block)}: ${m}`, pct));
+      } catch (err) {
+        emit('warn', `${ref(block)}: CTA overlay failed — ${(err as Error).message?.slice(0, 100)}`, pct);
+      }
+    }
+
     updateBlockRendered(docId, i, finalBlockPath);
     blocksAfterVisuals[i] = { ...block, renderedClipPath: finalBlockPath, status: 'rendered' };
     encodedCount++;
@@ -2576,14 +2581,14 @@ export async function produceBlocks(
             '-filter_complex', `[1:a]atrim=0:${durSec.toFixed(3)},volume=0.5[sfx];[0:a][sfx]amix=inputs=2:duration=first[out]`,
             '-map', '[out]', '-c:a', 'libmp3lame', '-q:a', '2', '-y', sfxOut,
           ], { timeout: 60_000 });
-          log(`SFX mixed into block ${b.blockIndex}`);
+          emit('info', `SFX mixed into block ${b.blockIndex}`, 94);
           audioFiles.push(sfxOut);
           continue;
         } catch (err) {
-          log(`SFX mix failed for block ${b.blockIndex}: ${(err as Error).message?.slice(0, 80)}`);
+          emit('warn', `SFX mix failed for block ${b.blockIndex}: ${(err as Error).message?.slice(0, 80)}`, 94);
         }
       } else {
-        log(`SFX not found: ${b.sfxId} for block ${b.blockIndex}`);
+        emit('warn', `SFX not found: ${b.sfxId} for block ${b.blockIndex}`, 94);
       }
     }
     audioFiles.push(audioFile);
