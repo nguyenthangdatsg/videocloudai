@@ -190,6 +190,37 @@ export function AudioTtsStudio() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showHistoryOverlay, setShowHistoryOverlay] = useState(false);
 
+  // --- Resizable right panel ---
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const saved = localStorage.getItem('vcai-tts-panel-width');
+    return saved ? Math.max(200, Math.min(600, parseInt(saved, 10))) : 320;
+  });
+  const isDraggingPanel = useRef(false);
+
+  const handlePanelDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingPanel.current = true;
+    const startX = e.clientX;
+    const startWidth = panelWidth;
+    const onMove = (ev: MouseEvent) => {
+      const delta = startX - ev.clientX;
+      const newW = Math.max(200, Math.min(600, startWidth + delta));
+      setPanelWidth(newW);
+    };
+    const onUp = () => {
+      isDraggingPanel.current = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setPanelWidth(w => { localStorage.setItem('vcai-tts-panel-width', String(w)); return w; });
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [panelWidth]);
+
   // --- Playback-to-paragraph mapping ---
   const [playbackParaIndex, setPlaybackParaIndex] = useState<number | null>(null);
 
@@ -969,9 +1000,9 @@ export function AudioTtsStudio() {
     <div className="flex flex-col h-full overflow-hidden">
       <TopBar title={t('tts.title')} subtitle={t('tts.subtitle')} />
 
-      <div className="flex-1 grid grid-cols-[1fr_320px] gap-0 min-h-0">
+      <div className="flex-1 flex min-h-0">
         {/* ═══ Left: Main area ═══ */}
-        <div className="flex flex-col overflow-auto">
+        <div className="flex-1 flex flex-col overflow-auto min-w-0">
           <div className="p-6 space-y-5">
 
             {/* ── Back to dashboard + story name ── */}
@@ -1762,8 +1793,14 @@ export function AudioTtsStudio() {
           </div>
         </div>
 
+        {/* ═══ Drag handle ═══ */}
+        <div
+          onMouseDown={handlePanelDragStart}
+          className="w-1 hover:w-1.5 bg-transparent hover:bg-cyan-500/30 cursor-col-resize shrink-0 transition-all"
+        />
+
         {/* ═══ Right sidebar: Structure Panel or History ═══ */}
-        <div className="flex flex-col border-l border-c-border overflow-hidden relative">
+        <div className="flex flex-col border-l border-c-border overflow-hidden relative shrink-0" style={{ width: panelWidth }}>
           {isStoryFormat && parsedStory ? (
             <>
               <StoryStructurePanel
