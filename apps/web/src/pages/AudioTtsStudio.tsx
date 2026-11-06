@@ -506,10 +506,59 @@ export function AudioTtsStudio() {
     return () => { if (parseTimerRef.current) clearTimeout(parseTimerRef.current); };
   }, [text, isStoryFormat]);
 
+  // --- Per-paragraph progress tracking ---
+  type ParagraphStatus = 'pending' | 'generating' | 'done' | 'failed';
+  const [paraStatuses, setParaStatuses] = useState<ParagraphStatus[]>([]);
+  const [paraTimestamps, setParaTimestamps] = useState<number[]>([]);
+  const [genStartTime, setGenStartTime] = useState<number | null>(null);
+  const [genElapsed, setGenElapsed] = useState(0);
+  const [genPhase, setGenPhase] = useState<string>('');
+
+  // Elapsed timer
+  useEffect(() => {
+    if (!genStartTime) { setGenElapsed(0); return; }
+    const iv = setInterval(() => setGenElapsed(Math.floor((Date.now() - genStartTime) / 1000)), 1000);
+    return () => clearInterval(iv);
+  }, [genStartTime]);
+
   const generateMutation = useMutation({
     mutationFn: async () => {
       setGenerateProgress([]);
-      const onProgress = (step: string, detail?: string) => setGenerateProgress((prev) => [...prev, `[${step}] ${detail ?? ''}`]);
+      if (parsedStory) {
+        setParaStatuses(new Array(parsedStory.paragraphs.length).fill('pending'));
+        setParaTimestamps(new Array(parsedStory.paragraphs.length).fill(0));
+        setGenStartTime(Date.now());
+        setGenPhase('');
+      }
+      const onProgress = (step: string, detail?: string) => {
+        setGenerateProgress((prev) => [...prev, `[${step}] ${detail ?? ''}`]);
+        setGenPhase(step);
+
+        if (step === 'tts' && detail) {
+          const idxMatch = detail.match(/^\[(\d+)\/(\d+)\]/);
+          if (idxMatch) {
+            const idx = parseInt(idxMatch[1], 10) - 1;
+            const isFailed = detail.includes('FAILED');
+            setParaStatuses(prev => {
+              const next = [...prev];
+              for (let i = 0; i < next.length; i++) {
+                if (i < idx && next[i] === 'generating') next[i] = 'done';
+              }
+              next[idx] = isFailed ? 'failed' : 'generating';
+              return next;
+            });
+            if (!isFailed) {
+              setParaTimestamps(prev => {
+                const next = [...prev];
+                next[idx] = Date.now();
+                return next;
+              });
+            }
+          }
+        } else if (step === 'concat') {
+          setParaStatuses(prev => prev.map(s => s === 'generating' ? 'done' : s));
+        }
+      };
 
       // Story project mode
       if (isStoryFormat && activeStoryId) {
@@ -537,6 +586,12 @@ export function AudioTtsStudio() {
       refetchStories();
       if (engine === 'google-tts') refetchGoogleUsage();
       playAudio(data.url);
+      setGenStartTime(null);
+      setGenPhase('');
+    },
+    onError: () => {
+      setGenStartTime(null);
+      setGenPhase('');
     },
   });
 
