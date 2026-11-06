@@ -176,6 +176,8 @@ export function AudioTtsStudio() {
   const [audioProgress, setAudioProgress] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showHistoryOverlay, setShowHistoryOverlay] = useState(false);
 
   // --- Data ---
   const { data: settingsData } = useQuery({
@@ -1043,6 +1045,7 @@ export function AudioTtsStudio() {
                 <label className="text-xs text-c-muted">{t('tts.textInput')}</label>
               </div>
               <textarea
+                ref={textareaRef}
                 className="input h-40 resize-y font-mono text-sm leading-relaxed"
                 placeholder={t('tts.textPlaceholder')}
                 value={text}
@@ -1624,7 +1627,7 @@ export function AudioTtsStudio() {
             </div>
 
             {/* ═══ Progress log ═══ */}
-            {generateMutation.isPending && generateProgress.length > 0 && (
+            {generateMutation.isPending && generateProgress.length > 0 && !parsedStory && (
               <div className="border border-cyan-800/30 rounded-xl p-3 bg-cyan-900/10 space-y-1">
                 <div className="flex items-center gap-2 mb-1">
                   <Spinner size="sm" />
@@ -1690,8 +1693,56 @@ export function AudioTtsStudio() {
           </div>
         </div>
 
-        {/* ═══ Right sidebar: History ═══ */}
-        <div className="flex flex-col border-l border-c-border overflow-hidden">
+        {/* ═══ Right sidebar: Structure Panel or History ═══ */}
+        <div className="flex flex-col border-l border-c-border overflow-hidden relative">
+          {isStoryFormat && parsedStory ? (
+            <>
+              <StoryStructurePanel
+                parsed={parsedStory}
+                paraStatuses={paraStatuses}
+                paraTimestamps={paraTimestamps}
+                genPhase={genPhase}
+                genElapsed={genElapsed}
+                isGenerating={generateMutation.isPending}
+                textareaRef={textareaRef}
+                historyCount={history?.length ?? 0}
+                onShowHistory={() => setShowHistoryOverlay(prev => !prev)}
+              />
+
+              {/* History overlay */}
+              {showHistoryOverlay && (
+                <div className="absolute bottom-10 left-0 right-0 mx-2 max-h-[300px] overflow-y-auto bg-c-surface border border-c-border rounded-xl shadow-xl z-10">
+                  <div className="px-3 py-2 border-b border-c-border flex items-center justify-between sticky top-0 bg-c-surface">
+                    <span className="text-xs font-medium text-c-text">{t('tts.history')}</span>
+                    <button onClick={() => setShowHistoryOverlay(false)} className="text-c-dim hover:text-c-text cursor-pointer">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {!history || history.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-c-dim">{t('tts.noHistory')}</div>
+                  ) : (
+                    <div className="p-2 space-y-1">
+                      {history.map((file) => (
+                        <div key={file.filename} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-c-elevated text-xs">
+                          <button onClick={() => playAudio(file.url)} className="text-c-muted hover:text-c-text shrink-0 cursor-pointer">
+                            {playingUrl === file.url ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-c-text truncate">{file.filename.replace(/\.(mp3|wav|ogg)$/, '').slice(-24)}</div>
+                            <div className="text-[10px] text-c-dim">{file.duration > 0 ? fmtTime(file.duration) : '--:--'} | {file.sizeKB} KB</div>
+                          </div>
+                          <button onClick={() => handleDownload(file.url, file.filename)} className="text-c-dim hover:text-c-muted p-0.5 cursor-pointer">
+                            <Download className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
           <div className="px-4 py-4 border-b border-c-border">
             <div className="flex items-center justify-between">
               <div>
@@ -1819,6 +1870,8 @@ export function AudioTtsStudio() {
                 );
               })}
             </div>
+          )}
+            </>
           )}
         </div>
       </div>
