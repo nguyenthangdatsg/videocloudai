@@ -312,8 +312,8 @@ export function AudioTtsStudio() {
   }, [defaultEngine]);
 
   const { data: history, refetch: refetchHistory } = useQuery({
-    queryKey: ['tts', 'history'],
-    queryFn: ttsApi.history,
+    queryKey: ['tts', 'history', activeStoryId || 'all'],
+    queryFn: () => ttsApi.history(activeStoryId),
   });
 
   const edgeVoices = ttsData?.voices ?? {};
@@ -1836,7 +1836,7 @@ export function AudioTtsStudio() {
                             {playingUrl === file.url ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                           </button>
                           <div className="flex-1 min-w-0">
-                            <div className="text-c-text truncate">{historyLabels[file.filename] || file.filename.replace(/\.(mp3|wav|ogg)$/, '').slice(-24)}</div>
+                            <div className="text-c-text truncate">{file.label || historyLabels[file.filename] || file.filename.replace(/\.(mp3|wav|ogg)$/, '').slice(-24)}</div>
                             <div className="text-[10px] text-c-dim">{file.duration > 0 ? fmtTime(file.duration) : '--:--'} | {file.sizeKB} KB</div>
                           </div>
                           <button onClick={() => handleDownload(file.url, file.filename)} className="text-c-dim hover:text-c-muted p-0.5 cursor-pointer">
@@ -1932,8 +1932,8 @@ export function AudioTtsStudio() {
                           : <Play className="w-3 h-3" />}
                       </button>
                       <div className="flex-1 min-w-0">
-                        {historyLabels[file.filename] && (
-                          <div className="text-xs text-c-text truncate">{historyLabels[file.filename]}</div>
+                        {(file.label || historyLabels[file.filename]) && (
+                          <div className="text-xs text-c-text truncate">{file.label || historyLabels[file.filename]}</div>
                         )}
                         <div className="text-[10px] text-c-dim truncate">
                           {file.duration > 0 ? fmtTime(file.duration) : '--:--'} · {file.sizeKB} KB · {new Date(file.createdAt).toLocaleDateString()}

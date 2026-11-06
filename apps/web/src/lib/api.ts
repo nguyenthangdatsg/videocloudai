@@ -302,6 +302,8 @@ export const settingsApi = {
   test: () => api.post<Record<string, boolean>>('/settings/test').then((r) => r.data),
   testService: (service: string) =>
     api.post<Record<string, boolean>>(`/settings/test/${service}`).then((r) => r.data),
+  dbHealth: () => api.get('/settings/db-health').then((r) => r.data),
+  dbCheckpoint: () => api.post('/settings/db-checkpoint').then((r) => r.data),
   voices: () => api.get<{ voices: Record<string, { lang: string; label: string; flag: string }> }>('/settings/voices').then((r) => r.data.voices),
   previewVoice: (voice: string, rate?: string, text?: string) =>
     api.post('/settings/voices/preview', { voice, rate, text }, { responseType: 'blob' }).then((r) => r.data as Blob),
@@ -316,7 +318,20 @@ export interface VoiceInfo {
   styles?: string[];
 }
 
-export type TtsEngine = 'edge-tts' | 'omnivoice' | 'kokoro';
+export type TtsEngine = 'edge-tts' | 'omnivoice' | 'kokoro' | 'google-tts';
+
+export interface TtsStory {
+  id: string;
+  title: string;
+  content: string;
+  voice_groups: string | null;
+  paragraph_count: number;
+  audio_path: string | null;
+  duration: number;
+  status: 'draft' | 'generating' | 'ready' | 'failed';
+  created_at: string;
+  updated_at: string;
+}
 
 export const ttsApi = {
   voices: () =>
@@ -341,6 +356,44 @@ export const ttsApi = {
     if (!result) throw new Error('No result from TTS generation');
     return result;
   },
+  generateStory: async (
+    text: string,
+    onProgress: (step: string, detail?: string) => void,
+  ): Promise<{ filename: string; duration: number; url: string }> => {
+    const res = await fetch('/api/tts/generate-story', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    let result: { filename: string; duration: number; url: string } | null = null;
+    await readNDJSON(res, (parsed) => {
+      if (parsed.error) throw new Error(parsed.error as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+      else if (parsed.filename) result = parsed as any;
+    });
+    if (!result) throw new Error('No result from story generation');
+    return result;
+  },
+  // Story projects
+  stories: () => api.get<TtsStory[]>('/tts/stories').then((r) => r.data),
+  getStory: (id: string) => api.get<TtsStory>(`/tts/stories/${id}`).then((r) => r.data),
+  createStory: (data: { content: string; title?: string }) => api.post<TtsStory>('/tts/stories', data).then((r) => r.data),
+  updateStory: (id: string, data: { content?: string; title?: string }) => api.put<TtsStory>(`/tts/stories/${id}`, data).then((r) => r.data),
+  deleteStory: (id: string) => api.delete(`/tts/stories/${id}`).then((r) => r.data),
+  generateStoryProject: async (
+    id: string,
+    onProgress: (step: string, detail?: string) => void,
+  ): Promise<{ filename: string; duration: number; url: string }> => {
+    const res = await fetch(`/api/tts/stories/${id}/generate`, { method: 'POST' });
+    let result: { filename: string; duration: number; url: string } | null = null;
+    await readNDJSON(res, (parsed) => {
+      if (parsed.error) throw new Error(parsed.error as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+      else if (parsed.filename) result = parsed as any;
+    });
+    if (!result) throw new Error('No result from story generation');
+    return result;
+  },
   preview: (data: { voice: string; rate?: string; pitch?: string; volume?: string; style?: string; text?: string; engine?: TtsEngine }) =>
     api.post('/tts/preview', data, { responseType: 'blob' }).then((r) => r.data as Blob),
   omnivoiceHealth: () =>
@@ -355,8 +408,32 @@ export const ttsApi = {
     api.get<{ voices: Record<string, VoiceInfo>; languages: Record<string, string> }>('/tts/kokoro/voices/formatted').then((r) => r.data),
   defaultEngine: () =>
     api.get<{ engine: TtsEngine }>('/tts/engine').then((r) => r.data.engine),
-  history: () =>
-    api.get<{ files: Array<{ filename: string; url: string; sizeKB: number; duration: number; createdAt: string }> }>('/tts/history').then((r) => r.data.files),
+  googleTtsHealth: () =>
+    api.get<{ available: boolean; healthy: boolean }>('/tts/google-tts/health').then((r) => r.data),
+  googleTtsVoices: (lang?: string) =>
+    api.get<{ voices: Array<{ name: string; languageCodes: string[]; ssmlGender: string; naturalSampleRateHertz: number }> }>(
+      `/tts/google-tts/voices${lang ? `?lang=${lang}` : ''}`
+    ).then((r) => r.data.voices),
+  googleTtsConfig: () =>
+    api.get<{ projectId: string; hasCredentials: boolean; credentialsPreview: string; credentialsPath: string; defaultVoice: string; speakingRate: string; pitch: string }>(
+      '/tts/google-tts/config'
+    ).then((r) => r.data),
+  googleTtsSaveConfig: (data: { projectId?: string; credentialsJson?: string; credentialsPath?: string; defaultVoice?: string; speakingRate?: string; pitch?: string }) =>
+    api.post('/tts/google-tts/config', data).then((r) => r.data),
+  googleTtsReload: () =>
+    api.post('/tts/google-tts/reload').then((r) => r.data),
+  googleTtsUsage: () =>
+    api.get<{ usage: Record<string, { used: number; limit: number; remaining: number }> }>('/tts/google-tts/usage').then((r) => r.data.usage),
+  googleTtsResetUsage: () =>
+    api.post('/tts/google-tts/usage/reset').then((r) => r.data),
+  googleTtsCheckQuota: (voice: string, charCount: number) =>
+    api.post<{ allowed: boolean; reason?: string; voiceType: string }>('/tts/google-tts/check-quota', { voice, charCount }).then((r) => r.data),
+  googleTtsEmotions: () =>
+    api.get<{ emotions: Array<{ name: string; rateDelta: number; pitchDelta: number; volumeDb?: string; description?: string }> }>('/tts/google-tts/emotions').then((r) => r.data.emotions),
+  history: (storyId?: string | null) =>
+    api.get<{ files: Array<{ filename: string; url: string; sizeKB: number; duration: number; createdAt: string; storyId: string | null; label: string | null }> }>(
+      `/tts/history${storyId ? `?storyId=${encodeURIComponent(storyId)}` : ''}`
+    ).then((r) => r.data.files),
   delete: (filename: string) =>
     api.delete(`/tts/audio/${encodeURIComponent(filename)}`).then((r) => r.data),
   transcribe: async (
@@ -1210,6 +1287,7 @@ async function ndjsonFetch(url: string, method: 'POST' | 'PUT', body: unknown): 
 
 function createStudioApi(basePath: string) {
   return {
+    basePath,
     list: async () => {
       const res = await api.get(`${basePath}/docs`);
       return (res.data as { docs: any[] }).docs;
@@ -1499,6 +1577,13 @@ function createStudioApi(basePath: string) {
 
 export const scriptStudioApi = createStudioApi('/script-studio');
 export const dvidsStudioApi = createStudioApi('/dvids-studio');
+export const whatifStudioApi = createStudioApi('/whatif-studio');
+
+export async function suggestEffects(studioBasePath: string, docId: string): Promise<{ suggestions: Array<{ blockIndex: number; screenEffect: string | null; sfx: string | null; reason: string }> }> {
+  const res = await fetch(`/api${studioBasePath}/docs/${docId}/suggest-effects`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  if (!res.ok) throw new Error(`suggest-effects failed: ${res.status}`);
+  return res.json();
+}
 
 // ── Transform Studio ──
 
