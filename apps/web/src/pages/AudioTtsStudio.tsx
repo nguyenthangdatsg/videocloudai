@@ -157,6 +157,9 @@ export function AudioTtsStudio() {
   // --- Selection ---
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  // --- History labels (session cache) ---
+  const [historyLabels, setHistoryLabels] = useState<Record<string, string>>({});
+
   // --- Story Prompt Guide ---
   const [showStoryPrompt, setShowStoryPrompt] = useState(false);
 
@@ -591,6 +594,10 @@ export function AudioTtsStudio() {
       playAudio(data.url);
       setGenStartTime(null);
       setGenPhase('');
+      const label = isStoryFormat
+        ? (parsedStory?.title || parseStoryTitle(text))
+        : text.slice(0, 40).replace(/\n/g, ' ');
+      setHistoryLabels(prev => ({ ...prev, [data.filename]: label }));
     },
     onError: () => {
       setGenStartTime(null);
@@ -1824,12 +1831,11 @@ export function AudioTtsStudio() {
                           : <Play className="w-3 h-3" />}
                       </button>
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs text-c-dim truncate">
-                          {file.duration > 0 ? fmtTime(file.duration) : '--:--'} · {file.sizeKB} KB
-                        </div>
-                        <div className="text-xs text-c-dim flex items-center gap-1">
-                          <Clock className="w-2.5 h-2.5" />
-                          {new Date(file.createdAt).toLocaleDateString()}
+                        {historyLabels[file.filename] && (
+                          <div className="text-xs text-c-text truncate">{historyLabels[file.filename]}</div>
+                        )}
+                        <div className="text-[10px] text-c-dim truncate">
+                          {file.duration > 0 ? fmtTime(file.duration) : '--:--'} · {file.sizeKB} KB · {new Date(file.createdAt).toLocaleDateString()}
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
