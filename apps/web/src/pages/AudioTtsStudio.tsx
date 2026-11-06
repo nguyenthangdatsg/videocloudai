@@ -181,6 +181,7 @@ export function AudioTtsStudio() {
 
   // --- Playback ---
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+  const [isAudioPaused, setIsAudioPaused] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [audioDuration, setAudioDuration] = useState(0);
   const [audioProgress, setAudioProgress] = useState(0);
@@ -364,6 +365,7 @@ export function AudioTtsStudio() {
     }
     if (progressTimer.current) clearInterval(progressTimer.current);
     setPlayingUrl(null);
+    setIsAudioPaused(false);
     setAudioProgress(0);
   }, []);
 
@@ -382,9 +384,11 @@ export function AudioTtsStudio() {
     if (playingUrl === url && audioRef.current) {
       if (audioRef.current.paused) {
         audioRef.current.play();
+        setIsAudioPaused(false);
         startProgressTimer();
       } else {
         audioRef.current.pause();
+        setIsAudioPaused(true);
         if (progressTimer.current) clearInterval(progressTimer.current);
       }
       return;
@@ -394,6 +398,7 @@ export function AudioTtsStudio() {
       audioRef.current.src = url;
       audioRef.current.play();
       setPlayingUrl(url);
+      setIsAudioPaused(false);
       startProgressTimer();
     }
   }, [playingUrl, stopAudio, startProgressTimer]);
@@ -996,7 +1001,8 @@ export function AudioTtsStudio() {
               if (!activeStory || !activeStory.audio_path || activeStory.status !== 'ready') return null;
               const audioUrl = `/api/tts/audio/${activeStory.audio_path.split(/[/\\]/).pop()}`;
               const voiceCount = (() => { try { return JSON.parse(activeStory.voice_groups || '[]').length; } catch { return 0; } })();
-              const isPlaying = playingUrl === audioUrl;
+              const isLoaded = playingUrl === audioUrl;
+              const isActuallyPlaying = isLoaded && !isAudioPaused;
               return (
                 <div className="border border-emerald-800/30 rounded-xl overflow-hidden bg-emerald-900/5">
                   <div className="p-4 space-y-3">
@@ -1026,7 +1032,7 @@ export function AudioTtsStudio() {
                     </div>
 
                     {/* Waveform-style progress bar */}
-                    {isPlaying && audioDuration > 0 && (
+                    {isLoaded && audioDuration > 0 && (
                       <div className="space-y-1">
                         <div
                           className="h-2 bg-c-bg rounded-full cursor-grab active:cursor-grabbing overflow-hidden select-none"
@@ -1049,13 +1055,13 @@ export function AudioTtsStudio() {
                         onClick={() => playAudio(audioUrl)}
                         className={clsx(
                           'flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer',
-                          isPlaying
+                          isActuallyPlaying
                             ? 'bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30'
                             : 'bg-emerald-600 text-white hover:bg-emerald-500',
                         )}
                       >
-                        {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                        {isPlaying ? t('tts.pause') : t('tts.play')}
+                        {isActuallyPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                        {isActuallyPlaying ? t('tts.pause') : t('tts.play')}
                       </button>
                       <a
                         href={audioUrl}
@@ -1716,7 +1722,7 @@ export function AudioTtsStudio() {
                     onClick={() => playAudio(generateMutation.data!.url)}
                     className="btn-secondary flex items-center gap-1.5 text-xs"
                   >
-                    {playingUrl === generateMutation.data.url
+                    {playingUrl === generateMutation.data.url && !isAudioPaused
                       ? <><Pause className="w-3.5 h-3.5" /> {t('tts.pause')}</>
                       : <><Play className="w-3.5 h-3.5" /> {t('tts.play')}</>}
                   </button>
