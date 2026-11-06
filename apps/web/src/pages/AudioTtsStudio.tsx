@@ -938,7 +938,7 @@ export function AudioTtsStudio() {
               {activeStoryId && (
                 <>
                   <span className="text-c-dim">/</span>
-                  <span className="text-[10px] font-mono text-c-dim bg-c-bg px-1.5 py-0.5 rounded select-all">{activeStoryId.slice(0, 8)}</span>
+                  <span className="text-xs font-mono text-purple-400/70 bg-purple-900/20 px-2 py-0.5 rounded select-all cursor-text" title={activeStoryId}>{activeStoryId.slice(0, 8)}</span>
                   <span className="text-sm font-medium text-purple-300 truncate max-w-[300px]">
                     {stories?.find(s => s.id === activeStoryId)?.title}
                   </span>
@@ -1726,6 +1726,7 @@ export function AudioTtsStudio() {
                 textareaRef={textareaRef}
                 historyCount={history?.length ?? 0}
                 onShowHistory={() => setShowHistoryOverlay(prev => !prev)}
+                storyId={activeStoryId}
               />
 
               {/* History overlay */}
@@ -1918,6 +1919,7 @@ function StoryStructurePanel({
   textareaRef,
   historyCount,
   onShowHistory,
+  storyId,
 }: {
   parsed: ParsedStory;
   paraStatuses: ParagraphStatus[];
@@ -1928,6 +1930,7 @@ function StoryStructurePanel({
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   historyCount: number;
   onShowHistory: () => void;
+  storyId?: string | null;
 }) {
   const { t } = useTranslation();
   const paraListRef = useRef<HTMLDivElement>(null);
@@ -1968,10 +1971,9 @@ function StoryStructurePanel({
       <div className="px-4 py-3 border-b border-c-border shrink-0">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium text-c-text">{t('tts.structurePanel')}</h2>
-          <span className="text-[10px] text-c-dim bg-c-elevated px-2 py-0.5 rounded-full truncate max-w-[160px]">
-            {parsed.title}
-          </span>
+          {storyId && <span className="text-[10px] font-mono text-purple-400/70 bg-purple-900/20 px-1.5 py-0.5 rounded select-all cursor-text" title={storyId}>{storyId.slice(0, 8)}</span>}
         </div>
+        <div className="text-[11px] text-c-dim truncate mt-1">{parsed.title}</div>
       </div>
 
       {/* Progress bar (during generation) */}
