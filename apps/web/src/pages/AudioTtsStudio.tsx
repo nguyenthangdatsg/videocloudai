@@ -157,8 +157,10 @@ export function AudioTtsStudio() {
   // --- Selection ---
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // --- History labels (session cache) ---
-  const [historyLabels, setHistoryLabels] = useState<Record<string, string>>({});
+  // --- History labels (persisted to localStorage) ---
+  const [historyLabels, setHistoryLabels] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('vcai-tts-history-labels') || '{}'); } catch { return {}; }
+  });
 
   // --- Story Prompt Guide ---
   const [showStoryPrompt, setShowStoryPrompt] = useState(false);
@@ -597,7 +599,11 @@ export function AudioTtsStudio() {
       const label = isStoryFormat
         ? (parsedStory?.title || parseStoryTitle(text))
         : text.slice(0, 40).replace(/\n/g, ' ');
-      setHistoryLabels(prev => ({ ...prev, [data.filename]: label }));
+      setHistoryLabels(prev => {
+        const next = { ...prev, [data.filename]: label };
+        try { localStorage.setItem('vcai-tts-history-labels', JSON.stringify(next)); } catch {}
+        return next;
+      });
     },
     onError: () => {
       setGenStartTime(null);
@@ -1735,7 +1741,7 @@ export function AudioTtsStudio() {
                             {playingUrl === file.url ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                           </button>
                           <div className="flex-1 min-w-0">
-                            <div className="text-c-text truncate">{file.filename.replace(/\.(mp3|wav|ogg)$/, '').slice(-24)}</div>
+                            <div className="text-c-text truncate">{historyLabels[file.filename] || file.filename.replace(/\.(mp3|wav|ogg)$/, '').slice(-24)}</div>
                             <div className="text-[10px] text-c-dim">{file.duration > 0 ? fmtTime(file.duration) : '--:--'} | {file.sizeKB} KB</div>
                           </div>
                           <button onClick={() => handleDownload(file.url, file.filename)} className="text-c-dim hover:text-c-muted p-0.5 cursor-pointer">
