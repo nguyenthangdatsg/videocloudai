@@ -190,6 +190,9 @@ export function AudioTtsStudio() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showHistoryOverlay, setShowHistoryOverlay] = useState(false);
 
+  // --- Playback-to-paragraph mapping ---
+  const [playbackParaIndex, setPlaybackParaIndex] = useState<number | null>(null);
+
   // --- Data ---
   const { data: settingsData } = useQuery({
     queryKey: ['settings'],
@@ -538,6 +541,26 @@ export function AudioTtsStudio() {
     const iv = setInterval(() => setGenElapsed(Math.floor((Date.now() - genStartTime) / 1000)), 1000);
     return () => clearInterval(iv);
   }, [genStartTime]);
+
+  // Map audio playback position to paragraph index via cumulative word proportions
+  useEffect(() => {
+    if (!parsedStory || !playingUrl || audioDuration <= 0 || isAudioPaused) {
+      if (!playingUrl) setPlaybackParaIndex(null);
+      return;
+    }
+    const pct = audioProgress / audioDuration;
+    const total = parsedStory.totalWords;
+    if (total <= 0) { setPlaybackParaIndex(null); return; }
+    let cum = 0;
+    for (let i = 0; i < parsedStory.paragraphs.length; i++) {
+      cum += parsedStory.paragraphs[i].wordCount;
+      if (pct <= cum / total) {
+        setPlaybackParaIndex(i);
+        return;
+      }
+    }
+    setPlaybackParaIndex(parsedStory.paragraphs.length - 1);
+  }, [audioProgress, audioDuration, parsedStory, playingUrl, isAudioPaused]);
 
   const generateMutation = useMutation({
     mutationFn: async () => {
@@ -1754,6 +1777,7 @@ export function AudioTtsStudio() {
                 historyCount={history?.length ?? 0}
                 onShowHistory={() => setShowHistoryOverlay(prev => !prev)}
                 storyId={activeStoryId}
+                playbackParaIndex={playbackParaIndex}
               />
 
               {/* History overlay */}
@@ -1947,6 +1971,7 @@ function StoryStructurePanel({
   historyCount,
   onShowHistory,
   storyId,
+  playbackParaIndex,
 }: {
   parsed: ParsedStory;
   paraStatuses: ParagraphStatus[];
@@ -1958,6 +1983,7 @@ function StoryStructurePanel({
   historyCount: number;
   onShowHistory: () => void;
   storyId?: string | null;
+  playbackParaIndex?: number | null;
 }) {
   const { t } = useTranslation();
   const paraListRef = useRef<HTMLDivElement>(null);
@@ -1974,6 +2000,13 @@ function StoryStructurePanel({
       if (row) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [paraStatuses]);
+
+  // Auto-scroll to playback paragraph
+  useEffect(() => {
+    if (!paraListRef.current || playbackParaIndex == null || isGenerating) return;
+    const row = paraListRef.current.children[playbackParaIndex] as HTMLElement;
+    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [playbackParaIndex, isGenerating]);
 
   const handleParaClick = (para: ParagraphInfo) => {
     if (!textareaRef.current) return;
@@ -2057,6 +2090,7 @@ function StoryStructurePanel({
             const isDone = status === 'done';
             const isFailed = status === 'failed';
             const isPending = status === 'pending';
+            const isPlayingNow = !isGenerating && playbackParaIndex === i;
             const duration = isDone && paraTimestamps[i] && i < paraStatuses.length - 1
               ? ((paraTimestamps.find((t2, j) => j > i && t2 > 0) || Date.now()) - paraTimestamps[i]) / 1000
               : null;
@@ -2070,12 +2104,15 @@ function StoryStructurePanel({
                   isActive && 'bg-emerald-900/20 animate-pulse',
                   isFailed && 'bg-red-900/10',
                   isPending && isGenerating && 'opacity-40',
-                  !isGenerating && 'hover:bg-c-surface',
+                  isPlayingNow && 'bg-cyan-900/20 border-l-2 border-l-cyan-400',
+                  !isGenerating && !isPlayingNow && 'hover:bg-c-surface',
                 )}
               >
                 {/* Status / Index */}
                 <span className="w-5 text-center shrink-0">
-                  {isActive ? (
+                  {isPlayingNow ? (
+                    <Volume2 className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                  ) : isActive ? (
                     <span className="inline-block w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
                   ) : isDone ? (
                     <Check className="w-3.5 h-3.5 text-emerald-400" />
