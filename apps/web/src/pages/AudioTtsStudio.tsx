@@ -43,6 +43,8 @@ interface ParsedStory {
   estimatedDuration: number;
 }
 
+type ParagraphStatus = 'pending' | 'generating' | 'done' | 'failed';
+
 const GROUP_COLORS = [
   '#a78bfa', '#34d399', '#f472b6', '#60a5fa',
   '#fbbf24', '#f87171', '#2dd4bf', '#fb923c',
@@ -507,7 +509,6 @@ export function AudioTtsStudio() {
   }, [text, isStoryFormat]);
 
   // --- Per-paragraph progress tracking ---
-  type ParagraphStatus = 'pending' | 'generating' | 'done' | 'failed';
   const [paraStatuses, setParaStatuses] = useState<ParagraphStatus[]>([]);
   const [paraTimestamps, setParaTimestamps] = useState<number[]>([]);
   const [genStartTime, setGenStartTime] = useState<number | null>(null);
@@ -1829,6 +1830,203 @@ export function AudioTtsStudio() {
       />
 
       {showStoryPrompt && <StoryPromptGuide onClose={() => setShowStoryPrompt(false)} defaultEngine={engine} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Story Structure Panel — right sidebar for story format scripts
+// ═══════════════════════════════════════════════════════════════
+function StoryStructurePanel({
+  parsed,
+  paraStatuses,
+  paraTimestamps,
+  genPhase,
+  genElapsed,
+  isGenerating,
+  textareaRef,
+  historyCount,
+  onShowHistory,
+}: {
+  parsed: ParsedStory;
+  paraStatuses: ParagraphStatus[];
+  paraTimestamps: number[];
+  genPhase: string;
+  genElapsed: number;
+  isGenerating: boolean;
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  historyCount: number;
+  onShowHistory: () => void;
+}) {
+  const { t } = useTranslation();
+  const paraListRef = useRef<HTMLDivElement>(null);
+
+  const doneCount = paraStatuses.filter(s => s === 'done').length;
+  const failedCount = paraStatuses.filter(s => s === 'failed').length;
+
+  // Auto-scroll to generating paragraph
+  useEffect(() => {
+    if (!paraListRef.current) return;
+    const genIdx = paraStatuses.indexOf('generating');
+    if (genIdx >= 0) {
+      const row = paraListRef.current.children[genIdx] as HTMLElement;
+      if (row) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [paraStatuses]);
+
+  const handleParaClick = (para: ParagraphInfo) => {
+    if (!textareaRef.current) return;
+    const lines = textareaRef.current.value.split('\n');
+    let charIdx = 0;
+    for (let i = 0; i < Math.min(para.lineNumber, lines.length); i++) {
+      charIdx += lines[i].length + 1;
+    }
+    textareaRef.current.focus();
+    textareaRef.current.setSelectionRange(charIdx, charIdx);
+    textareaRef.current.scrollTop = textareaRef.current.scrollHeight * (para.lineNumber / lines.length);
+  };
+
+  const getGroupColor = (groupId: string) => {
+    const vg = parsed.voiceGroups.find(g => g.id === groupId);
+    return vg?.color || '#9ca3af';
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-c-border shrink-0">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-c-text">{t('tts.structurePanel')}</h2>
+          <span className="text-[10px] text-c-dim bg-c-elevated px-2 py-0.5 rounded-full truncate max-w-[160px]">
+            {parsed.title}
+          </span>
+        </div>
+      </div>
+
+      {/* Progress bar (during generation) */}
+      {isGenerating && (
+        <div className="px-4 py-3 border-b border-c-border bg-emerald-900/10 shrink-0 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-emerald-300 font-medium">
+              {genPhase === 'concat'
+                ? t('tts.progressConcat', { count: doneCount })
+                : genPhase === 'parse'
+                  ? t('tts.progressParsing', { groups: parsed.voiceGroups.length, paragraphs: parsed.paragraphs.length })
+                  : t('tts.progressGenerating', { done: doneCount, total: parsed.paragraphs.length })}
+            </span>
+            <span className="text-c-dim tabular-nums">{fmtTime(genElapsed)}</span>
+          </div>
+          <div className="h-1.5 bg-c-bg rounded-full overflow-hidden">
+            <div
+              className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+              style={{ width: `${parsed.paragraphs.length > 0 ? ((doneCount + failedCount) / parsed.paragraphs.length) * 100 : 0}%` }}
+            />
+          </div>
+          <div className="flex items-center gap-3 text-[10px] text-c-dim">
+            <span className="text-emerald-400">{doneCount} {t('tts.statusDone').toLowerCase()}</span>
+            {failedCount > 0 && <span className="text-red-400">{failedCount} {t('tts.statusFailed').toLowerCase()}</span>}
+            <span>{parsed.paragraphs.length - doneCount - failedCount} {t('tts.statusPending').toLowerCase()}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Voice Groups */}
+      {!isGenerating && (
+        <div className="px-4 py-3 border-b border-c-border shrink-0 space-y-1.5">
+          <div className="text-[10px] text-c-dim uppercase tracking-wider font-medium">{t('tts.voiceGroupsLabel')}</div>
+          {parsed.voiceGroups.map(vg => (
+            <div key={vg.id} className="flex items-center gap-2 text-xs">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: vg.color }} />
+              <span className="font-medium text-c-text">{vg.id}</span>
+              <span className="text-c-dim font-mono text-[10px]">{vg.voice}</span>
+              <span className="text-[10px] text-c-dim px-1.5 py-0.5 bg-c-elevated rounded">{vg.engine}</span>
+              <span className="text-[10px] text-c-dim ml-auto">{vg.emotion}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Paragraph list */}
+      <div ref={paraListRef} className="flex-1 overflow-y-auto">
+        {parsed.paragraphs.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-xs text-c-dim">{t('tts.noParagraphs')}</div>
+        ) : (
+          parsed.paragraphs.map((para, i) => {
+            const status = paraStatuses[i];
+            const isActive = status === 'generating';
+            const isDone = status === 'done';
+            const isFailed = status === 'failed';
+            const isPending = status === 'pending';
+            const duration = isDone && paraTimestamps[i] && i < paraStatuses.length - 1
+              ? ((paraTimestamps.find((t2, j) => j > i && t2 > 0) || Date.now()) - paraTimestamps[i]) / 1000
+              : null;
+
+            return (
+              <button
+                key={i}
+                onClick={() => handleParaClick(para)}
+                className={clsx(
+                  'w-full flex items-center gap-2 px-4 py-2 text-left transition-all border-b border-c-border/30 cursor-pointer',
+                  isActive && 'bg-emerald-900/20 animate-pulse',
+                  isFailed && 'bg-red-900/10',
+                  isPending && isGenerating && 'opacity-40',
+                  !isGenerating && 'hover:bg-c-surface',
+                )}
+              >
+                {/* Status / Index */}
+                <span className="w-5 text-center shrink-0">
+                  {isActive ? (
+                    <span className="inline-block w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                  ) : isDone ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : isFailed ? (
+                    <X className="w-3.5 h-3.5 text-red-400" />
+                  ) : (
+                    <span className="text-[10px] text-c-dim tabular-nums">{i + 1}</span>
+                  )}
+                </span>
+
+                {/* Color dot */}
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: getGroupColor(para.group) }} />
+
+                {/* Group + emotion */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium truncate" style={{ color: getGroupColor(para.group) }}>{para.group}</span>
+                    <span className="text-[10px] text-c-dim">{para.emotion}</span>
+                    {para.pace && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-amber-900/20 text-amber-400">{para.pace}</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-c-dim truncate mt-0.5">{para.text.slice(0, 50)}{para.text.length > 50 ? '...' : ''}</div>
+                </div>
+
+                {/* Word count or duration */}
+                <span className="text-[10px] text-c-dim tabular-nums shrink-0">
+                  {isDone && duration != null ? `${duration.toFixed(1)}s` : `${para.wordCount}w`}
+                </span>
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      {/* Summary bar */}
+      <div className="px-4 py-2.5 border-t border-c-border shrink-0 flex items-center justify-between">
+        <div className="text-[10px] text-c-dim space-x-2">
+          <span>{t('tts.paragraphCount', { count: parsed.paragraphs.length })}</span>
+          <span>|</span>
+          <span>{t('tts.wordCountTotal', { count: parsed.totalWords })}</span>
+          <span>|</span>
+          <span>{t('tts.estimatedDuration', { time: fmtTime(parsed.estimatedDuration) })}</span>
+        </div>
+        <button
+          onClick={onShowHistory}
+          className="text-[10px] text-c-muted hover:text-c-text px-2 py-1 rounded border border-c-border hover:border-c-border-hi transition-colors cursor-pointer"
+        >
+          {t('tts.showHistory', { count: historyCount })}
+        </button>
+      </div>
     </div>
   );
 }
