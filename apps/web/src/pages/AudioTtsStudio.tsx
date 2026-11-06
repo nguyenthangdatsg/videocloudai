@@ -2057,6 +2057,36 @@ function StoryStructurePanel({
     textareaRef.current.scrollTop = textareaRef.current.scrollHeight * (para.lineNumber / lines.length);
   };
 
+  // Resizable voice groups section
+  const [vgHeight, setVgHeight] = useState(() => {
+    const saved = localStorage.getItem('vcai-tts-vg-height');
+    return saved ? Math.max(60, Math.min(400, parseInt(saved, 10))) : 0; // 0 = auto
+  });
+  const isDraggingVg = useRef(false);
+
+  const handleVgDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingVg.current = true;
+    const startY = e.clientY;
+    const startH = vgHeight || (e.currentTarget.previousElementSibling as HTMLElement)?.offsetHeight || 120;
+    const onMove = (ev: MouseEvent) => {
+      const newH = Math.max(60, Math.min(400, startH + (ev.clientY - startY)));
+      setVgHeight(newH);
+    };
+    const onUp = () => {
+      isDraggingVg.current = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setVgHeight(h => { localStorage.setItem('vcai-tts-vg-height', String(h)); return h; });
+    };
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [vgHeight]);
+
   const getGroupColor = (groupId: string) => {
     const vg = parsed.voiceGroups.find(g => g.id === groupId);
     return vg?.color || '#9ca3af';
@@ -2102,7 +2132,10 @@ function StoryStructurePanel({
 
       {/* Voice Groups */}
       {!isGenerating && (
-        <div className="px-4 py-3 border-b border-c-border shrink-0 space-y-1.5">
+        <div
+          className="px-4 py-3 shrink-0 space-y-1.5 overflow-y-auto"
+          style={vgHeight > 0 ? { height: vgHeight } : undefined}
+        >
           <div className="text-[10px] text-c-dim uppercase tracking-wider font-medium">{t('tts.voiceGroupsLabel')}</div>
           {parsed.voiceGroups.map(vg => (
             <div key={vg.id} className="flex items-center gap-2 text-xs">
@@ -2116,8 +2149,16 @@ function StoryStructurePanel({
         </div>
       )}
 
+      {/* Drag handle between Voice Groups and Paragraphs */}
+      {!isGenerating && (
+        <div
+          onMouseDown={handleVgDragStart}
+          className="h-1 hover:h-1.5 bg-transparent hover:bg-cyan-500/30 cursor-row-resize shrink-0 transition-all border-y border-c-border"
+        />
+      )}
+
       {/* Paragraph list */}
-      <div ref={paraListRef} className="flex-1 overflow-y-auto">
+      <div ref={paraListRef} className="flex-1 overflow-y-auto min-h-0">
         {parsed.paragraphs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-xs text-c-dim">{t('tts.noParagraphs')}</div>
         ) : (
