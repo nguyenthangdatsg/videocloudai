@@ -810,6 +810,11 @@ export function AudioTtsStudio() {
                           )}>{story.status}</span>
                         </div>
 
+                        {/* ID badge */}
+                        <div className="mb-2">
+                          <span className="text-[10px] font-mono text-c-dim bg-c-bg px-1.5 py-0.5 rounded select-all">{story.id.slice(0, 8)}</span>
+                        </div>
+
                         {/* Meta row */}
                         <div className="flex items-center gap-3 text-xs text-c-dim mb-4">
                           {voiceCount > 0 && (
@@ -933,6 +938,7 @@ export function AudioTtsStudio() {
               {activeStoryId && (
                 <>
                   <span className="text-c-dim">/</span>
+                  <span className="text-[10px] font-mono text-c-dim bg-c-bg px-1.5 py-0.5 rounded select-all">{activeStoryId.slice(0, 8)}</span>
                   <span className="text-sm font-medium text-purple-300 truncate max-w-[300px]">
                     {stories?.find(s => s.id === activeStoryId)?.title}
                   </span>
