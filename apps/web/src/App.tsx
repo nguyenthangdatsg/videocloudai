@@ -9,7 +9,7 @@ import { QueueManager } from './pages/QueueManager';
 import { Channels } from './pages/Channels';
 import { Distributions } from './pages/Distributions';
 import { Settings } from './pages/Settings';
-import { TextToSpeech } from './pages/TextToSpeech';
+import { AudioTtsStudio } from './pages/AudioTtsStudio';
 import { Transcribe } from './pages/Transcribe';
 import { Storyboard } from './pages/storyboard';
 import { StoryboardList } from './pages/StoryboardList';
@@ -21,8 +21,11 @@ import { ScriptStudio } from './pages/script-studio/ScriptStudio';
 import ScriptDoc from './pages/script-studio/ScriptDoc';
 import { DvidsStudio } from './pages/dvids-studio/DvidsStudio';
 import DvidsDoc from './pages/dvids-studio/DvidsDoc';
+import { WhatIfStudio } from './pages/whatif-studio/WhatIfStudio';
+import WhatIfDoc from './pages/whatif-studio/WhatIfDoc';
 import { TransformStudio } from './pages/transform';
 import { DvidsBrowser } from './pages/DvidsBrowser';
+import { DbMonitor } from './pages/DbMonitor';
 import { useSSE } from './hooks/useSSE';
 import { ToastContainer } from './components/ui/ToastContainer';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
@@ -46,7 +49,8 @@ function AppShell() {
             <Route path="/queue" element={<QueueManager />} />
             <Route path="/channels" element={<Channels />} />
             <Route path="/distributions" element={<Distributions />} />
-            <Route path="/tts" element={<TextToSpeech />} />
+            <Route path="/audio-tts-studio" element={<AudioTtsStudio />} />
+            <Route path="/audio-tts-studio/:id" element={<AudioTtsStudio />} />
             <Route path="/transcribe" element={<Transcribe />} />
             <Route path="/storyboard" element={<StoryboardList />} />
             <Route path="/storyboard/:id" element={<ErrorBoundary><Storyboard /></ErrorBoundary>} />
@@ -58,8 +62,11 @@ function AppShell() {
             <Route path="/script-studio/:id" element={<ScriptDoc />} />
             <Route path="/dvids-studio" element={<DvidsStudio />} />
             <Route path="/dvids-studio/:id" element={<DvidsDoc />} />
+            <Route path="/whatif-studio" element={<WhatIfStudio />} />
+            <Route path="/whatif-studio/:id" element={<WhatIfDoc />} />
             <Route path="/transform" element={<TransformStudio />} />
             <Route path="/dvids" element={<DvidsBrowser />} />
+            <Route path="/db-monitor" element={<DbMonitor />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>

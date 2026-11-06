@@ -14,6 +14,7 @@ import {
   ArrowLeft, Music,
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useParams, useNavigate } from 'react-router-dom';
 
 // === Story structure types ===
 interface VoiceGroupInfo {
@@ -165,9 +166,13 @@ export function AudioTtsStudio() {
   // --- Story Prompt Guide ---
   const [showStoryPrompt, setShowStoryPrompt] = useState(false);
 
+  // --- URL params & navigation ---
+  const { id: urlStoryId } = useParams<{ id?: string }>();
+  const navigate = useNavigate();
+
   // --- Story Projects ---
-  const [view, setView] = useState<'dashboard' | 'editor'>('dashboard');
-  const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
+  const [view, setView] = useState<'dashboard' | 'editor'>(urlStoryId ? 'editor' : 'dashboard');
+  const [activeStoryId, setActiveStoryId] = useState<string | null>(urlStoryId || null);
   const queryClient = useQueryClient();
   const { data: stories, refetch: refetchStories } = useQuery({
     queryKey: ['tts', 'stories'],
@@ -674,17 +679,32 @@ export function AudioTtsStudio() {
     setActiveStoryId(story.id);
     setText(story.content);
     setView('editor');
+    navigate(`/audio-tts-studio/${story.id}`, { replace: true });
   };
 
   const openQuickTts = () => {
     setActiveStoryId(null);
     setText('');
     setView('editor');
+    navigate('/audio-tts-studio', { replace: true });
   };
 
   const backToDashboard = () => {
     setView('dashboard');
+    navigate('/audio-tts-studio', { replace: true });
   };
+
+  // Load story from URL param on mount
+  useEffect(() => {
+    if (urlStoryId && stories) {
+      const story = stories.find(s => s.id === urlStoryId);
+      if (story && !text) {
+        setText(story.content);
+        setActiveStoryId(story.id);
+        setView('editor');
+      }
+    }
+  }, [urlStoryId, stories]);
 
   const totalDuration = (stories ?? []).reduce((s, st) => s + st.duration, 0);
   const readyCount = (stories ?? []).filter(s => s.status === 'ready').length;
@@ -958,6 +978,7 @@ export function AudioTtsStudio() {
                       ttsApi.createStory({ content: text, title: parsed }).then((s) => {
                         setActiveStoryId(s.id);
                         refetchStories();
+                        navigate(`/audio-tts-studio/${s.id}`, { replace: true });
                       });
                     }}
                     className="btn-secondary flex items-center gap-1.5 text-xs cursor-pointer"
