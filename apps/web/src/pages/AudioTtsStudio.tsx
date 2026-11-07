@@ -1089,6 +1089,43 @@ export function AudioTtsStudio() {
               </div>
             </div>
 
+            {/* ── Generate button (when story exists but no audio yet) ── */}
+            {(() => {
+              const activeStory = stories?.find(s => s.id === activeStoryId);
+              if (!activeStory || activeStory.status === 'ready') return null;
+              return (
+                <div className="border border-c-border rounded-xl overflow-hidden bg-c-surface/50">
+                  <div className="p-4 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-amber-900/30 flex items-center justify-center shrink-0">
+                      <Sparkles className="w-5 h-5 text-amber-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-c-text">
+                        {activeStory.status === 'failed' ? t('tts.generationFailed') : t('tts.noAudioYet')}
+                      </div>
+                      <div className="text-xs text-c-dim mt-0.5">
+                        {activeStory.status === 'failed'
+                          ? t('tts.clickToRetry')
+                          : t('tts.clickToGenerate')}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => generateMutation.mutate()}
+                      disabled={generateMutation.isPending || !text.trim()}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-50 transition-colors cursor-pointer"
+                    >
+                      {generateMutation.isPending
+                        ? <RefreshCw className="w-4 h-4 animate-spin" />
+                        : activeStory.status === 'failed'
+                          ? <RefreshCw className="w-4 h-4" />
+                          : <Sparkles className="w-4 h-4" />}
+                      {activeStory.status === 'failed' ? t('tts.regenerate') : t('tts.generateStory')}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* ── Story result player (when audio already generated) ── */}
             {(() => {
               const activeStory = stories?.find(s => s.id === activeStoryId);
