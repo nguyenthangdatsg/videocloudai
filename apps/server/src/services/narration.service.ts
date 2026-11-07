@@ -5,6 +5,9 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getSettings } from './settings.service';
 import { resolveFfmpegPathSync } from './import.service';
+import { synthesize as omnivoiceSynthesize, isReachable as omnivoiceReachable } from '../providers/omnivoice.provider';
+import { synthesize as kokoroSynthesize, isAvailable as kokoroAvailable } from '../providers/kokoro.provider';
+import { synthesize as googleTtsSynthesize, isAvailable as googleTtsAvailable } from '../providers/google-tts.provider';
 
 const execFileAsync = promisify(execFile);
 
@@ -108,6 +111,8 @@ export type VoiceName = string;
 
 export type TtsProgressFn = (step: string, detail?: string) => void;
 
+export type TtsEngine = 'edge-tts' | 'omnivoice' | 'kokoro' | 'google-tts';
+
 export interface TtsOptions {
   voice?: VoiceName;
   rate?: string;
@@ -115,6 +120,7 @@ export interface TtsOptions {
   volume?: string;
   style?: string;
   videoId?: string;
+  engine?: TtsEngine;
   onProgress?: TtsProgressFn;
 }
 
@@ -146,10 +152,47 @@ export class NarrationService {
     return (getSettings().get('default_voice') as VoiceName) ?? 'en-US-GuyNeural';
   }
 
+  getDefaultEngine(): TtsEngine {
+    const val = getSettings().get('default_tts_engine') as string;
+    return (val === 'kokoro' || val === 'omnivoice' || val === 'edge-tts' || val === 'google-tts') ? val : 'kokoro';
+  }
+
   async generateNarration(
     script: string,
     options: TtsOptions = {}
   ): Promise<NarrationResult> {
+    const engine = options.engine || this.getDefaultEngine();
+
+    // Route to Kokoro if requested and available
+    if (engine === 'kokoro') {
+      const available = await kokoroAvailable();
+      if (available) {
+        return this.generateViaKokoro(script, options);
+      }
+      const progress = options.onProgress ?? (() => {});
+      progress('fallback', 'Kokoro TTS not available, falling back to edge-tts');
+    }
+
+    // Route to OmniVoice if requested and reachable
+    if (engine === 'omnivoice') {
+      const reachable = await omnivoiceReachable();
+      if (reachable) {
+        return this.generateViaOmniVoice(script, options);
+      }
+      const progress = options.onProgress ?? (() => {});
+      progress('fallback', 'OmniVoice not reachable, falling back to edge-tts');
+    }
+
+    // Route to Google TTS if requested and available
+    if (engine === 'google-tts') {
+      const available = await googleTtsAvailable();
+      if (available) {
+        return this.generateViaGoogleTts(script, options);
+      }
+      const progress = options.onProgress ?? (() => {});
+      progress('fallback', 'Google TTS not configured, falling back to edge-tts');
+    }
+
     const voice = options.voice || this.getDefaultVoice();
     const fmtPct = (v: string | number | undefined, def: string): string => {
       if (v === undefined || v === null || v === '') return def;
@@ -185,7 +228,7 @@ export class NarrationService {
       ? path.join(this.audioDir, `narration_${options.videoId}.mp3`)
       : cachedPath;
 
-    const chunks = this.splitTextIntoChunks(script, 2000);
+    const chunks = this.splitTextIntoChunks(script, 4800);
     progress('start', `${script.length} chars, ${chunks.length} chunk(s)`);
 
     if (chunks.length <= 1) {
@@ -198,7 +241,7 @@ export class NarrationService {
     } else {
       const chunkPaths: string[] = [];
       for (let i = 0; i < chunks.length; i++) {
-        progress('chunk', `Generating chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)`);
+        progress('chunk', `Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)`);
         const chunkPath = path.join(this.cacheDir, `_chunk_${checksum}_${i}.mp3`);
         if (style && this.voiceSupportsStyle(voice)) {
           await this.runEdgeTtsSSML(chunks[i], voice, rate, pitch, volume, style, chunkPath);
@@ -208,13 +251,221 @@ export class NarrationService {
         chunkPaths.push(chunkPath);
       }
       progress('concat', `Concatenating ${chunks.length} chunks...`);
-      await this.concatAudioFiles(chunkPaths, outputPath);
+      await this.concatWithSilence(chunkPaths, outputPath, 0.15);
       for (const cp of chunkPaths) {
         try { fs.unlinkSync(cp); } catch { /* ignore */ }
       }
     }
 
     progress('finalizing', 'Getting duration...');
+    if (outputPath !== cachedPath) {
+      fs.copyFileSync(outputPath, cachedPath);
+    }
+
+    const duration = await this.getAudioDuration(outputPath);
+    progress('done', `Complete: ${duration.toFixed(1)}s`);
+    return { totalPath: outputPath, segments: [], duration };
+  }
+
+  private async generateViaOmniVoice(
+    script: string,
+    options: TtsOptions
+  ): Promise<NarrationResult> {
+    const progress = options.onProgress ?? (() => {});
+    const voice = options.voice || 'default';
+    const rateNum = options.rate ? parseFloat(options.rate) : 0;
+    const emotionAdj = this.emotionToAdjustments(options.style);
+    const speed = Math.max(0.5, Math.min(2.0, 1.0 + (rateNum / 100) + emotionAdj.speedDelta));
+    const emotionKey = options.style || '';
+
+    const checksum = crypto.createHash('md5').update(`omnivoice|${script}|${voice}|${speed}|${emotionKey}`).digest('hex');
+    const cachedPath = path.join(this.cacheDir, `${checksum}.mp3`);
+
+    if (fs.existsSync(cachedPath)) {
+      progress('cached', 'Using cached audio');
+      const duration = await this.getAudioDuration(cachedPath);
+      return { totalPath: cachedPath, segments: [], duration };
+    }
+
+    const outputPath = options.videoId
+      ? path.join(this.audioDir, `narration_${options.videoId}.mp3`)
+      : cachedPath;
+
+    progress('generating', `Generating audio via OmniVoice${emotionKey ? ` (${emotionKey})` : ''}...`);
+    await omnivoiceSynthesize({ text: script, voiceId: voice, rate: speed }, outputPath);
+
+    // Apply pitch shift for emotion
+    if (emotionAdj.pitchSemitones !== 0) {
+      progress('emotion', `Applying emotion pitch shift (${emotionAdj.pitchSemitones > 0 ? '+' : ''}${emotionAdj.pitchSemitones} semitones)...`);
+      await this.applyPitchShift(outputPath, emotionAdj.pitchSemitones);
+    }
+
+    if (outputPath !== cachedPath) {
+      fs.copyFileSync(outputPath, cachedPath);
+    }
+
+    const duration = await this.getAudioDuration(outputPath);
+    progress('done', `Complete: ${duration.toFixed(1)}s`);
+    return { totalPath: outputPath, segments: [], duration };
+  }
+
+  // Map emotion names to speed/pitch adjustments for engines without native emotion support
+  private emotionToAdjustments(emotion?: string): { speedDelta: number; pitchSemitones: number } {
+    if (!emotion || emotion === 'default' || emotion === 'neutral' || emotion === 'calm') {
+      return { speedDelta: 0, pitchSemitones: 0 };
+    }
+    const map: Record<string, { speedDelta: number; pitchSemitones: number }> = {
+      excited:    { speedDelta: 0.10, pitchSemitones: 2 },
+      happy:      { speedDelta: 0.08, pitchSemitones: 1.5 },
+      cheerful:   { speedDelta: 0.08, pitchSemitones: 1.5 },
+      angry:      { speedDelta: 0.05, pitchSemitones: -1 },
+      serious:    { speedDelta: -0.05, pitchSemitones: -1.5 },
+      sad:        { speedDelta: -0.10, pitchSemitones: -2 },
+      melancholy: { speedDelta: -0.08, pitchSemitones: -1.5 },
+      anxious:    { speedDelta: 0.12, pitchSemitones: 1 },
+      nervous:    { speedDelta: 0.10, pitchSemitones: 1 },
+      fearful:    { speedDelta: 0.08, pitchSemitones: 1.5 },
+      whispering: { speedDelta: -0.15, pitchSemitones: 0 },
+      gentle:     { speedDelta: -0.08, pitchSemitones: 0.5 },
+      dramatic:   { speedDelta: -0.05, pitchSemitones: -0.5 },
+      urgent:     { speedDelta: 0.15, pitchSemitones: 1 },
+      sarcastic:  { speedDelta: -0.03, pitchSemitones: -0.5 },
+      hopeful:    { speedDelta: 0.05, pitchSemitones: 1 },
+      tired:      { speedDelta: -0.12, pitchSemitones: -1 },
+      confident:  { speedDelta: 0.03, pitchSemitones: -0.5 },
+    };
+    return map[emotion.toLowerCase()] || { speedDelta: 0, pitchSemitones: 0 };
+  }
+
+  // Apply pitch shift via FFmpeg rubberband filter (preserves tempo)
+  private async applyPitchShift(inputPath: string, pitchSemitones: number): Promise<string> {
+    if (pitchSemitones === 0) return inputPath;
+    const ffmpeg = resolveFfmpegPathSync('ffmpeg');
+    const outputPath = inputPath.replace(/\.mp3$/, '_pitched.mp3');
+    // rubberband pitch shift: 2^(semitones/12)
+    const pitchFactor = Math.pow(2, pitchSemitones / 12);
+    await execFileAsync(ffmpeg, [
+      '-i', inputPath, '-af', `rubberband=pitch=${pitchFactor.toFixed(4)}`,
+      '-y', outputPath,
+    ], { timeout: 60_000 }).catch(() => {
+      // rubberband not available — try asetrate + aresample fallback
+      const sampleRate = 44100;
+      const newRate = Math.round(sampleRate * pitchFactor);
+      return execFileAsync(ffmpeg, [
+        '-i', inputPath, '-af', `asetrate=${newRate},aresample=${sampleRate},atempo=${(1 / pitchFactor).toFixed(4)}`,
+        '-y', outputPath,
+      ], { timeout: 60_000 });
+    });
+    // Replace original with pitched version
+    fs.renameSync(outputPath, inputPath);
+    return inputPath;
+  }
+
+  private async generateViaKokoro(
+    script: string,
+    options: TtsOptions
+  ): Promise<NarrationResult> {
+    const progress = options.onProgress ?? (() => {});
+    const voice = options.voice || 'af_heart';
+    const rateNum = options.rate ? parseFloat(options.rate) : 0;
+    const emotionAdj = this.emotionToAdjustments(options.style);
+    const speed = Math.max(0.5, Math.min(2.0, 1.0 + (rateNum / 100) + emotionAdj.speedDelta));
+    const emotionKey = options.style || '';
+
+    const checksum = crypto.createHash('md5').update(`kokoro|${script}|${voice}|${speed}|${emotionKey}`).digest('hex');
+    const cachedPath = path.join(this.cacheDir, `${checksum}.mp3`);
+
+    if (fs.existsSync(cachedPath)) {
+      progress('cached', 'Using cached audio');
+      const duration = await this.getAudioDuration(cachedPath);
+      return { totalPath: cachedPath, segments: [], duration };
+    }
+
+    const outputPath = options.videoId
+      ? path.join(this.audioDir, `narration_${options.videoId}.mp3`)
+      : cachedPath;
+
+    const chunks = this.splitTextIntoChunks(script, 4800);
+    progress('start', `${script.length} chars, ${chunks.length} chunk(s) via Kokoro TTS`);
+
+    if (chunks.length <= 1) {
+      progress('generating', `Generating audio via Kokoro TTS${emotionKey ? ` (${emotionKey})` : ''}...`);
+      await kokoroSynthesize({ text: script, voice, speed }, outputPath);
+    } else {
+      const chunkPaths: string[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        progress('chunk', `Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)`);
+        const chunkPath = path.join(this.cacheDir, `_chunk_kokoro_${checksum}_${i}.mp3`);
+        await kokoroSynthesize({ text: chunks[i], voice, speed }, chunkPath);
+        chunkPaths.push(chunkPath);
+      }
+      progress('concat', `Concatenating ${chunks.length} chunks...`);
+      await this.concatWithSilence(chunkPaths, outputPath, 0.15);
+      for (const cp of chunkPaths) {
+        try { fs.unlinkSync(cp); } catch { /* ignore */ }
+      }
+    }
+
+    // Apply pitch shift for emotion (if any)
+    if (emotionAdj.pitchSemitones !== 0) {
+      progress('emotion', `Applying emotion pitch shift (${emotionAdj.pitchSemitones > 0 ? '+' : ''}${emotionAdj.pitchSemitones} semitones)...`);
+      await this.applyPitchShift(outputPath, emotionAdj.pitchSemitones);
+    }
+
+    if (outputPath !== cachedPath) {
+      fs.copyFileSync(outputPath, cachedPath);
+    }
+
+    const duration = await this.getAudioDuration(outputPath);
+    progress('done', `Complete: ${duration.toFixed(1)}s`);
+    return { totalPath: outputPath, segments: [], duration };
+  }
+
+  private async generateViaGoogleTts(
+    script: string,
+    options: TtsOptions
+  ): Promise<NarrationResult> {
+    const progress = options.onProgress ?? (() => {});
+    const voice = options.voice || (getSettings().get('google_tts_default_voice') || 'en-US-Neural2-D');
+    const speakingRate = options.rate ? 1.0 + (parseFloat(options.rate) / 100) : parseFloat(getSettings().get('google_tts_speaking_rate') || '1.0');
+    const pitch = options.pitch ? parseFloat(options.pitch) : parseFloat(getSettings().get('google_tts_pitch') || '0');
+    const emotion = options.style || '';
+
+    const checksum = crypto.createHash('md5').update(`google-tts|${script}|${voice}|${speakingRate}|${pitch}|${emotion}`).digest('hex');
+    const cachedPath = path.join(this.cacheDir, `${checksum}.mp3`);
+
+    if (fs.existsSync(cachedPath)) {
+      progress('cached', 'Using cached audio');
+      const duration = await this.getAudioDuration(cachedPath);
+      return { totalPath: cachedPath, segments: [], duration };
+    }
+
+    const outputPath = options.videoId
+      ? path.join(this.audioDir, `narration_${options.videoId}.mp3`)
+      : cachedPath;
+
+    // Google TTS limit is 5000 bytes; use 4800 chars to be safe
+    const chunks = this.splitTextIntoChunks(script, 4800);
+    progress('start', `${script.length} chars, ${chunks.length} chunk(s) via Google Cloud TTS`);
+
+    if (chunks.length <= 1) {
+      progress('generating', `Generating audio via Google Cloud TTS${emotion ? ` (${emotion})` : ''}...`);
+      await googleTtsSynthesize({ text: script, voice, speakingRate, pitch, emotion: emotion || undefined }, outputPath);
+    } else {
+      const chunkPaths: string[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        progress('chunk', `Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)`);
+        const chunkPath = path.join(this.cacheDir, `_chunk_gtts_${checksum}_${i}.mp3`);
+        await googleTtsSynthesize({ text: chunks[i], voice, speakingRate, pitch, emotion: emotion || undefined }, chunkPath);
+        chunkPaths.push(chunkPath);
+      }
+      progress('concat', `Concatenating ${chunks.length} chunks...`);
+      await this.concatWithSilence(chunkPaths, outputPath, 0.15);
+      for (const cp of chunkPaths) {
+        try { fs.unlinkSync(cp); } catch { /* ignore */ }
+      }
+    }
+
     if (outputPath !== cachedPath) {
       fs.copyFileSync(outputPath, cachedPath);
     }
@@ -265,6 +516,41 @@ export class NarrationService {
     }
   }
 
+  private async concatWithSilence(inputs: string[], outputPath: string, silenceSec: number): Promise<void> {
+    if (silenceSec <= 0) {
+      return this.concatAudioFiles(inputs, outputPath);
+    }
+
+    const ffmpeg = resolveFfmpegPathSync('ffmpeg');
+    // Generate a short silence file
+    const silencePath = path.join(path.dirname(outputPath), `_silence_${Date.now()}.mp3`);
+    await execFileAsync(ffmpeg, [
+      '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', String(silenceSec),
+      '-c:a', 'libmp3lame', '-b:a', '192k', '-y', silencePath,
+    ], { timeout: 10000 });
+
+    // Build concat list interleaving silence
+    const listFile = path.join(path.dirname(outputPath), `_concat_${Date.now()}.txt`);
+    const lines: string[] = [];
+    for (let i = 0; i < inputs.length; i++) {
+      lines.push(`file '${path.resolve(inputs[i]).replace(/\\/g, '/')}'`);
+      if (i < inputs.length - 1) {
+        lines.push(`file '${path.resolve(silencePath).replace(/\\/g, '/')}'`);
+      }
+    }
+    fs.writeFileSync(listFile, lines.join('\n'), 'utf-8');
+
+    try {
+      await execFileAsync(ffmpeg, [
+        '-f', 'concat', '-safe', '0', '-i', listFile,
+        '-c', 'copy', '-y', outputPath,
+      ], { timeout: 60000 });
+    } finally {
+      try { fs.unlinkSync(listFile); } catch { /* ignore */ }
+      try { fs.unlinkSync(silencePath); } catch { /* ignore */ }
+    }
+  }
+
   async generateSegments(lines: string[], voice?: VoiceName): Promise<NarrationSegment[]> {
     const v = voice ?? this.getDefaultVoice();
     const segments: NarrationSegment[] = [];
@@ -301,7 +587,7 @@ export class NarrationService {
     const timeout = Math.max(60000, text.length * 30); // scale timeout with text length
 
     const tryRun = async (v: string): Promise<void> => {
-      const args = ['--voice', v, '--rate', rate, '--pitch', pitch, '--volume', volume, '--file', tmpText, '--write-media', outputPath];
+      const args = ['--voice', v, `--rate=${rate}`, `--pitch=${pitch}`, `--volume=${volume}`, '--file', tmpText, '--write-media', outputPath];
       try {
         await execFileAsync('edge-tts', args, { timeout });
       } catch (cliErr) {
