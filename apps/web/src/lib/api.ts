@@ -328,6 +328,7 @@ export interface TtsStory {
   paragraph_count: number;
   audio_path: string | null;
   duration: number;
+  para_durations: string | null;
   status: 'draft' | 'generating' | 'ready' | 'failed';
   created_at: string;
   updated_at: string;
@@ -358,7 +359,7 @@ export const ttsApi = {
   },
   generateStory: async (
     text: string,
-    onProgress: (step: string, detail?: string) => void,
+    onProgress: (step: string, detail?: string, extra?: Record<string, unknown>) => void,
   ): Promise<{ filename: string; duration: number; url: string }> => {
     const res = await fetch('/api/tts/generate-story', {
       method: 'POST',
@@ -368,7 +369,7 @@ export const ttsApi = {
     let result: { filename: string; duration: number; url: string } | null = null;
     await readNDJSON(res, (parsed) => {
       if (parsed.error) throw new Error(parsed.error as string);
-      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string, parsed as Record<string, unknown>);
       else if (parsed.filename) result = parsed as any;
     });
     if (!result) throw new Error('No result from story generation');
@@ -382,13 +383,13 @@ export const ttsApi = {
   deleteStory: (id: string) => api.delete(`/tts/stories/${id}`).then((r) => r.data),
   generateStoryProject: async (
     id: string,
-    onProgress: (step: string, detail?: string) => void,
+    onProgress: (step: string, detail?: string, extra?: Record<string, unknown>) => void,
   ): Promise<{ filename: string; duration: number; url: string }> => {
     const res = await fetch(`/api/tts/stories/${id}/generate`, { method: 'POST' });
     let result: { filename: string; duration: number; url: string } | null = null;
     await readNDJSON(res, (parsed) => {
       if (parsed.error) throw new Error(parsed.error as string);
-      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string);
+      if (parsed.progress) onProgress(parsed.step as string, parsed.detail as string, parsed as Record<string, unknown>);
       else if (parsed.filename) result = parsed as any;
     });
     if (!result) throw new Error('No result from story generation');

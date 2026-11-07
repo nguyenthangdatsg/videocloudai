@@ -562,6 +562,7 @@ export function AudioTtsStudio() {
   // --- Per-paragraph progress tracking ---
   const [paraStatuses, setParaStatuses] = useState<ParagraphStatus[]>([]);
   const [paraTimestamps, setParaTimestamps] = useState<number[]>([]);
+  const [paraDurations, setParaDurations] = useState<number[]>([]); // actual audio duration per paragraph (seconds)
   const [genStartTime, setGenStartTime] = useState<number | null>(null);
   const [genElapsed, setGenElapsed] = useState(0);
   const [genPhase, setGenPhase] = useState<string>('');
@@ -573,25 +574,40 @@ export function AudioTtsStudio() {
     return () => clearInterval(iv);
   }, [genStartTime]);
 
-  // Map audio playback position to paragraph index via cumulative word proportions
+  // Map audio playback position to paragraph index via actual per-paragraph durations
   useEffect(() => {
-    if (!parsedStory || !playingUrl || audioDuration <= 0 || isAudioPaused) {
+    if (!parsedStory || !playingUrl || audioDuration <= 0) {
       if (!playingUrl) setPlaybackParaIndex(null);
       return;
     }
-    const pct = audioProgress / audioDuration;
-    const total = parsedStory.totalWords;
-    if (total <= 0) { setPlaybackParaIndex(null); return; }
-    let cum = 0;
-    for (let i = 0; i < parsedStory.paragraphs.length; i++) {
-      cum += parsedStory.paragraphs[i].wordCount;
-      if (pct <= cum / total) {
-        setPlaybackParaIndex(i);
-        return;
+    // Use real durations if available, fall back to word-count proportions
+    const hasRealDurations = paraDurations.length === parsedStory.paragraphs.length && paraDurations.some(d => d > 0);
+    if (hasRealDurations) {
+      let cum = 0;
+      for (let i = 0; i < paraDurations.length; i++) {
+        cum += paraDurations[i];
+        if (audioProgress <= cum) {
+          setPlaybackParaIndex(i);
+          return;
+        }
       }
+      setPlaybackParaIndex(parsedStory.paragraphs.length - 1);
+    } else {
+      // Fallback: word count proportions
+      const pct = audioProgress / audioDuration;
+      const total = parsedStory.totalWords;
+      if (total <= 0) { setPlaybackParaIndex(null); return; }
+      let cum = 0;
+      for (let i = 0; i < parsedStory.paragraphs.length; i++) {
+        cum += parsedStory.paragraphs[i].wordCount;
+        if (pct <= cum / total) {
+          setPlaybackParaIndex(i);
+          return;
+        }
+      }
+      setPlaybackParaIndex(parsedStory.paragraphs.length - 1);
     }
-    setPlaybackParaIndex(parsedStory.paragraphs.length - 1);
-  }, [audioProgress, audioDuration, parsedStory, playingUrl, isAudioPaused]);
+  }, [audioProgress, audioDuration, parsedStory, playingUrl, paraDurations]);
 
   const generateMutation = useMutation({
     mutationFn: async () => {
@@ -599,10 +615,11 @@ export function AudioTtsStudio() {
       if (parsedStory) {
         setParaStatuses(new Array(parsedStory.paragraphs.length).fill('pending'));
         setParaTimestamps(new Array(parsedStory.paragraphs.length).fill(0));
+        setParaDurations(new Array(parsedStory.paragraphs.length).fill(0));
         setGenStartTime(Date.now());
         setGenPhase('');
       }
-      const onProgress = (step: string, detail?: string) => {
+      const onProgress = (step: string, detail?: string, extra?: Record<string, unknown>) => {
         setGenerateProgress((prev) => [...prev, `[${step}] ${detail ?? ''}`]);
         setGenPhase(step);
 
@@ -626,6 +643,22 @@ export function AudioTtsStudio() {
                 return next;
               });
             }
+          }
+        } else if (step === 'tts-done' && detail) {
+          // Capture actual audio duration per paragraph
+          const idxMatch = detail.match(/^\[(\d+)\/(\d+)\]/);
+          if (idxMatch && extra?.paraDuration != null) {
+            const idx = parseInt(idxMatch[1], 10) - 1;
+            setParaStatuses(prev => {
+              const next = [...prev];
+              if (next[idx] === 'generating') next[idx] = 'done';
+              return next;
+            });
+            setParaDurations(prev => {
+              const next = [...prev];
+              next[idx] = extra.paraDuration as number;
+              return next;
+            });
           }
         } else if (step === 'concat') {
           setParaStatuses(prev => prev.map(s => s === 'generating' ? 'done' : s));
@@ -737,6 +770,10 @@ export function AudioTtsStudio() {
   const openStory = (story: TtsStory) => {
     setActiveStoryId(story.id);
     setText(story.content);
+    // Load saved per-paragraph durations for accurate playback tracking
+    if (story.para_durations) {
+      try { setParaDurations(JSON.parse(story.para_durations)); } catch { /* ignore */ }
+    }
     setView('editor');
     navigate(`/audio-tts-studio/${story.id}`, { replace: true });
   };
@@ -760,6 +797,9 @@ export function AudioTtsStudio() {
       if (story && !text) {
         setText(story.content);
         setActiveStoryId(story.id);
+        if (story.para_durations) {
+          try { setParaDurations(JSON.parse(story.para_durations)); } catch { /* ignore */ }
+        }
         setView('editor');
       }
     }

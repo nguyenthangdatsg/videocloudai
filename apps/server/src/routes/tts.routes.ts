@@ -32,6 +32,11 @@ function initTtsStoriesTable() {
   )`);
   dbRun(`CREATE INDEX IF NOT EXISTS idx_tts_stories_updated ON tts_stories(updated_at)`);
 
+  // Add para_durations column if missing (migration)
+  try {
+    dbRun(`ALTER TABLE tts_stories ADD COLUMN para_durations TEXT`);
+  } catch { /* column already exists */ }
+
   dbRun(`CREATE TABLE IF NOT EXISTS tts_audio_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filename TEXT NOT NULL UNIQUE,
@@ -51,6 +56,7 @@ interface TtsStoryRow {
   paragraph_count: number;
   audio_path: string | null;
   duration: number;
+  para_durations: string | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -233,7 +239,7 @@ export function createTtsRouter(narrationService: NarrationService, subtitleServ
   async function generateStoryAudio(
     text: string,
     send: (obj: Record<string, unknown>) => void,
-  ): Promise<{ filename: string; duration: number; url: string; audioPath: string }> {
+  ): Promise<{ filename: string; duration: number; url: string; audioPath: string; paraDurations: number[] }> {
     const { voiceGroups, paragraphs } = parseStory(text);
     send({ progress: true, step: 'parse', detail: `Found ${voiceGroups.length} voice groups, ${paragraphs.length} paragraphs` });
 
@@ -242,6 +248,7 @@ export function createTtsRouter(narrationService: NarrationService, subtitleServ
     const cacheDir = path.join(process.env.CACHE_DIR ?? './cache', 'tts');
     fs.mkdirSync(cacheDir, { recursive: true });
     const audioParts: string[] = [];
+    const paraDurations: number[] = new Array(paragraphs.length).fill(0);
 
     for (let i = 0; i < paragraphs.length; i++) {
       const para = paragraphs[i];
@@ -256,6 +263,8 @@ export function createTtsRouter(narrationService: NarrationService, subtitleServ
       try {
         const result = await narrationService.generateNarration(para.text, { voice, engine, rate: rateVal, pitch: vg?.pitch, style: emotion });
         audioParts.push(result.totalPath);
+        paraDurations[i] = result.duration;
+        send({ progress: true, step: 'tts-done', detail: `[${i + 1}/${paragraphs.length}]`, paraDuration: result.duration });
       } catch (err) {
         send({ progress: true, step: 'tts', detail: `[${i + 1}/${paragraphs.length}] FAILED: ${(err as Error).message}` });
       }
@@ -290,7 +299,7 @@ export function createTtsRouter(narrationService: NarrationService, subtitleServ
     } catch { /* ignore */ }
 
     const filename = path.basename(outputFile);
-    return { filename, duration, url: `/api/tts/audio/${filename}`, audioPath: outputFile };
+    return { filename, duration, url: `/api/tts/audio/${filename}`, audioPath: outputFile, paraDurations };
   }
 
   // ═══ Story Projects CRUD ═══
@@ -380,8 +389,8 @@ export function createTtsRouter(narrationService: NarrationService, subtitleServ
       }
 
       dbRun(
-        `UPDATE tts_stories SET status = 'ready', audio_path = ?, duration = ?, updated_at = datetime('now') WHERE id = ?`,
-        [result.audioPath, result.duration, req.params.id],
+        `UPDATE tts_stories SET status = 'ready', audio_path = ?, duration = ?, para_durations = ?, updated_at = datetime('now') WHERE id = ?`,
+        [result.audioPath, result.duration, JSON.stringify(result.paraDurations), req.params.id],
       );
 
       // Record in audio history
