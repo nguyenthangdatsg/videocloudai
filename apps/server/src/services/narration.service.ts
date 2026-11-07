@@ -274,8 +274,8 @@ export class NarrationService {
     const progress = options.onProgress ?? (() => {});
     const voice = options.voice || 'default';
     const rateNum = options.rate ? parseFloat(options.rate) : 0;
-    const emotionAdj = this.emotionToAdjustments(options.style);
-    const speed = Math.max(0.5, Math.min(2.0, 1.0 + (rateNum / 100) + emotionAdj.speedDelta));
+    const speed = Math.max(0.5, Math.min(2.0, 1.0 + (rateNum / 100)));
+    const emotionPitch = this.emotionToPitch(options.style);
     const emotionKey = options.style || '';
 
     const checksum = crypto.createHash('md5').update(`omnivoice|${script}|${voice}|${speed}|${emotionKey}`).digest('hex');
@@ -295,9 +295,9 @@ export class NarrationService {
     await omnivoiceSynthesize({ text: script, voiceId: voice, rate: speed }, outputPath);
 
     // Apply pitch shift for emotion
-    if (emotionAdj.pitchSemitones !== 0) {
-      progress('emotion', `Applying emotion pitch shift (${emotionAdj.pitchSemitones > 0 ? '+' : ''}${emotionAdj.pitchSemitones} semitones)...`);
-      await this.applyPitchShift(outputPath, emotionAdj.pitchSemitones);
+    if (emotionPitch !== 0) {
+      progress('emotion', `Applying emotion pitch (${emotionPitch > 0 ? '+' : ''}${emotionPitch} semitones)...`);
+      await this.applyPitchShift(outputPath, emotionPitch);
     }
 
     if (outputPath !== cachedPath) {
@@ -309,32 +309,37 @@ export class NarrationService {
     return { totalPath: outputPath, segments: [], duration };
   }
 
-  // Map emotion names to speed/pitch adjustments for engines without native emotion support
-  private emotionToAdjustments(emotion?: string): { speedDelta: number; pitchSemitones: number } {
-    if (!emotion || emotion === 'default' || emotion === 'neutral' || emotion === 'calm') {
-      return { speedDelta: 0, pitchSemitones: 0 };
-    }
-    const map: Record<string, { speedDelta: number; pitchSemitones: number }> = {
-      excited:    { speedDelta: 0.10, pitchSemitones: 2 },
-      happy:      { speedDelta: 0.08, pitchSemitones: 1.5 },
-      cheerful:   { speedDelta: 0.08, pitchSemitones: 1.5 },
-      angry:      { speedDelta: 0.05, pitchSemitones: -1 },
-      serious:    { speedDelta: -0.05, pitchSemitones: -1.5 },
-      sad:        { speedDelta: -0.10, pitchSemitones: -2 },
-      melancholy: { speedDelta: -0.08, pitchSemitones: -1.5 },
-      anxious:    { speedDelta: 0.12, pitchSemitones: 1 },
-      nervous:    { speedDelta: 0.10, pitchSemitones: 1 },
-      fearful:    { speedDelta: 0.08, pitchSemitones: 1.5 },
-      whispering: { speedDelta: -0.15, pitchSemitones: 0 },
-      gentle:     { speedDelta: -0.08, pitchSemitones: 0.5 },
-      dramatic:   { speedDelta: -0.05, pitchSemitones: -0.5 },
-      urgent:     { speedDelta: 0.15, pitchSemitones: 1 },
-      sarcastic:  { speedDelta: -0.03, pitchSemitones: -0.5 },
-      hopeful:    { speedDelta: 0.05, pitchSemitones: 1 },
-      tired:      { speedDelta: -0.12, pitchSemitones: -1 },
-      confident:  { speedDelta: 0.03, pitchSemitones: -0.5 },
+  // Map emotion names to pitch adjustments for engines without native emotion support
+  // Only pitch is used — speed stays controlled by rate/pace, not emotion
+  private emotionToPitch(emotion?: string): number {
+    if (!emotion || emotion === 'default' || emotion === 'neutral') return 0;
+    const map: Record<string, number> = {
+      excited:    3,
+      happy:      2,
+      cheerful:   2,
+      angry:      -2,
+      serious:    -1.5,
+      sad:        -3,
+      melancholy: -2,
+      anxious:    1.5,
+      nervous:    1,
+      fearful:    2,
+      whispering: -1,
+      gentle:     0.5,
+      calm:       -0.5,
+      dramatic:   -1,
+      urgent:     1.5,
+      sarcastic:  -0.5,
+      hopeful:    1.5,
+      tired:      -1.5,
+      confident:  -1,
+      warm:       1,
+      tender:     1,
+      commanding: -3,
+      mysterious: -2.5,
+      suspense:   -2,
     };
-    return map[emotion.toLowerCase()] || { speedDelta: 0, pitchSemitones: 0 };
+    return map[emotion.toLowerCase()] || 0;
   }
 
   // Apply pitch shift via FFmpeg rubberband filter (preserves tempo)
@@ -368,8 +373,8 @@ export class NarrationService {
     const progress = options.onProgress ?? (() => {});
     const voice = options.voice || 'af_heart';
     const rateNum = options.rate ? parseFloat(options.rate) : 0;
-    const emotionAdj = this.emotionToAdjustments(options.style);
-    const speed = Math.max(0.5, Math.min(2.0, 1.0 + (rateNum / 100) + emotionAdj.speedDelta));
+    const speed = Math.max(0.5, Math.min(2.0, 1.0 + (rateNum / 100)));
+    const emotionPitch = this.emotionToPitch(options.style);
     const emotionKey = options.style || '';
 
     const checksum = crypto.createHash('md5').update(`kokoro|${script}|${voice}|${speed}|${emotionKey}`).digest('hex');
@@ -407,9 +412,9 @@ export class NarrationService {
     }
 
     // Apply pitch shift for emotion (if any)
-    if (emotionAdj.pitchSemitones !== 0) {
-      progress('emotion', `Applying emotion pitch shift (${emotionAdj.pitchSemitones > 0 ? '+' : ''}${emotionAdj.pitchSemitones} semitones)...`);
-      await this.applyPitchShift(outputPath, emotionAdj.pitchSemitones);
+    if (emotionPitch !== 0) {
+      progress('emotion', `Applying emotion pitch (${emotionPitch > 0 ? '+' : ''}${emotionPitch} semitones)...`);
+      await this.applyPitchShift(outputPath, emotionPitch);
     }
 
     if (outputPath !== cachedPath) {
